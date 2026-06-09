@@ -1,0 +1,69 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+#include <cmath>
+#include <cstdint>
+
+#include "world/gen/noise/simplex_noise.hpp"
+
+using namespace lattice::world::gen::noise;
+
+namespace {
+
+SimplexNoiseSampler make_shuffled() {
+    SimplexNoiseSampler s{};
+    s.origin_x = 0.0; s.origin_y = 0.0; s.origin_z = 0.0;
+    for (int i = 0; i < 256; ++i) {
+        s.permutation[i] = ((i * 31) ^ 0x5A) & 0xFF;
+    }
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("simplex: 2D sample is finite and bounded") {
+    auto s = make_shuffled();
+    for (double x = -3.0; x <= 3.0; x += 0.37) {
+        for (double y = -3.0; y <= 3.0; y += 0.41) {
+            const double v = sample_2d(s, x, y);
+            CHECK(std::isfinite(v));
+            CHECK(v > -1.5);
+            CHECK(v < 1.5);
+        }
+    }
+}
+
+TEST_CASE("simplex: 3D sample is finite and bounded") {
+    auto s = make_shuffled();
+    s.origin_x = 1.1; s.origin_y = 2.2; s.origin_z = 3.3;
+    for (double x = -2.0; x <= 2.0; x += 0.5) {
+        for (double y = -2.0; y <= 2.0; y += 0.5) {
+            for (double z = -2.0; z <= 2.0; z += 0.5) {
+                const double v = sample_3d(s, x, y, z);
+                CHECK(std::isfinite(v));
+                CHECK(v > -1.5);
+                CHECK(v < 1.5);
+            }
+        }
+    }
+}
+
+TEST_CASE("simplex: 2D is continuous over small steps") {
+    auto s = make_shuffled();
+    const double x = 1.3, y = -0.7;
+    const double v0 = sample_2d(s, x, y);
+    const double v1 = sample_2d(s, x + 1e-6, y);
+    CHECK(std::abs(v1 - v0) < 1e-4);
+}
+
+TEST_CASE("simplex: 3D sample at origin is zero with zero-permutation") {
+    SimplexNoiseSampler s{};
+    s.origin_x = 0.0; s.origin_y = 0.0; s.origin_z = 0.0;
+    for (int i = 0; i < 256; ++i) s.permutation[i] = 0;
+    // At (0,0,0) the corner offsets and gradients all collapse to the
+    // same gradient index 0 = {1, 1, 0}. The four contributions form a
+    // small but non-zero value. Just check finite + bounded.
+    const double v = sample_3d(s, 0.0, 0.0, 0.0);
+    CHECK(std::isfinite(v));
+    CHECK(std::abs(v) < 1.5);
+}

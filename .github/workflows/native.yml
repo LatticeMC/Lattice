@@ -1,0 +1,120 @@
+name: Native
+
+on:
+  push:
+    paths:
+      - 'lattice-native/**'
+      - '.github/workflows/native.yml'
+  pull_request:
+    paths:
+      - 'lattice-native/**'
+      - '.github/workflows/native.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64-gcc
+            runner: ubuntu-latest
+            cxx: g++
+            cc: gcc
+            artifact: liblattice.so
+            artifact_path: lattice-native/build/liblattice.so
+          - name: linux-x86_64-clang
+            runner: ubuntu-latest
+            cxx: clang++
+            cc: clang
+            artifact: liblattice.clang.so
+            artifact_path: lattice-native/build/liblattice.so
+          - name: windows-x86_64-msvc
+            runner: windows-latest
+            cxx: cl
+            cc: cl
+            artifact: lattice.dll
+            artifact_path: lattice-native/build/Release/lattice.dll
+          - name: macos-arm64-clang
+            runner: macos-14
+            cxx: clang++
+            cc: clang
+            artifact: liblattice.dylib
+            artifact_path: lattice-native/build/liblattice.dylib
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up CMake
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: '3.28.3'
+
+      - name: Install toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang lld
+
+      - name: Cache CMake / FetchContent
+        uses: actions/cache@v4
+        with:
+          path: |
+            lattice-native/build/_deps
+          key: tentacles-native-fetch-${{ matrix.name }}-libdeflate-v1.20
+          restore-keys: |
+            tentacles-native-fetch-${{ matrix.name }}-
+
+      - name: Configure
+        shell: bash
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+        run: |
+          cmake -S lattice-native -B lattice-native/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLATTICE_WARNINGS_AS_ERRORS=ON \
+            -DLATTICE_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build lattice-native/build --config Release --parallel
+
+      - name: Run unit tests
+        working-directory: lattice-native/build
+        run: ctest --output-on-failure -C Release
+
+      - name: Show produced binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          find lattice-native/build -maxdepth 2 -name 'liblattice*' -print -exec file {} \;
+
+      - name: Show produced binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Filter 'lattice*.dll' lattice-native/build | Format-Table FullName, Length
+
+      - name: Verify symbol JNI_OnLoad is exported (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          nm -D lattice-native/build/liblattice.* | grep -E ' (JNI_OnLoad|Java_com_latticemc_lattice_nativelib_)' | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
