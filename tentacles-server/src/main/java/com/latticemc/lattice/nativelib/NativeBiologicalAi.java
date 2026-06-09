@@ -2,6 +2,25 @@ package com.latticemc.lattice.nativelib;
 
 public final class NativeBiologicalAi {
 
+    public enum Species {
+        GENERIC,
+        SHEEP,
+        PIG,
+        COW,
+        CHICKEN,
+        RABBIT,
+        BEE,
+        GOAT,
+        ARMADILLO,
+        CAMEL,
+        FROG,
+        TURTLE,
+        AXOLOTL,
+        SNIFFER,
+        LLAMA,
+        PANDA,
+    }
+
     public enum StimulusKind {
         THREAT,
         PREY,
@@ -73,6 +92,37 @@ public final class NativeBiologicalAi {
                     isOnFire, canAttack, canConsumeFood,
                     ambientDanger, hasShelter, canIdleSafely, canPathToFood,
                     safeStimuli, safeProfile);
+        }
+        return javaDecide(healthRatio, energyRatio, aggression, attackRange,
+                isOnFire, canAttack, canConsumeFood,
+                ambientDanger, hasShelter, canIdleSafely, canPathToFood,
+                safeStimuli, safeProfile);
+    }
+
+    public static Decision decide(Species species,
+                                  float healthRatio,
+                                  float energyRatio,
+                                  float aggression,
+                                  float attackRange,
+                                  boolean isOnFire,
+                                  boolean canAttack,
+                                  boolean canConsumeFood,
+                                  float ambientDanger,
+                                  boolean hasShelter,
+                                  boolean canIdleSafely,
+                                  boolean canPathToFood,
+                                  Stimulus[] stimuli,
+                                  Profile fallbackProfile) {
+        final Species safeSpecies = species != null ? species : Species.GENERIC;
+        final Stimulus[] safeStimuli = stimuli != null ? stimuli : new Stimulus[0];
+        final Profile safeProfile = fallbackProfile != null ? fallbackProfile : DEFAULT_PROFILE;
+        LatticeNative.ensureLoaded();
+        if (LatticeNative.isLoaded()) {
+            return nativeDecideForSpeciesWrapper(safeSpecies,
+                    healthRatio, energyRatio, aggression, attackRange,
+                    isOnFire, canAttack, canConsumeFood,
+                    ambientDanger, hasShelter, canIdleSafely, canPathToFood,
+                    safeStimuli);
         }
         return javaDecide(healthRatio, energyRatio, aggression, attackRange,
                 isOnFire, canAttack, canConsumeFood,
@@ -193,6 +243,45 @@ public final class NativeBiologicalAi {
         return new Decision(Action.values()[outInts[0]], outInts[1], outFloats[0], outFloats[1], outFloats[2]);
     }
 
+    private static Decision nativeDecideForSpeciesWrapper(Species species,
+                                                          float healthRatio,
+                                                          float energyRatio,
+                                                          float aggression,
+                                                          float attackRange,
+                                                          boolean isOnFire,
+                                                          boolean canAttack,
+                                                          boolean canConsumeFood,
+                                                          float ambientDanger,
+                                                          boolean hasShelter,
+                                                          boolean canIdleSafely,
+                                                          boolean canPathToFood,
+                                                          Stimulus[] stimuli) {
+        final int[] stimulusKinds = new int[stimuli.length];
+        final float[] stimulusDistances = new float[stimuli.length];
+        final float[] stimulusStrengths = new float[stimuli.length];
+        final int[] stimulusFlags = new int[stimuli.length];
+        for (int i = 0; i < stimuli.length; ++i) {
+            final Stimulus stimulus = stimuli[i];
+            stimulusKinds[i] = stimulus.kind().ordinal();
+            stimulusDistances[i] = stimulus.distance();
+            stimulusStrengths[i] = stimulus.strength();
+            int flags = 0;
+            if (stimulus.visible()) flags |= VISIBLE_FLAG;
+            if (stimulus.reachable()) flags |= REACHABLE_FLAG;
+            stimulusFlags[i] = flags;
+        }
+
+        final int[] outInts = new int[2];
+        final float[] outFloats = new float[3];
+        nativeDecideForSpecies(species.ordinal(),
+                healthRatio, energyRatio, aggression, attackRange,
+                isOnFire, canAttack, canConsumeFood,
+                ambientDanger, hasShelter, canIdleSafely, canPathToFood,
+                stimulusKinds, stimulusDistances, stimulusStrengths, stimulusFlags, stimuli.length,
+                outInts, outFloats);
+        return new Decision(Action.values()[outInts[0]], outInts[1], outFloats[0], outFloats[1], outFloats[2]);
+    }
+
     private static Stimulus selectBestStimulus(Stimulus[] stimuli,
                                                StimulusKind kind,
                                                boolean requireVisible,
@@ -244,6 +333,27 @@ public final class NativeBiologicalAi {
             boolean canIdleSafely,
             boolean canPathToFood,
             float[] profileValues,
+            int[] stimulusKinds,
+            float[] stimulusDistances,
+            float[] stimulusStrengths,
+            int[] stimulusFlags,
+            int stimulusCount,
+            int[] outInts,
+            float[] outFloats);
+
+    private static native void nativeDecideForSpecies(
+            int species,
+            float healthRatio,
+            float energyRatio,
+            float aggression,
+            float attackRange,
+            boolean isOnFire,
+            boolean canAttack,
+            boolean canConsumeFood,
+            float ambientDanger,
+            boolean hasShelter,
+            boolean canIdleSafely,
+            boolean canPathToFood,
             int[] stimulusKinds,
             float[] stimulusDistances,
             float[] stimulusStrengths,

@@ -148,16 +148,19 @@ sourceSets {
         resources { srcDir("../paper-server/src/main/resources") }
         java { srcDir("../purpur-server/src/main/java") }
         resources { srcDir("../purpur-server/src/main/resources") }
-        java { srcDir("../tentacles-server/src/main/java") }
-        resources { srcDir("../tentacles-server/src/main/resources") }
+        java {
+            exclude(
+                "com/latticemc/lattice/mixin/SnifferMixin.java",
+                "com/latticemc/lattice/mixin/LlamaMixin.java",
+                "com/latticemc/lattice/mixin/PandaMixin.java"
+            )
+        }
     }
     test {
         java { srcDir("../paper-server/src/test/java") }
         resources { srcDir("../paper-server/src/test/resources") }
         java { srcDir("../purpur-server/src/test/java") }
         resources { srcDir("../purpur-server/src/test/resources") }
-        java { srcDir("../tentacles-server/src/test/java") }
-        resources { srcDir("../tentacles-server/src/test/resources") }
     }
 }
 val log4jPlugins = sourceSets.create("log4jPlugins") {

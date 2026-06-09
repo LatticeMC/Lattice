@@ -21,7 +21,10 @@
     "CamelMixin",
     "FrogMixin",
     "TurtleMixin",
-    "AxolotlMixin"
+    "AxolotlMixin",
+    "SnifferMixin",
+    "LlamaMixin",
+    "PandaMixin"
   ],
   "client": [],
   "injectors": {
