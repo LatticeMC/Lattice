@@ -49,6 +49,7 @@ public abstract class CowMixin {
                 entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
+                NativeBiologicalAi.Species.COW,
                 this.getHealth() / maxHealth,
                 this.isBaby() ? 0.60F : 0.75F,
                 0.0F,
