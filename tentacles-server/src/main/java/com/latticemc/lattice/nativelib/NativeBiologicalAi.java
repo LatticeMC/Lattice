@@ -19,6 +19,7 @@ public final class NativeBiologicalAi {
         SNIFFER,
         LLAMA,
         PANDA,
+        OCELOT,
     }
 
     public enum StimulusKind {

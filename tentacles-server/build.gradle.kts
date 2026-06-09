@@ -150,9 +150,6 @@ sourceSets {
         resources { srcDir("../purpur-server/src/main/resources") }
         java {
             exclude(
-                "com/latticemc/lattice/mixin/SnifferMixin.java",
-                "com/latticemc/lattice/mixin/LlamaMixin.java",
-                "com/latticemc/lattice/mixin/PandaMixin.java"
             )
         }
     }

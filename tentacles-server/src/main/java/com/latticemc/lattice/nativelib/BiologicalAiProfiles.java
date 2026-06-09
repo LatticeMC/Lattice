@@ -31,6 +31,8 @@ public final class BiologicalAiProfiles {
             new NativeBiologicalAi.Profile(0.38F, 0.62F, 0.35F, 0.30F, 0.78F, 0.18F, 0.35F, 4.0F, 2.5F);
     public static final NativeBiologicalAi.Profile PANDA =
             new NativeBiologicalAi.Profile(0.42F, 0.58F, 0.35F, 0.25F, 0.82F, 0.20F, 0.25F, 4.0F, 2.0F);
+    public static final NativeBiologicalAi.Profile OCELOT =
+            new NativeBiologicalAi.Profile(0.45F, 0.50F, 0.45F, 0.30F, 0.75F, 0.16F, 0.45F, 4.5F, 2.0F);
 
     private BiologicalAiProfiles() {}
 }

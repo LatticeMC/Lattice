@@ -24,7 +24,8 @@
     "AxolotlMixin",
     "SnifferMixin",
     "LlamaMixin",
-    "PandaMixin"
+    "PandaMixin",
+    "OcelotMixin"
   ],
   "client": [],
   "injectors": {
