@@ -1,0 +1,35 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "compatibilityLevel": "JAVA_21",
+  "package": "com.latticemc.lattice.mixin",
+  "refmap": "tentacles.refmap.json",
+  "verbose": true,
+  "mixins": [],
+  "server": [
+    "RegionFileMixin",
+    "PackedIntegerArrayMixin",
+    "MinecraftServerStartMixin",
+    "SheepMixin",
+    "PigMixin",
+    "CowMixin",
+    "ChickenMixin",
+    "RabbitMixin",
+    "BeeMixin",
+    "GoatMixin",
+    "ArmadilloMixin",
+    "CamelMixin",
+    "FrogMixin",
+    "TurtleMixin",
+    "AxolotlMixin",
+    "SnifferMixin",
+    "LlamaMixin",
+    "PandaMixin",
+    "OcelotMixin"
+  ],
+  "client": [],
+  "injectors": {
+    "defaultRequire": 1,
+    "maxShiftBy": 3
+  }
+}
