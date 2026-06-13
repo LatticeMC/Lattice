@@ -21,15 +21,7 @@ jobs:
         run: ./gradlew applyAllPatches --stacktrace
       - name: Fix mixin repository
         run: |
-          if ! grep -q "repo.spongepowered.org" tentacles-server/build.gradle.kts; then
-            sed -i 's|dependencies {|repositories { maven("https://repo.spongepowered.org/repository/maven-public/") }\ndependencies {|' tentacles-server/build.gradle.kts
-          fi
-          echo "--- tentacles-server/build.gradle.kts (around dependencies) ---"
-          grep -n -A2 -B2 "compileOnly\|repositories\|mixin\|dependencies {" tentacles-server/build.gradle.kts || true
-          echo "--- end ---"
-          echo "--- root build.gradle.kts repositories ---"
-          grep -n -A5 "repositories {" build.gradle.kts || true
-          echo "--- end ---"
-          ./gradlew :tentacles-server:dependencies --configuration compileClasspath --stacktrace 2>&1 | tail -50 || true
+          sed -i 's|dependencies {|repositories { maven("https://repo.spongepowered.org/repository/maven-public/") }\ndependencies {|' tentacles-server/build.gradle.kts
+          sed -i '/implementation(project(":tentacles-api"))/a\    compileOnly("org.spongepowered:mixin:0.8.7")' tentacles-server/build.gradle.kts
       - name: Build
         run: ./gradlew build --stacktrace
