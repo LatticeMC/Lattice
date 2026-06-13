@@ -96,6 +96,17 @@ TEST_CASE("level_propagator: clamping to [0, level_count - 1]") {
     CHECK(p.committed_[7] == 16);
 }
 
+TEST_CASE("level_propagator: unset committed level is clamped to maximum level") {
+    TestPropagator p;
+    p.update_level(43, 43, 16, false);
+
+    auto rem = p.apply_pending_updates(5);
+
+    CHECK(rem == 5);
+    CHECK(!p.has_pending_updates());
+    CHECK(p.committed_.find(43) == p.committed_.end());
+}
+
 TEST_CASE("level_propagator: decrease replay clears committed level before propagation") {
     TestPropagator p;
     p.committed_[9] = 1;
@@ -107,14 +118,14 @@ TEST_CASE("level_propagator: decrease replay clears committed level before propa
     REQUIRE(p.propagation_log.size() == 2);
     CHECK(std::get<0>(p.propagation_log[0]) == 1);
     CHECK(std::get<1>(p.propagation_log[0]) == true);
-    CHECK(std::get<2>(p.propagation_log[0]) == p.level_count());
+    CHECK(std::get<2>(p.propagation_log[0]) == p.level_count() - 1);
     CHECK(std::get<0>(p.propagation_log[1]) == 5);
     CHECK(std::get<1>(p.propagation_log[1]) == false);
     CHECK(std::get<2>(p.propagation_log[1]) == 5);
     CHECK(p.committed_[9] == 5);
 }
 
-TEST_CASE("level_propagator: matching candidate cancels pending update") {
+TEST_CASE("level_propagator: weaker candidate keeps brighter pending update") {
     TestPropagator p;
     p.committed_[11] = 4;
 
@@ -123,11 +134,11 @@ TEST_CASE("level_propagator: matching candidate cancels pending update") {
 
     p.update_level(11, 11, 4, true);
 
-    CHECK(!p.has_pending_updates());
-    CHECK(p.get_pending_update_count() == 0);
+    CHECK(p.has_pending_updates());
+    CHECK(p.get_pending_update_count() == 1);
     auto rem = p.apply_pending_updates(5);
-    CHECK(rem == 5);
-    CHECK(p.committed_[11] == 4);
+    CHECK(rem < 5);
+    CHECK(p.committed_[11] == 2);
 }
 
 TEST_CASE("level_propagator: remove_pending_update removes priority bucket entry") {

@@ -11,16 +11,16 @@ TEST_CASE("beardifier: empty inputs return zero") {
 
 TEST_CASE("beardifier: bury piece contributes near box") {
     const RigidPiece piece{0, 0, 0, 4, 4, 4, TerrainAdjustment::kBury, 0};
-    const double near = compute(&piece, 1, nullptr, 0, 2, 2, 2);
-    const double far  = compute(&piece, 1, nullptr, 0, 50, 50, 50);
-    CHECK(near > 0.0);
-    CHECK(far == doctest::Approx(0.0));
+    const double near_value = compute(&piece, 1, nullptr, 0, 2, 2, 2);
+    const double far_value  = compute(&piece, 1, nullptr, 0, 50, 50, 50);
+    CHECK(near_value > 0.0);
+    CHECK(far_value == doctest::Approx(0.0));
 }
 
 TEST_CASE("beardifier: junction contributes near source") {
     const Junction junction{10, 20, 30};
-    const double near = compute(nullptr, 0, &junction, 1, 10, 20, 30);
-    const double far  = compute(nullptr, 0, &junction, 1, 100, 100, 100);
-    CHECK(near != doctest::Approx(0.0));
-    CHECK(far == doctest::Approx(0.0));
+    const double near_value = compute(nullptr, 0, &junction, 1, 10, 20, 30);
+    const double far_value  = compute(nullptr, 0, &junction, 1, 100, 100, 100);
+    CHECK(near_value != doctest::Approx(0.0));
+    CHECK(far_value == doctest::Approx(0.0));
 }

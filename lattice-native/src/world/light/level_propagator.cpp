@@ -48,8 +48,14 @@ void LevelPropagator::update_level(std::int64_t source_id, std::int64_t id, int 
     // if (level >= level_count_) level = level_count_ - 1;" pair.
     if (level < 0)                  level = 0;
     if (level >= level_count_)      level = level_count_ - 1;
+    if (old_level < 0)              old_level = 0;
+    else if (old_level >= level_count_) old_level = level_count_ - 1;
 
     const bool has_pending = (current_level != level_count_);
+
+    if (!has_pending) {
+        current_level = old_level;
+    }
 
     // Vanilla's `method_15482 updateLevel(JJIIIZ)V`: for both passes the
     // new tentative is `min(currentLevel, candidate)`. The candidate is
@@ -82,7 +88,7 @@ void LevelPropagator::update_level(std::int64_t source_id, std::int64_t id, int 
     const int current_priority = calculate_priority(old_level, current_level);
     const int new_priority = calculate_priority(old_level, new_level);
 
-    if (new_level != current_level) {
+    if (old_level != new_level) {
         if (current_priority != new_priority && has_pending) {
             queue_.remove(id, current_priority, level_count_);
         }
@@ -134,7 +140,9 @@ int LevelPropagator::apply_pending_updates(int max_steps) noexcept {
         int new_level = new_level_byte;
         if (new_level < 0)                new_level = 0;
         else if (new_level > level_count_ - 1) new_level = level_count_ - 1;
-        const int old_level = get_level(id);
+        int old_level = get_level(id);
+        if (old_level < 0) old_level = 0;
+        else if (old_level >= level_count_) old_level = level_count_ - 1;
 
         if (new_level < old_level) {
             // Increase (brighter / closer): commit the new level and
@@ -145,7 +153,7 @@ int LevelPropagator::apply_pending_updates(int max_steps) noexcept {
             // Decrease: first clear the committed level so neighbour
             // re-evaluation observes this node as temporarily absent,
             // matching vanilla's two-phase "clear then replay" shape.
-            set_level(id, level_count_);
+            set_level(id, level_count_ - 1);
             if (new_level < level_count_) {
                 pending_updates_.put(id, static_cast<std::int8_t>(new_level));
                 queue_.enqueue(id, new_level);

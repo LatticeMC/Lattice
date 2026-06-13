@@ -120,7 +120,7 @@ public:
     }
 
     void reset_level(std::int64_t id) noexcept override {
-        if (cb_.set_level) cb_.set_level(cb_.user_data, id, level_count_);
+        if (cb_.set_level) cb_.set_level(cb_.user_data, id, level_count_ - 1);
     }
 
 private:

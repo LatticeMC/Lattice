@@ -171,10 +171,9 @@ protected:
         else if (a >= level_count_) a = level_count_ - 1;
         if (b < 0) b = 0;
         else if (b >= level_count_) b = level_count_ - 1;
-        // Vanilla's `calculatePriority`: pendingLevel >= storedLevel ?
-        //   pendingLevel : storedLevel * 18 - pendingLevel.
+        // Vanilla's `calculatePriority`: Math.min(Math.min(oldLevel, newLevel), levelCount - 1).
         // Lower priority value = dequeued first from the min-heap.
-        return b >= a ? b : a * 18 - b;
+        return a < b ? a : b;
     }
 
     /// `method_15488 getPropagatedLevel(sourceId, targetId, level)`. Pure.
