@@ -17,6 +17,8 @@
     "PalettedContainerAccessor",
     "HeightmapAccessor",
     "HeightmapMixin",
+    "OreVeinifierAccessor",
+    "NoiseChunkMixin",
     "MinecraftServerStartMixin",
     "SheepMixin",
     "PigMixin",
