@@ -51,8 +51,8 @@ manifest.mf
 # other stuff
 run/
 
-tentacles-api/build.gradle.kts
-tentacles-server/build.gradle.kts
+!tentacles-api/build.gradle.kts
+!tentacles-server/build.gradle.kts
 tentacles-server/src/minecraft
 purpur-api
 purpur-server
