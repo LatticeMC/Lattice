@@ -19,5 +19,15 @@ jobs:
         run: chmod +x ./gradlew
       - name: Apply patches
         run: ./gradlew applyAllPatches --stacktrace
+      - name: Fix mixin repository
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/init.gradle <<'EOF'
+          allprojects {
+              repositories {
+                  maven { url 'https://repo.spongepowered.org/repository/maven-public/' }
+              }
+          }
+          EOF
       - name: Build
         run: ./gradlew build --stacktrace
