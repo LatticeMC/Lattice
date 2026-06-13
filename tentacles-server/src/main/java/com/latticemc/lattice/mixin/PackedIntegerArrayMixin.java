@@ -23,4 +23,11 @@ public abstract class PackedIntegerArrayMixin {
         NativePaletteOps.bulkGet(this.data, this.elementBits, 0L, out, 0, this.size);
         ci.cancel();
     }
+
+    @Inject(method = "unpack([I)V", at = @At("HEAD"), cancellable = true)
+    private void lattice$unpack(int[] out, CallbackInfo ci) {
+        if (!LatticeNative.isLoaded()) return;
+        NativePaletteOps.bulkGet(this.data, this.elementBits, 0L, out, 0, this.size);
+        ci.cancel();
+    }
 }
