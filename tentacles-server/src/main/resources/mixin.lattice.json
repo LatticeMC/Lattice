@@ -10,6 +10,7 @@
     "RegionFileMixin",
     "PackedIntegerArrayMixin",
     "EntitySectionMixin",
+    "TrackedEntityVisibilityMixin",
     "BeardifierAccessor",
     "BeardifierMixin",
     "SurfaceSystemAccessor",
