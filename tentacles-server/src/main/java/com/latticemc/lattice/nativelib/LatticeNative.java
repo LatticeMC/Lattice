@@ -1,6 +1,8 @@
 package com.latticemc.lattice.nativelib;
 
 import com.latticemc.lattice.bootstrap.LatticeNativeLoader;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -8,6 +10,7 @@ public final class LatticeNative {
     private static final Logger LOGGER = LoggerFactory.getLogger("LatticeNative");
     private static final boolean DISABLED = Boolean.getBoolean("lattice.disable");
     public static final boolean VERIFY = Boolean.getBoolean("lattice.verify");
+    private static final Set<String> FALLBACK_WARNINGS = ConcurrentHashMap.newKeySet();
 
     private static volatile boolean loaded = false;
     private static volatile boolean loadFailed = false;
@@ -46,6 +49,15 @@ public final class LatticeNative {
     public static boolean isUnavailable() { return loadFailed; }
     public static String failureReason() { return failureReason; }
     public static String cpuSummary() { return safeCpuSummary(); }
+
+    public static void logFallbackOnce(String module, String detail) {
+        if (!FALLBACK_WARNINGS.add(module)) return;
+        if (detail == null || detail.isBlank()) {
+            LOGGER.warn("Lattice module '{}' fell back to JVM implementation.", module);
+            return;
+        }
+        LOGGER.warn("Lattice module '{}' fell back to JVM implementation: {}", module, detail);
+    }
 
     private static String safeCpuSummary() {
         if (!loaded) return "(not loaded)";

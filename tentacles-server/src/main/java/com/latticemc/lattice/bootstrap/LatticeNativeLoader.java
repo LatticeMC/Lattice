@@ -94,10 +94,11 @@ public final class LatticeNativeLoader {
 
         Path extracted;
         try (InputStream in = cl.getResourceAsStream(resourcePath)) {
-            if (in == null) {
-                throw newUnsatisfied("lattice native missing from jar: " + resourcePath, null);
+            if (in != null) {
+                extracted = extractToCache(libFile, in);
+            } else {
+                extracted = extractFromFallbackResource(cl, libFile, resourcePath);
             }
-            extracted = extractToCache(libFile, in);
         } catch (IOException e) {
             throw newUnsatisfied("failed to read " + resourcePath + " from classpath", e);
         }
@@ -109,6 +110,18 @@ public final class LatticeNativeLoader {
         }
 
         LOGGER.info("Loaded lattice native ({}): {}", pf.tag(), extracted);
+    }
+
+    private static Path extractFromFallbackResource(ClassLoader cl,
+                                                    String libFile,
+                                                    String originalResourcePath) throws IOException {
+        try (InputStream fallback = cl.getResourceAsStream(libFile)) {
+            if (fallback == null) {
+                throw newUnsatisfied("lattice native missing from jar: " + originalResourcePath + " (and fallback resource " + libFile + ")", null);
+            }
+            LOGGER.warn("Lattice native loaded from fallback classpath resource '{}'; prefer packaging under META-INF/native/<platform>/{}", libFile, libFile);
+            return extractToCache(libFile, fallback);
+        }
     }
 
     private static Path extractToCache(String libFile, InputStream in) throws IOException {

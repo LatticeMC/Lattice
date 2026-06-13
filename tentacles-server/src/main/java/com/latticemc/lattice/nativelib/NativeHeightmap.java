@@ -59,6 +59,7 @@ public final class NativeHeightmap {
                     sectionCount, sectionBaseY, defaultHeight, out);
             return;
         }
+        LatticeNative.logFallbackOnce("heightmap", "native heightmap population unavailable");
         javaPopulate(storages, elementBits, passingMasksFlat, maskLongsPerSection,
                 sectionCount, sectionBaseY, defaultHeight, out);
     }

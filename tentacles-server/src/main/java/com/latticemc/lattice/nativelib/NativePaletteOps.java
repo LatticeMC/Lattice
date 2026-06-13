@@ -29,6 +29,7 @@ public final class NativePaletteOps {
             nativeBulkGet(data, elementBits, startIndex, out, outOff, count);
             return;
         }
+        LatticeNative.logFallbackOnce("palette_ops", "native palette bulkGet unavailable");
         javaBulkGet(data, elementBits, startIndex, out, outOff, count);
     }
 
@@ -38,6 +39,7 @@ public final class NativePaletteOps {
             nativeBulkSet(data, elementBits, startIndex, in, inOff, count);
             return;
         }
+        LatticeNative.logFallbackOnce("palette_ops", "native palette bulkSet unavailable");
         javaBulkSet(data, elementBits, startIndex, in, inOff, count);
     }
 

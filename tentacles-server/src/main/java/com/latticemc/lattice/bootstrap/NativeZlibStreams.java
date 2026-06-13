@@ -29,6 +29,7 @@ public final class NativeZlibStreams {
 
     public static InputStream inflater(InputStream source) throws IOException {
         if (!com.latticemc.lattice.nativelib.LatticeNative.isLoaded()) {
+            com.latticemc.lattice.nativelib.LatticeNative.logFallbackOnce("regionfile_zlib", "native inflater unavailable");
             return new java.util.zip.InflaterInputStream(source);
         }
         return new LazyNativeInflaterStream(source);
@@ -36,6 +37,7 @@ public final class NativeZlibStreams {
 
     public static OutputStream deflater(OutputStream sink) {
         if (!com.latticemc.lattice.nativelib.LatticeNative.isLoaded()) {
+            com.latticemc.lattice.nativelib.LatticeNative.logFallbackOnce("regionfile_zlib", "native deflater unavailable");
             return new java.util.zip.DeflaterOutputStream(sink);
         }
         return new BufferingNativeDeflaterStream(sink);

@@ -39,6 +39,7 @@ public final class NativeHomeTargetSampler {
                     preferredDistance,
                     minClearance);
         }
+        LatticeNative.logFallbackOnce("home_target_sampler", "native home target sampler unavailable");
         return javaSampleHomeTarget(candidateXyz, candidateCount,
                 selfX, selfY, selfZ,
                 homeX, homeY, homeZ,

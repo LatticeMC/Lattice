@@ -37,6 +37,7 @@ public final class NativeFleeTargetSampler {
                     obstacleAabbs, obstacleCount,
                     minClearance);
         }
+        LatticeNative.logFallbackOnce("flee_target_sampler", "native flee target sampler unavailable");
         return javaSampleFleeTarget(candidateXyz, candidateCount,
                 selfX, selfY, selfZ,
                 threatX, threatY, threatZ,

@@ -39,6 +39,7 @@ public final class NativeApproachTargetSampler {
                     preferredDistance,
                     minClearance);
         }
+        LatticeNative.logFallbackOnce("approach_target_sampler", "native approach target sampler unavailable");
         return javaSampleApproachTarget(candidateXyz, candidateCount,
                 selfX, selfY, selfZ,
                 targetX, targetY, targetZ,

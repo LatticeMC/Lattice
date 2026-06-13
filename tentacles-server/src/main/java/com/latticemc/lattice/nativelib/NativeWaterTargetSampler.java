@@ -30,6 +30,7 @@ public final class NativeWaterTargetSampler {
             return nativeSampleWaterTarget(candidateXyz, candidateIsWater, candidateCount,
                     selfX, selfY, selfZ, preferWater);
         }
+        LatticeNative.logFallbackOnce("water_target_sampler", "native water target sampler unavailable");
         return javaSampleWaterTarget(candidateXyz, candidateIsWater, candidateCount,
                 selfX, selfY, selfZ, preferWater);
     }
