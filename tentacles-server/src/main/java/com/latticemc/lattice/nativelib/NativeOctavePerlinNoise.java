@@ -34,6 +34,10 @@ public final class NativeOctavePerlinNoise {
         }
     }
 
+    long handle() {
+        return this.handle;
+    }
+
     public double sample(double x, double y, double z) {
         return nativeSample(this.handle, x, y, z);
     }

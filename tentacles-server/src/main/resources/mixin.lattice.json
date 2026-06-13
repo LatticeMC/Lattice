@@ -29,6 +29,7 @@
     "PerlinNoiseAccessor",
     "PerlinNoiseMixin",
     "NormalNoiseMixin",
+    "BlendedNoiseMixin",
     "SheepMixin",
     "PigMixin",
     "CowMixin",
