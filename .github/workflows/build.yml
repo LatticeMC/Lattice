@@ -21,13 +21,8 @@ jobs:
         run: ./gradlew applyAllPatches --stacktrace
       - name: Fix mixin repository
         run: |
-          mkdir -p ~/.gradle
-          cat > ~/.gradle/init.gradle <<'EOF'
-          allprojects {
-              repositories {
-                  maven { url 'https://repo.spongepowered.org/repository/maven-public/' }
-              }
-          }
-          EOF
+          if ! grep -q "repo.spongepowered.org" tentacles-server/build.gradle.kts; then
+            sed -i 's|dependencies {|repositories { maven("https://repo.spongepowered.org/repository/maven-public/") }\ndependencies {|' tentacles-server/build.gradle.kts
+          fi
       - name: Build
         run: ./gradlew build --stacktrace
