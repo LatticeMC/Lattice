@@ -20,9 +20,6 @@ public:
         auto it = committed_.find(id);
         return it == committed_.end() ? level_count_ : it->second;
     }
-    void set_level(std::int64_t id, int level) noexcept override {
-        committed_[id] = level;
-    }
     int get_propagated_level(std::int64_t /*src*/, std::int64_t /*tgt*/,
                              int level) noexcept override {
         return level + 1; // simple "1 attenuation per hop"
