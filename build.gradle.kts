@@ -50,7 +50,6 @@ subprojects {
     repositories {
         mavenCentral()
         maven(paperMavenPublicUrl)
-        maven("https://repo.spongepowered.org/repository/maven-public/")
     }
 
     tasks.withType<AbstractArchiveTask>().configureEach {
