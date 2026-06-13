@@ -115,15 +115,15 @@ TEST_CASE("block_light_engine: empty section clears output") {
 
 TEST_CASE("block_light_engine: single torch propagates through air") {
     SectionFixture f;
-    f.emission[idx(8, 8, 8)] = 14;
+    f.emission[idx(8, 8, 8)] = 8;
 
     auto result = rebuild_block_light_section(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.light[idx(8, 8, 8)] == 14);
-    CHECK(f.light[idx(9, 8, 8)] == 13);
-    CHECK(f.light[idx(10, 8, 8)] == 12);
-    CHECK(f.light[idx(8, 9, 8)] == 13);
-    CHECK(f.light[idx(8, 8, 9)] == 13);
+    CHECK(f.light[idx(8, 8, 8)] == 8);
+    CHECK(f.light[idx(9, 8, 8)] == 7);
+    CHECK(f.light[idx(10, 8, 8)] == 6);
+    CHECK(f.light[idx(8, 9, 8)] == 7);
+    CHECK(f.light[idx(8, 8, 9)] == 7);
     CHECK(result.emission_sources == 1);
     CHECK(result.propagated_writes > 0);
     CHECK(result.lit_cells > 1);
@@ -131,42 +131,42 @@ TEST_CASE("block_light_engine: single torch propagates through air") {
 
 TEST_CASE("block_light_engine: opacity attenuates by target block") {
     SectionFixture f;
-    f.emission[idx(1, 1, 1)] = 10;
-    f.opacity[idx(2, 1, 1)] = 5;
+    f.emission[idx(5, 5, 5)] = 7;
+    f.opacity[idx(6, 5, 5)] = 5;
 
     auto result = rebuild_block_light_section(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.light[idx(1, 1, 1)] == 10);
-    CHECK(f.light[idx(2, 1, 1)] == 5);
-    CHECK(f.light[idx(3, 1, 1)] == 4);
+    CHECK(f.light[idx(5, 5, 5)] == 7);
+    CHECK(f.light[idx(6, 5, 5)] == 2);
+    CHECK(f.light[idx(7, 5, 5)] == 1);
 }
 
 TEST_CASE("block_light_engine: opaque wall stops forward propagation") {
     SectionFixture f;
-    f.emission[idx(1, 1, 1)] = 10;
+    f.emission[idx(5, 5, 5)] = 7;
 
-    // Full YZ wall at x=2 so light can't route around inside the section.
+    // Full YZ wall at x=6 so light can't route around inside the section.
     for (int y = 0; y < 16; ++y) {
         for (int z = 0; z < 16; ++z) {
-            f.opacity[idx(2, y, z)] = 15;
+            f.opacity[idx(6, y, z)] = 15;
         }
     }
 
     auto result = rebuild_block_light_section(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.light[idx(2, 1, 1)] == 0);
-    CHECK(f.light[idx(3, 1, 1)] == 0);
+    CHECK(f.light[idx(6, 5, 5)] == 0);
+    CHECK(f.light[idx(7, 5, 5)] == 0);
 }
 
 TEST_CASE("block_light_engine: propagates vertically across stacked sections") {
     ColumnFixture f;
-    f.low.emission[idx(8, 15, 8)] = 12;
+    f.low.emission[idx(8, 8, 8)] = 9;
 
     auto result = rebuild_block_light_column(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.low.light[idx(8, 15, 8)] == 12);
-    CHECK(f.high.light[idx(8, 0, 8)] == 11);
-    CHECK(f.high.light[idx(8, 1, 8)] == 10);
+    CHECK(f.low.light[idx(8, 8, 8)] == 9);
+    CHECK(f.high.light[idx(8, 0, 8)] == 1);
+    CHECK(f.high.light[idx(8, 1, 8)] == 0);
 }
 
 TEST_CASE("block_light_engine: shape occlusion flag forces fallback") {
@@ -193,14 +193,14 @@ TEST_CASE("block_light_engine: shape occlusion in any section forces fallback") 
 
 TEST_CASE("block_light_engine: west neighbor emission propagates into center") {
     NeighborhoodFixture f;
-    f.west.low.emission[idx(15, 8, 8)] = 12;
+    f.west.low.emission[idx(12, 8, 8)] = 7;
     f.west.low.light.fill(0xEE);
 
     auto result = rebuild_block_light_neighborhood(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.center.low.light[idx(0, 8, 8)] == 11);
-    CHECK(f.center.low.light[idx(1, 8, 8)] == 10);
-    CHECK(f.west.low.light[idx(15, 8, 8)] == 0xEE);
+    CHECK(f.center.low.light[idx(0, 8, 8)] == 3);
+    CHECK(f.center.low.light[idx(1, 8, 8)] == 2);
+    CHECK(f.west.low.light[idx(12, 8, 8)] == 0xEE);
     CHECK(result.emission_sources == 0);
     CHECK(result.propagated_writes > 0);
     CHECK(result.lit_cells > 0);
@@ -208,12 +208,12 @@ TEST_CASE("block_light_engine: west neighbor emission propagates into center") {
 
 TEST_CASE("block_light_engine: east neighbor emission propagates into center") {
     NeighborhoodFixture f;
-    f.east.low.emission[idx(0, 8, 8)] = 12;
+    f.east.low.emission[idx(0, 8, 8)] = 7;
 
     auto result = rebuild_block_light_neighborhood(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.center.low.light[idx(15, 8, 8)] == 11);
-    CHECK(f.center.low.light[idx(14, 8, 8)] == 10);
+    CHECK(f.center.low.light[idx(15, 8, 8)] == 6);
+    CHECK(f.center.low.light[idx(14, 8, 8)] == 5);
 }
 
 TEST_CASE("block_light_engine: north neighbor emission propagates into center") {
@@ -239,27 +239,27 @@ TEST_CASE("block_light_engine: south neighbor emission propagates into center") 
 TEST_CASE("block_light_engine: neighbor light output is optional") {
     ColumnFixture center;
     ColumnFixture west;
-    west.low.emission[idx(15, 8, 8)] = 12;
+    west.low.emission[idx(12, 8, 8)] = 7;
 
     auto center_column = center.view();
     auto west_column = west.read_only_view();
     auto result = rebuild_block_light_neighborhood(
         BlockLightNeighborhoodView{&center_column, &west_column, nullptr, nullptr, nullptr});
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(center.low.light[idx(0, 8, 8)] == 11);
+    CHECK(center.low.light[idx(0, 8, 8)] == 3);
 }
 
 TEST_CASE("block_light_engine: center emission source is counted") {
     NeighborhoodFixture f;
-    f.center.low.emission[idx(8, 8, 8)] = 15;
-    f.west.low.emission[idx(15, 8, 8)] = 12;
+    f.center.low.emission[idx(8, 8, 8)] = 8;
+    f.west.low.emission[idx(12, 8, 8)] = 7;
 
     auto result = rebuild_block_light_neighborhood(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
     CHECK(result.emission_sources == 1);
-    CHECK(f.center.low.light[idx(8, 8, 8)] == 15);
-    CHECK(f.center.low.light[idx(9, 8, 8)] == 14);
-    CHECK(f.center.low.light[idx(0, 8, 8)] == 11);
+    CHECK(f.center.low.light[idx(8, 8, 8)] == 8);
+    CHECK(f.center.low.light[idx(9, 8, 8)] == 7);
+    CHECK(f.center.low.light[idx(0, 8, 8)] == 3);
 }
 
 TEST_CASE("block_light_engine: neighbor shape occlusion forces fallback") {

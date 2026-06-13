@@ -231,7 +231,7 @@ TEST_CASE("level_propagator: weaker source refills after stronger source removal
         int do_recalculate_level(std::int64_t id, std::int64_t excluded_id,
                                  int max_level) noexcept override {
             if (id != 2) return max_level;
-            int best = max_level;
+            int best = level_count() - 1;
             if (excluded_id != 10) best = calculate_level(best, 6);
             if (excluded_id != 20) best = calculate_level(best, 4);
             return best;

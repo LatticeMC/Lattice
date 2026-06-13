@@ -306,6 +306,7 @@ TEST_CASE("chunknoise: final_density column helpers prefill and advance") {
     s.interpolate_z(Channel::kFinalDensity, 0.0);
     CHECK(s.sample_final_density(0.0, 0.0, 0.0, 0, 0) == doctest::Approx(2.0).epsilon(1e-15));
     s.interpolate_x(Channel::kFinalDensity, 1.0);
+    s.interpolate_z(Channel::kFinalDensity, 0.0);
     CHECK(s.sample_final_density(0.0, 0.0, 0.0, 0, 0) == doctest::Approx(9.0).epsilon(1e-15));
 }
 

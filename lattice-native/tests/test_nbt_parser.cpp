@@ -243,8 +243,7 @@ TEST_CASE("nbt_parser: truncated TAG_String payload rejected") {
     push_u8(raw, 8);            // TAG_String
     push_name(raw, "S");
     push_u16_be(raw, 2);        // declares two payload bytes
-    push_u8(raw, 'A');          // only one byte present
-    push_u8(raw, 0);
+    push_u8(raw, 'A');          // only one byte present — stream ends here
 
     auto r = parse_into_index(raw);
     check_parse_status(r, Status::kTruncated, 7);

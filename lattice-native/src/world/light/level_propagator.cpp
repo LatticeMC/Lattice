@@ -51,12 +51,6 @@ void LevelPropagator::update_level(std::int64_t source_id, std::int64_t id, int 
 
     const bool has_pending = (current_level != level_count_);
 
-    if (!has_pending) {
-        // No prior tentative level. Compare against the actual stored
-        // level (`old_level`) and decide whether to enqueue.
-        current_level = old_level;
-    }
-
     // Vanilla's `method_15482 updateLevel(JJIIIZ)V`: for both passes the
     // new tentative is `min(currentLevel, candidate)`. The candidate is
     // computed differently for increase vs decrease:
@@ -88,7 +82,7 @@ void LevelPropagator::update_level(std::int64_t source_id, std::int64_t id, int 
     const int current_priority = calculate_priority(old_level, current_level);
     const int new_priority = calculate_priority(old_level, new_level);
 
-    if (old_level != new_level) {
+    if (new_level != current_level) {
         if (current_priority != new_priority && has_pending) {
             queue_.remove(id, current_priority, level_count_);
         }
