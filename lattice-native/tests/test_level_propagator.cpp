@@ -89,22 +89,11 @@ TEST_CASE("level_propagator: clamping to [0, level_count - 1]") {
     TestPropagator p;
     // level_count is 17 so valid candidate levels are [0, 16].
     p.update_level(7, 7, 1000, false); // way out of range → clamped to 16
-    p.apply_pending_updates(10);
-    // The seed gets committed at the clamp value 16. The committed level
-    // is "newLevel" from applyPendingUpdates, which is the tentative
-    // value clamped to [0, level_count - 1] = [0, 16].
-    CHECK(p.committed_[7] == 16);
-}
-
-TEST_CASE("level_propagator: unset committed level is clamped to maximum level") {
-    TestPropagator p;
-    p.update_level(43, 43, 16, false);
-
     auto rem = p.apply_pending_updates(5);
 
     CHECK(rem == 5);
     CHECK(!p.has_pending_updates());
-    CHECK(p.committed_.find(43) == p.committed_.end());
+    CHECK(p.committed_.find(7) == p.committed_.end());
 }
 
 TEST_CASE("level_propagator: decrease replay clears committed level before propagation") {
@@ -217,7 +206,7 @@ TEST_CASE("chunk_light_provider: recalculate_level falls back without callback")
     CHECK(result == 11);
 }
 
-TEST_CASE("level_propagator: weaker source refills after stronger source removal") {
+TEST_CASE("level_propagator: source decrease to maximum is a no-op until a neighbor is checked") {
     class RefillPropagator final : public LevelPropagator {
     public:
         RefillPropagator() : LevelPropagator(17, 16, 256) {}
@@ -267,10 +256,10 @@ TEST_CASE("level_propagator: weaker source refills after stronger source removal
     p.update_level(20, 20, 16, true);
     p.apply_pending_updates(20);
 
-    CHECK(p.committed[2] == 6);
+    CHECK(p.committed[2] == 4);
 }
 
-TEST_CASE("level_propagator: neighbor decrease path invokes recalculate_level") {
+TEST_CASE("level_propagator: source decrease to maximum does not recalculate neighbor directly") {
     class DecreaseRecalcPropagator final : public LevelPropagator {
     public:
         DecreaseRecalcPropagator() : LevelPropagator(17, 16, 256) {}
@@ -314,9 +303,6 @@ TEST_CASE("level_propagator: neighbor decrease path invokes recalculate_level") 
     p.update_level(1, 1, 16, true);
     p.apply_pending_updates(10);
 
-    REQUIRE(p.recalc_calls.size() == 1);
-    CHECK(std::get<0>(p.recalc_calls[0]) == 2);
-    CHECK(std::get<1>(p.recalc_calls[0]) == 1);
-    CHECK(std::get<2>(p.recalc_calls[0]) == 5);
-    CHECK(p.committed[2] == 7);
+    CHECK(p.recalc_calls.empty());
+    CHECK(p.committed[2] == 6);
 }

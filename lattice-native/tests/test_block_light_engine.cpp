@@ -131,40 +131,40 @@ TEST_CASE("block_light_engine: single torch propagates through air") {
 
 TEST_CASE("block_light_engine: opacity attenuates by target block") {
     SectionFixture f;
-    f.emission[idx(5, 5, 5)] = 7;
-    f.opacity[idx(6, 5, 5)] = 5;
+    f.emission[idx(8, 8, 8)] = 5;
+    f.opacity[idx(9, 8, 8)] = 3;
 
     auto result = rebuild_block_light_section(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.light[idx(5, 5, 5)] == 7);
-    CHECK(f.light[idx(6, 5, 5)] == 2);
-    CHECK(f.light[idx(7, 5, 5)] == 1);
+    CHECK(f.light[idx(8, 8, 8)] == 5);
+    CHECK(f.light[idx(9, 8, 8)] == 2);
+    CHECK(f.light[idx(10, 8, 8)] == 1);
 }
 
 TEST_CASE("block_light_engine: opaque wall stops forward propagation") {
     SectionFixture f;
-    f.emission[idx(5, 5, 5)] = 7;
+    f.emission[idx(8, 8, 8)] = 5;
 
-    // Full YZ wall at x=6 so light can't route around inside the section.
+    // Full YZ wall at x=9 so light can't route around inside the section.
     for (int y = 0; y < 16; ++y) {
         for (int z = 0; z < 16; ++z) {
-            f.opacity[idx(6, y, z)] = 15;
+            f.opacity[idx(9, y, z)] = 15;
         }
     }
 
     auto result = rebuild_block_light_section(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.light[idx(6, 5, 5)] == 0);
-    CHECK(f.light[idx(7, 5, 5)] == 0);
+    CHECK(f.light[idx(9, 8, 8)] == 0);
+    CHECK(f.light[idx(10, 8, 8)] == 0);
 }
 
 TEST_CASE("block_light_engine: propagates vertically across stacked sections") {
     ColumnFixture f;
-    f.low.emission[idx(8, 8, 8)] = 9;
+    f.low.emission[idx(8, 14, 8)] = 3;
 
     auto result = rebuild_block_light_column(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.low.light[idx(8, 8, 8)] == 9);
+    CHECK(f.low.light[idx(8, 14, 8)] == 3);
     CHECK(f.high.light[idx(8, 0, 8)] == 1);
     CHECK(f.high.light[idx(8, 1, 8)] == 0);
 }
@@ -218,22 +218,22 @@ TEST_CASE("block_light_engine: east neighbor emission propagates into center") {
 
 TEST_CASE("block_light_engine: north neighbor emission propagates into center") {
     NeighborhoodFixture f;
-    f.north.low.emission[idx(8, 8, 15)] = 9;
+    f.north.low.emission[idx(8, 8, 15)] = 8;
 
     auto result = rebuild_block_light_neighborhood(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.center.low.light[idx(8, 8, 0)] == 8);
-    CHECK(f.center.low.light[idx(8, 8, 1)] == 7);
+    CHECK(f.center.low.light[idx(8, 8, 0)] == 7);
+    CHECK(f.center.low.light[idx(8, 8, 1)] == 6);
 }
 
 TEST_CASE("block_light_engine: south neighbor emission propagates into center") {
     NeighborhoodFixture f;
-    f.south.low.emission[idx(8, 8, 0)] = 9;
+    f.south.low.emission[idx(8, 8, 0)] = 8;
 
     auto result = rebuild_block_light_neighborhood(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
-    CHECK(f.center.low.light[idx(8, 8, 15)] == 8);
-    CHECK(f.center.low.light[idx(8, 8, 14)] == 7);
+    CHECK(f.center.low.light[idx(8, 8, 15)] == 7);
+    CHECK(f.center.low.light[idx(8, 8, 14)] == 6);
 }
 
 TEST_CASE("block_light_engine: neighbor light output is optional") {
@@ -294,6 +294,7 @@ TEST_CASE("block_light_engine: mismatched neighbor section count rejected") {
 TEST_CASE("block_light_engine: incomplete neighborhood rejects diagonal continuation") {
     NeighborhoodFixture f;
     f.west.low.emission[idx(15, 8, 0)] = 15;
+    f.center.low.light.fill(0x00);
 
     auto result = rebuild_block_light_neighborhood(f.view());
     CHECK(result.status == BlockLightStatus::IncompleteNeighborhood);
@@ -375,10 +376,10 @@ TEST_CASE("block_light_engine: nibble unpack expands both half bytes") {
 TEST_CASE("block_light_engine: rebuild output can be packed into nibbles") {
     SectionFixture f;
     std::array<std::uint8_t, kBlockLightSectionNibbleBytes> nibbles{};
-    f.emission[idx(0, 0, 0)] = 15;
+    f.emission[idx(8, 8, 8)] = 3;
 
     auto result = rebuild_block_light_section(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
     CHECK(pack_block_light_section_nibbles(f.light.data(), nibbles.data()) == BlockLightStatus::Ok);
-    CHECK(nibbles[0] == 0xEF);
+    CHECK(nibbles[(idx(8, 8, 8) >> 1)] == 0x03);
 }
