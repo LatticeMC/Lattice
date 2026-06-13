@@ -74,8 +74,16 @@
 -            "Brand-Id" to "purpurmc:purpur", // Purpur
 -            "Brand-Name" to "Purpur", // Purpur
 +            "Specification-Vendor" to "Tentacles Team", // Purpur // Tentacles
-+            "Brand-Id" to "tentaclesmc:tentacles", // Purpur // Tentacles
++            "Brand-Id" to "tentaclesmc:tentacles", // Tentacles
 +            "Brand-Name" to "Tentacles", // Purpur // Tentacles
              "Build-Number" to (build ?: ""),
              "Build-Time" to buildTime.toString(),
              "Git-Branch" to gitBranch,
+@@ -61,6 +_,7 @@
+ tasks.generateDevelopmentBundle {
+     libraryRepositories.addAll(
+         "https://repo.maven.apache.org/maven2/",
+         paperMavenPublicUrl,
++        "https://repo.spongepowered.org/repository/maven-public/",
+     )
+ }
