@@ -9,6 +9,7 @@
   "server": [
     "RegionFileMixin",
     "PackedIntegerArrayMixin",
+    "EntitySectionMixin",
     "BeardifierAccessor",
     "BeardifierMixin",
     "SurfaceSystemAccessor",
