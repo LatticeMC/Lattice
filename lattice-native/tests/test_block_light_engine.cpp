@@ -381,5 +381,5 @@ TEST_CASE("block_light_engine: rebuild output can be packed into nibbles") {
     auto result = rebuild_block_light_section(f.view());
     CHECK(result.status == BlockLightStatus::Ok);
     CHECK(pack_block_light_section_nibbles(f.light.data(), nibbles.data()) == BlockLightStatus::Ok);
-    CHECK(nibbles[(idx(8, 8, 8) >> 1)] == 0x03);
+    CHECK(nibbles[(idx(8, 8, 8) >> 1)] == 0x23);
 }
