@@ -5,6 +5,8 @@ import java.util.Arrays;
 public final class NativeCollisionSweep {
     public static final int AABB_STRIDE = 6;
     public static final int MOVEMENT_STRIDE = 3;
+    private static final int[] AXIS_ORDER_YXZ = {1, 0, 2};
+    private static final int[] AXIS_ORDER_YZX = {1, 2, 0};
 
     private NativeCollisionSweep() {}
 
@@ -22,8 +24,8 @@ public final class NativeCollisionSweep {
         if (LatticeNative.isLoaded()) {
             if (LatticeNative.VERIFY) {
                 double[] shadow = movement.clone();
-                javaAdjustMovement(moving, shadow, obstacles, obstacleCount);
-                nativeAdjustMovement(moving, movement, obstacles, obstacleCount);
+                javaAdjustMovementVanilla(moving, shadow, obstacles, obstacleCount);
+                nativeAdjustMovementVanilla(moving, movement, obstacles, obstacleCount);
                 if (!Arrays.equals(shadow, movement)) {
                     throw new AssertionError("lattice.verify: collision sweep mismatch"
                             + " jvm=" + Arrays.toString(shadow)
@@ -31,29 +33,59 @@ public final class NativeCollisionSweep {
                 }
                 return;
             }
-            nativeAdjustMovement(moving, movement, obstacles, obstacleCount);
+            nativeAdjustMovementVanilla(moving, movement, obstacles, obstacleCount);
             return;
         }
 
         LatticeNative.logFallbackOnce("collision_sweep", "native collision sweep unavailable");
-        javaAdjustMovement(moving, movement, obstacles, obstacleCount);
+        javaAdjustMovementVanilla(moving, movement, obstacles, obstacleCount);
     }
 
-    public static boolean canUseNativeAxisOrder(double[] movement) {
-        if (movement == null || movement.length < MOVEMENT_STRIDE) {
-            return false;
+    private static void nativeAdjustMovementVanilla(double[] moving,
+                                                    double[] movement,
+                                                    double[] obstacles,
+                                                    int obstacleCount) {
+        if (usesNativeAxisOrder(movement)) {
+            nativeAdjustMovement(moving, movement, obstacles, obstacleCount);
+            return;
         }
+
+        double[] remappedMoving = remapAabbXzy(moving);
+        double[] remappedMovement = {movement[2], movement[1], movement[0]};
+        double[] remappedObstacles = remapAabbsXzy(obstacles, obstacleCount);
+        nativeAdjustMovement(remappedMoving, remappedMovement, remappedObstacles, obstacleCount);
+        movement[0] = remappedMovement[2];
+        movement[1] = remappedMovement[1];
+        movement[2] = remappedMovement[0];
+    }
+
+    private static boolean usesNativeAxisOrder(double[] movement) {
         return Math.abs(movement[0]) >= Math.abs(movement[2]);
+    }
+
+    public static void javaAdjustMovementVanilla(double[] moving,
+                                                 double[] movement,
+                                                 double[] obstacles,
+                                                 int obstacleCount) {
+        javaAdjustMovement(moving, movement, obstacles, obstacleCount,
+                usesNativeAxisOrder(movement) ? AXIS_ORDER_YXZ : AXIS_ORDER_YZX);
     }
 
     public static void javaAdjustMovement(double[] moving,
                                           double[] movement,
                                           double[] obstacles,
                                           int obstacleCount) {
+        javaAdjustMovement(moving, movement, obstacles, obstacleCount, AXIS_ORDER_YXZ);
+    }
+
+    private static void javaAdjustMovement(double[] moving,
+                                           double[] movement,
+                                           double[] obstacles,
+                                           int obstacleCount,
+                                           int[] axisOrder) {
         if (obstacleCount == 0) return;
 
         double[] current = moving.clone();
-        int[] axisOrder = {1, 0, 2};
         for (int axis : axisOrder) {
             double adjusted = movement[axis];
             for (int i = 0; i < obstacleCount; ++i) {
@@ -94,6 +126,27 @@ public final class NativeCollisionSweep {
             if (gap > desired) return gap;
         }
         return desired;
+    }
+
+    private static double[] remapAabbXzy(double[] aabb) {
+        return new double[] {
+                aabb[2], aabb[1], aabb[0],
+                aabb[5], aabb[4], aabb[3],
+        };
+    }
+
+    private static double[] remapAabbsXzy(double[] aabbs, int obstacleCount) {
+        double[] remapped = new double[obstacleCount * AABB_STRIDE];
+        for (int i = 0; i < obstacleCount; ++i) {
+            int base = i * AABB_STRIDE;
+            remapped[base] = aabbs[base + 2];
+            remapped[base + 1] = aabbs[base + 1];
+            remapped[base + 2] = aabbs[base];
+            remapped[base + 3] = aabbs[base + 5];
+            remapped[base + 4] = aabbs[base + 4];
+            remapped[base + 5] = aabbs[base + 3];
+        }
+        return remapped;
     }
 
     private static void validate(double[] moving,

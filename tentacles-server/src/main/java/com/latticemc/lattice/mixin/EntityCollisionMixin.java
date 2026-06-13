@@ -51,9 +51,6 @@ public abstract class EntityCollisionMixin {
                 entityBB.maxX, entityBB.maxY, entityBB.maxZ,
         };
         double[] adjusted = {deltaMovement.x, deltaMovement.y, deltaMovement.z};
-        if (!NativeCollisionSweep.canUseNativeAxisOrder(adjusted)) {
-            return;
-        }
         NativeCollisionSweep.adjustMovement(moving, adjusted, obstacles, obstacleCount);
         cir.setReturnValue(new Vec3(adjusted[0], adjusted[1], adjusted[2]));
     }
