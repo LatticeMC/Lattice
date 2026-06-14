@@ -36,6 +36,18 @@ final class PredatoryAnimalAiSupport {
                         candidates[candidate * 3 + 1],
                         candidates[candidate * 3 + 2],
                         Math.max(1.2, decision.moveSpeed()));
+            } else {
+                final double dx = mob.getX() - threat.getX();
+                final double dz = mob.getZ() - threat.getZ();
+                final double horizontal = Math.sqrt(dx * dx + dz * dz);
+                if (horizontal > 1.0E-4) {
+                    final double scale = 6.0 / horizontal;
+                    mob.getNavigation().moveTo(
+                            mob.getX() + dx * scale,
+                            mob.getY(),
+                            mob.getZ() + dz * scale,
+                            Math.max(1.2, decision.moveSpeed()));
+                }
             }
             return true;
         }
@@ -90,6 +102,8 @@ final class PredatoryAnimalAiSupport {
                         candidates[candidate * 3 + 1],
                         candidates[candidate * 3 + 2],
                         Math.max(minSpeed, decisionSpeed));
+            } else {
+                mob.getNavigation().moveTo(target, Math.max(minSpeed, decisionSpeed));
             }
         } else {
             mob.getNavigation().stop();

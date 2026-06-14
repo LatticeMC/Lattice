@@ -36,6 +36,8 @@ final class PollinatorAiSupport {
                             candidates[candidate * 3 + 1],
                             candidates[candidate * 3 + 2],
                             Math.max(minPreyPursueSpeed, decision.moveSpeed()));
+                } else {
+                    mob.getNavigation().moveTo(prey, Math.max(minPreyPursueSpeed, decision.moveSpeed()));
                 }
             } else {
                 mob.getNavigation().stop();
@@ -61,6 +63,8 @@ final class PollinatorAiSupport {
                             candidates[candidate * 3 + 1],
                             candidates[candidate * 3 + 2],
                             Math.max(minFoodPursueSpeed, decision.moveSpeed()));
+                } else {
+                    mob.getNavigation().moveTo(temptingPlayer, Math.max(minFoodPursueSpeed, decision.moveSpeed()));
                 }
             } else {
                 mob.getNavigation().stop();

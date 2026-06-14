@@ -37,6 +37,13 @@ final class AquaticAiSupport {
                             candidates[candidate * 3 + 1],
                             candidates[candidate * 3 + 2],
                             Math.max(1.0, decision.moveSpeed()));
+                } else {
+                    final double scale = (prefersWater ? 5.0 : 4.0) / horizontal;
+                    mob.getNavigation().moveTo(
+                            mob.getX() + dx * scale,
+                            mob.getY(),
+                            mob.getZ() + dz * scale,
+                            Math.max(1.0, decision.moveSpeed()));
                 }
             }
             return true;
@@ -77,6 +84,8 @@ final class AquaticAiSupport {
                             candidates[candidate * 3 + 1],
                             candidates[candidate * 3 + 2],
                             Math.max(minPursueSpeed, decision.moveSpeed()));
+                } else {
+                    mob.getNavigation().moveTo(temptingPlayer, Math.max(minPursueSpeed, decision.moveSpeed()));
                 }
             } else {
                 mob.getNavigation().stop();
