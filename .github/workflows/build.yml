@@ -33,3 +33,10 @@ jobs:
           sed -i '/implementation(project(":tentacles-api"))/a\    compileOnly("org.spongepowered:mixin:0.8.7")' tentacles-server/build.gradle.kts
       - name: Build
         run: ./gradlew build --stacktrace
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tentacles-build
+          path: |
+            tentacles-api/build/libs/*.jar
+            tentacles-server/build/libs/*.jar
