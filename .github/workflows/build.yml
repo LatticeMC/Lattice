@@ -11,6 +11,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GIT_AUTHOR_NAME: GitHub Actions
+      GIT_AUTHOR_EMAIL: actions@github.com
+      GIT_COMMITTER_NAME: GitHub Actions
+      GIT_COMMITTER_EMAIL: actions@github.com
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v4
