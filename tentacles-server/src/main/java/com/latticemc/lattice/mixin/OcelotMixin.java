@@ -90,7 +90,7 @@ public abstract class OcelotMixin {
         }
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
-                NativeBiologicalAi.Species.GENERIC,
+                NativeBiologicalAi.Species.OCELOT,
                 this.getHealth() / maxHealth,
                 this.isBaby() ? 0.60F : (this.isSteppingCarefully() ? 0.90F : 0.72F),
                 this.isTrusting() ? 0.55F : 0.35F,
