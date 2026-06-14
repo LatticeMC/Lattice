@@ -33,10 +33,12 @@ jobs:
           sed -i '/implementation(project(":tentacles-api"))/a\    compileOnly("org.spongepowered:mixin:0.8.7")' tentacles-server/build.gradle.kts
       - name: Build
         run: ./gradlew build --stacktrace
+      - name: Build reobf Paperclip jar
+        run: ./gradlew :tentacles-server:createReobfPaperclipJar --stacktrace
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: tentacles-build
           path: |
-            tentacles-api/build/libs/*.jar
-            tentacles-server/build/libs/*.jar
+            tentacles-server/build/**/*paperclip*.jar
+          if-no-files-found: error

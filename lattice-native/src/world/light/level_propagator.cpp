@@ -57,34 +57,24 @@ void LevelPropagator::update_level(std::int64_t source_id, std::int64_t id, int 
         current_level = old_level;
     }
 
-    // Vanilla's `method_15482 updateLevel(JJIIIZ)V`: for both passes the
-    // new tentative is `min(currentLevel, candidate)`. The candidate is
-    // computed differently for increase vs decrease:
-    //
-    //   increase : candidate = clamp(getPropagatedLevel(src, id, level))
-    //   decrease : candidate = level
-    //
-    // Lower level numbers represent brighter light, so "min" is the
-    // brightest-so-far. The Math.min lookup mirrors vanilla; we hand-roll
-    // the comparison because we're already in long form.
+    // Vanilla DynamicGraphMinFixedPoint#checkEdge:
+    //   decrease: min = Math.min(propagationLevel, newLevel)
+    //   increase: min = clamp(getComputedLevel(toPos, fromPos, newLevel), ...)
+    // `current_level` is the queued propagation level; if no entry is queued
+    // it was initialised from `old_level` above, matching the fastutil default
+    // handling in the Java implementation.
     int candidate;
     if (decrease) {
-        if (source_id == id) {
-            candidate = level;
-        } else {
-            candidate = recalculate_level(id, source_id, level);
-        }
+        candidate = level < current_level ? level : current_level;
+    } else if (source_id == id) {
+        candidate = level;  // self-seed; no propagation involved
     } else {
-        if (source_id == id) {
-            candidate = level;  // self-seed; no propagation involved
-        } else {
-            candidate = get_propagated_level(source_id, id, level);
-        }
+        candidate = recalculate_level(id, source_id, level);
     }
     if (candidate < 0)                       candidate = 0;
     else if (candidate >= level_count_)      candidate = level_count_ - 1;
 
-    const int new_level = candidate < current_level ? candidate : current_level;
+    const int new_level = candidate;
     const int current_priority = calculate_priority(old_level, current_level);
     const int new_priority = calculate_priority(old_level, new_level);
 

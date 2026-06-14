@@ -44,7 +44,7 @@ public:
     int do_recalculate_level(std::int64_t id, std::int64_t excluded_id,
                              int max_level) noexcept override {
         recalc_log.emplace_back(id, excluded_id, max_level);
-        return max_level - 1;
+        return max_level;
     }
 
     std::unordered_map<std::int64_t, int> committed_;
@@ -152,7 +152,7 @@ TEST_CASE("level_propagator: recalculate_level delegates to subclass hook") {
 
     const int result = p.recalculate_level(21, 22, 9);
 
-    CHECK(result == 8);
+    CHECK(result == 9);
     REQUIRE(p.recalc_log.size() == 1);
     CHECK(std::get<0>(p.recalc_log[0]) == 21);
     CHECK(std::get<1>(p.recalc_log[0]) == 22);
@@ -164,7 +164,7 @@ TEST_CASE("level_propagator: recalculate_level clamps max_level before delegatio
 
     const int result = p.recalculate_level(31, 32, 999);
 
-    CHECK(result == p.level_count() - 2);
+    CHECK(result == p.level_count() - 1);
     REQUIRE(p.recalc_log.size() == 1);
     CHECK(std::get<2>(p.recalc_log[0]) == p.level_count() - 1);
 }
@@ -298,11 +298,16 @@ TEST_CASE("level_propagator: source decrease to maximum does not recalculate nei
 
     p.update_level(1, 1, 5, false);
     p.apply_pending_updates(10);
-    CHECK(p.committed[2] == 6);
+    CHECK(p.committed[2] == 7);
+    REQUIRE(p.recalc_calls.size() == 1);
+    CHECK(std::get<0>(p.recalc_calls[0]) == 2);
+    CHECK(std::get<1>(p.recalc_calls[0]) == 1);
+    CHECK(std::get<2>(p.recalc_calls[0]) == 5);
+    p.recalc_calls.clear();
 
     p.update_level(1, 1, 16, true);
     p.apply_pending_updates(10);
 
     CHECK(p.recalc_calls.empty());
-    CHECK(p.committed[2] == 6);
+    CHECK(p.committed[2] == 7);
 }
