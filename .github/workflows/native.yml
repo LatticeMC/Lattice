@@ -83,7 +83,8 @@ jobs:
           restore-keys: |
             tentacles-native-fetch-${{ matrix.name }}-
 
-      - name: Configure
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         env:
           CC: ${{ matrix.cc }}
@@ -93,6 +94,17 @@ jobs:
           cmake -S lattice-native -B lattice-native/build \
             -DCMAKE_BUILD_TYPE=Release \
             -DLATTICE_WARNINGS_AS_ERRORS=ON \
+            -DLATTICE_BUILD_TESTS=ON
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+        run: |
+          cmake -S lattice-native -B lattice-native/build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DLATTICE_WARNINGS_AS_ERRORS=ON `
             -DLATTICE_BUILD_TESTS=ON
 
       - name: Build
