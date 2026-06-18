@@ -272,6 +272,7 @@ tasks.jar {
             "Specification-Title" to "Tentacles", // Purpur // Tentacles
             "Specification-Version" to project.version,
             "Specification-Vendor" to "Tentacles Team", // Purpur // Tentacles
+            "MixinConfigs" to "mixin.lattice.json",
             "Brand-Id" to "tentaclesmc:tentacles", // Purpur // Tentacles
             "Brand-Name" to "Tentacles", // Purpur // Tentacles
             "Build-Number" to (build ?: ""),
