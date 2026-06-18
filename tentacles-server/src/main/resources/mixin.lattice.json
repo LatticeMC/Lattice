@@ -45,7 +45,9 @@
     "SnifferMixin",
     "LlamaMixin",
     "PandaMixin",
-    "OcelotMixin"
+    "OcelotMixin",
+    "LightEngineMixin",
+    "NaturalSpawnerMixin"
   ],
   "client": [],
   "injectors": {
