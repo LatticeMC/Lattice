@@ -3,10 +3,28 @@ on:
   push:
     paths:
       - '**/*.java'
+      - '**/*.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'build-data/**'
+      - 'scripts/**'
+      - 'paper-server/**'
+      - 'purpur-server/**'
+      - 'tentacles-api/**'
+      - 'tentacles-server/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
       - '**/*.java'
+      - '**/*.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'build-data/**'
+      - 'scripts/**'
+      - 'paper-server/**'
+      - 'purpur-server/**'
+      - 'tentacles-api/**'
+      - 'tentacles-server/**'
       - '.github/workflows/build.yml'
 jobs:
   build:
@@ -33,6 +51,10 @@ jobs:
         run: chmod +x ./gradlew
       - name: Apply patches
         run: ./gradlew applyAllPatches --stacktrace
+      - name: Fix mixin repository
+        run: |
+          sed -i 's|dependencies {|repositories { maven("https://repo.spongepowered.org/repository/maven-public/") }\ndependencies {|' tentacles-server/build.gradle.kts
+          sed -i '/implementation(project(":tentacles-api"))/a\    compileOnly("org.spongepowered:mixin:0.8.7")' tentacles-server/build.gradle.kts
       - name: Build
         run: ./gradlew build --stacktrace
       - name: Build reobf Paperclip jar
