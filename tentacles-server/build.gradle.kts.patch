@@ -56,18 +56,14 @@
  dependencies {
 -    implementation(project(":purpur-api")) // Purpur
 +    implementation(project(":tentacles-api")) // Purpur // Tentacles
-+    implementation("org.spongepowered:mixin:0.8.7")
++    compileOnly("org.spongepowered:mixin:0.8.7")
      implementation("ca.spottedleaf:concurrentutil:0.0.8")
      implementation("org.jline:jline-terminal-ffm:3.27.1") // use ffm on java 22+
      implementation("org.jline:jline-terminal-jni:3.27.1") // fall back to jni on java 21
-@@ -229,14 +_,19 @@
+@@ -229,14 +_,15 @@
          val gitBranch = git.exec(providers, "rev-parse", "--abbrev-ref", "HEAD").get().trim()
          attributes(
              "Main-Class" to "org.bukkit.craftbukkit.Main",
-+            "Premain-Class" to "com.latticemc.lattice.bootstrap.LatticeAgent",
-+            "Agent-Class" to "com.latticemc.lattice.bootstrap.LatticeAgent",
-+            "Can-Redefine-Classes" to true,
-+            "Can-Retransform-Classes" to true,
 -            "Implementation-Title" to "Purpur", // Purpur
 +            "Implementation-Title" to "Tentacles", // Purpur // Tentacles
              "Implementation-Version" to implementationVersion,
