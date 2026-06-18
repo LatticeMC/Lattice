@@ -58,7 +58,7 @@ jobs:
       - name: Build
         run: ./gradlew build --stacktrace
       - name: Build reobf Paperclip jar
-        run: ./gradlew :tentacles-server:createReobfPaperclipJar --stacktrace
+        run: ./gradlew :tentacles-server:createMojmapPaperclipJar --stacktrace
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
