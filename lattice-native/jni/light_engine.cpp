@@ -276,8 +276,8 @@ JNIEXPORT jlong JNICALL
 Java_com_latticemc_lattice_nativelib_NativeLightEngine_nativeCreate(
         JNIEnv* env, jobject self,
         jint levelCount, jint expectedLevelSize, jint expectedTotalSize) {
-    if (levelCount <= 0 || levelCount > 256) {
-        lattice::jni::throw_illegal_arg(env, "lattice light: invalid levelCount");
+    if (levelCount <= 0 || levelCount >= 254) {
+        lattice::jni::throw_illegal_arg(env, "lattice light: levelCount must be in (0, 254)");
         return 0;
     }
     if (!resolve_ids(env, self)) {

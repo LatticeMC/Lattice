@@ -169,6 +169,21 @@ TEST_CASE("level_propagator: recalculate_level clamps max_level before delegatio
     CHECK(std::get<2>(p.recalc_log[0]) == p.level_count() - 1);
 }
 
+TEST_CASE("level_propagator: level_count clamped to 253 when >= 254") {
+    // Vanilla: "Level count must be < 254." Our C++ side clamps instead of throwing.
+    class HighLevelPropagator final : public LevelPropagator {
+    public:
+        HighLevelPropagator() : LevelPropagator(300, 16, 256) {}
+
+        int get_level(std::int64_t /*id*/) const noexcept override { return level_count_; }
+        int get_propagated_level(std::int64_t, std::int64_t, int level) noexcept override { return level; }
+        void propagate_level(std::int64_t, std::int64_t, int, bool) noexcept override {}
+    };
+
+    HighLevelPropagator p;
+    CHECK(p.level_count() == 253);
+}
+
 TEST_CASE("chunk_light_provider: recalculate_level uses optional callback") {
     struct CallbackState {
         std::int64_t seen_id = 0;

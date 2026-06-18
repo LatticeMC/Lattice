@@ -60,20 +60,24 @@ inline bool palette_check(const SpawnFilterInputs& in,
 }
 
 inline bool entity_clearance(const SpawnFilterInputs& in,
-                             double cx, double cy, double cz) noexcept {
+                             double cx, double cy, double cz,
+                             std::size_t candidate_idx) noexcept {
     if (in.entity_count == 0 || !in.entity_aabbs) return true;
-    // Treat the candidate as a 1×1×1 cube centred on (cx, cy, cz).
-    // Vanilla actually uses the would-be-mob's bounding box, but for a
-    // first-pass filter the 1×1×1 cube approximates the typical mob
-    // footprint and rejects fewer false negatives than the actual mob
-    // size would. Callers wanting strict accuracy can run their own
-    // per-mob AABB test on the post-filter results.
-    const double cMinX = cx - 0.5;
+    // Use per-candidate dimensions if provided; otherwise fall back to
+    // the default 0.5 half-width / 1.0 height (a 1×1×1 AABB).
+    // Vanilla uses `entityType.getDimensions().makeBoundingBox(x, y, z)`.
+    double half_w = 0.5;
+    double height = 1.0;
+    if (in.candidate_dims) {
+        half_w = in.candidate_dims[candidate_idx * 2 + 0];
+        height = in.candidate_dims[candidate_idx * 2 + 1];
+    }
+    const double cMinX = cx - half_w;
     const double cMinY = cy;
-    const double cMinZ = cz - 0.5;
-    const double cMaxX = cx + 0.5;
-    const double cMaxY = cy + 1.0;
-    const double cMaxZ = cz + 0.5;
+    const double cMinZ = cz - half_w;
+    const double cMaxX = cx + half_w;
+    const double cMaxY = cy + height;
+    const double cMaxZ = cz + half_w;
 
     for (std::size_t e = 0; e < in.entity_count; ++e) {
         const double* aabb = in.entity_aabbs + e * 6;
@@ -121,7 +125,7 @@ std::size_t filter_spawn_candidates(const SpawnFilterInputs& in,
             if (!palette_check(in, cx, cy, cz)) continue;
         }
         // Entity clearance: O(E).
-        if (!entity_clearance(in, cx, cy, cz)) continue;
+        if (!entity_clearance(in, cx, cy, cz, i)) continue;
 
         acceptable[i / 64] |= std::uint64_t{1} << (i % 64);
         ++accepted;

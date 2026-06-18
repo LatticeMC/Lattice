@@ -295,6 +295,7 @@ JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeSpawnFilter_nativeFilterCandidates(
         JNIEnv* env, jclass /*cls*/,
         jdoubleArray   jCandidateXyz, jint candidateCount,
+        jdoubleArray   jCandidateDims,
         jobjectArray   jSectionStorages,
         jintArray      jSectionElementBits,
         jlongArray     jSectionPassMasks,
@@ -378,10 +379,11 @@ Java_com_latticemc_lattice_nativelib_NativeSpawnFilter_nativeFilterCandidates(
     }
 
     // Pin int[] section_element_bits, double[] section_pass_masks, double[] entity_aabbs,
-    // double[] player_xyz, double[] candidate_xyz, long[] acceptable.
+    // double[] player_xyz, double[] candidate_xyz, double[] candidate_dims, long[] acceptable.
     jint*   element_bits = nullptr;
     jlong*  pass_masks   = nullptr;
     jdouble* candidate_p = nullptr;
+    jdouble* dims_p      = nullptr;
     jdouble* entity_p    = nullptr;
     jdouble* player_p    = nullptr;
     jlong*  acceptable_p = nullptr;
@@ -390,6 +392,7 @@ Java_com_latticemc_lattice_nativelib_NativeSpawnFilter_nativeFilterCandidates(
         if (acceptable_p) env->ReleaseLongArrayElements(jAcceptable, acceptable_p, JNI_ABORT);
         if (player_p)     env->ReleaseDoubleArrayElements(jPlayerXyz, player_p, JNI_ABORT);
         if (entity_p)     env->ReleaseDoubleArrayElements(jEntityAabbs, entity_p, JNI_ABORT);
+        if (dims_p)       env->ReleaseDoubleArrayElements(jCandidateDims, dims_p, JNI_ABORT);
         if (candidate_p)  env->ReleaseDoubleArrayElements(jCandidateXyz, candidate_p, JNI_ABORT);
         if (pass_masks)   env->ReleaseLongArrayElements(jSectionPassMasks, pass_masks, JNI_ABORT);
         if (element_bits) env->ReleaseIntArrayElements(jSectionElementBits, element_bits, JNI_ABORT);
@@ -418,6 +421,16 @@ Java_com_latticemc_lattice_nativelib_NativeSpawnFilter_nativeFilterCandidates(
         }
         candidate_p = env->GetDoubleArrayElements(jCandidateXyz, nullptr);
         if (!candidate_p) { cleanup_pins(); lattice::jni::throw_oom(env, "lattice spawn: pin candidates"); return 0; }
+        // candidate_dims is optional (nullable); when provided it must have 2*N entries.
+        if (jCandidateDims) {
+            if (env->GetArrayLength(jCandidateDims) < candidateCount * 2) {
+                cleanup_pins();
+                lattice::jni::throw_illegal_arg(env, "lattice spawn: candidate dims too short");
+                return 0;
+            }
+            dims_p = env->GetDoubleArrayElements(jCandidateDims, nullptr);
+            if (!dims_p) { cleanup_pins(); lattice::jni::throw_oom(env, "lattice spawn: pin dims"); return 0; }
+        }
     }
     if (entityCount > 0) {
         if (!jEntityAabbs) {
@@ -443,6 +456,7 @@ Java_com_latticemc_lattice_nativelib_NativeSpawnFilter_nativeFilterCandidates(
     ve::SpawnFilterInputs in{};
     in.candidate_xyz         = reinterpret_cast<const double*>(candidate_p);
     in.candidate_count       = static_cast<std::size_t>(candidateCount);
+    in.candidate_dims        = reinterpret_cast<const double*>(dims_p);
     in.section_storages      = storage_ptrs;
     in.section_storage_lens  = storage_lens;
     in.section_element_bits  = reinterpret_cast<const int*>(element_bits);

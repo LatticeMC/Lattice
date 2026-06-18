@@ -11,13 +11,20 @@ LevelPropagator::LevelPropagator(int level_count,
                                  std::size_t expected_level_size,
                                  std::size_t expected_total_size) noexcept
     : level_count_(level_count),
-      // Vanilla: `pendingUpdates.defaultReturnValue((byte) (level_count - 1))`.
-      // The "default return value" for absent ids is `level_count_` — the
-      // marker value — because that's how `getPendingLevel` interprets "no
-      // entry". fastutil stores a signed byte; we mirror that exactly.
+      // Vanilla: `computedLevels.defaultReturnValue((byte) -1)` → 255 unsigned.
+      // We diverge intentionally: our sentinel is `level_count` itself (e.g. 17
+      // for light), which `get_pending_level` promotes to unsigned via `& 0xFF`.
+      // Both 255 and `level_count_` lie outside the valid range [0, levelCount-1]
+      // so the "no entry" detection (`== level_count_`) works equivalently.
+      // Constraint: `level_count` must be < 254 to avoid collision with valid
+      // byte values (matching vanilla's `if (firstQueuedLevel >= 254) throw`).
       pending_updates_(expected_total_size,
                        static_cast<std::int8_t>(level_count > 127 ? 127 : level_count)) {
-    queue_.initialize(level_count, expected_level_size);
+    // Vanilla: "Level count must be < 254."
+    // If violated, the byte-stored sentinel can collide with valid levels.
+    // We don't throw in C++, but cap to a safe maximum.
+    if (level_count_ >= 254) level_count_ = 253;
+    queue_.initialize(level_count_, expected_level_size);
 }
 
 // ---------------------------------------------------------------------------

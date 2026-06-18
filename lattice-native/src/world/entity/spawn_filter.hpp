@@ -52,6 +52,12 @@ struct SpawnFilterInputs {
     const double* candidate_xyz   = nullptr;
     std::size_t   candidate_count = 0;
 
+    /// Per-candidate entity dimensions: `candidate_dims[i*2+0]` = half-width,
+    /// `candidate_dims[i*2+1]` = height. If null, falls back to the default
+    /// 0.5 half-width / 1.0 height (i.e. a 1×1×1 AABB) for all candidates.
+    /// Vanilla uses `entityType.getSpawnAABB(x, y, z)` which varies per mob.
+    const double* candidate_dims  = nullptr;
+
     // Per-section storage. `section_storages[s]` may be null to mean
     // "single-entry palette of index 0" (all-air sections).
     const std::uint64_t* const* section_storages   = nullptr;
