@@ -56,7 +56,7 @@
  dependencies {
 -    implementation(project(":purpur-api")) // Purpur
 +    implementation(project(":tentacles-api")) // Purpur // Tentacles
-+    compileOnly("org.spongepowered:mixin:0.8.7")
++    implementation("org.spongepowered:mixin:0.8.7")
      implementation("ca.spottedleaf:concurrentutil:0.0.8")
      implementation("org.jline:jline-terminal-ffm:3.27.1") // use ffm on java 22+
      implementation("org.jline:jline-terminal-jni:3.27.1") // fall back to jni on java 21
