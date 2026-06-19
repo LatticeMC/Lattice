@@ -57,10 +57,12 @@
 -    implementation(project(":purpur-api")) // Purpur
 +    implementation(project(":tentacles-api")) // Purpur // Tentacles
 +    implementation("org.spongepowered:mixin:0.8.7")
++    implementation("org.ow2.asm:asm-util:9.8")
++    implementation("org.ow2.asm:asm-analysis:9.8")
      implementation("ca.spottedleaf:concurrentutil:0.0.8")
      implementation("org.jline:jline-terminal-ffm:3.27.1") // use ffm on java 22+
      implementation("org.jline:jline-terminal-jni:3.27.1") // fall back to jni on java 21
-@@ -229,14 +_,15 @@
+@@ -229,14 +_,17 @@
          val gitBranch = git.exec(providers, "rev-parse", "--abbrev-ref", "HEAD").get().trim()
          attributes(
              "Main-Class" to "org.bukkit.craftbukkit.Main",
@@ -81,3 +83,24 @@
              "Build-Number" to (build ?: ""),
              "Build-Time" to buildTime.toString(),
              "Git-Branch" to gitBranch,
+@@ -249,6 +_,19 @@
+ }
+ 
+ // Compile tests with -parameters for better junit parameterized test names
++
++// Lattice - apply SpongePowered Mixin at compile time
++val applyMixins by tasks.registering(JavaExec::class) {
++    group = "build"
++    description = "Apply SpongePowered Mixin transformations to compiled classes"
++    classpath = sourceSets.main.get().compileClasspath + sourceSets.main.get().output
++    mainClass.set("com.latticemc.lattice.bootstrap.MixinApplicator")
++    args(sourceSets.main.get().output.classesDirs.first().absolutePath)
++    dependsOn(tasks.compileJava)
++    inputs.files(sourceSets.main.get().output.classesDirs)
++    outputs.files(sourceSets.main.get().output.classesDirs)
++}
++tasks.jar { dependsOn(applyMixins) }
++
+ tasks.compileTestJava {
+     options.compilerArgs.add("-parameters")
+ }

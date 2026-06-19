@@ -207,6 +207,8 @@ dependencies {
     implementation("io.netty:netty-codec-haproxy:4.2.7.Final") // Add support for proxy protocol
     implementation("org.apache.logging.log4j:log4j-iostreams:2.24.1")
     implementation("org.ow2.asm:asm-commons:9.8")
+    implementation("org.ow2.asm:asm-util:9.8")
+    implementation("org.ow2.asm:asm-analysis:9.8")
     implementation("org.spongepowered:configurate-yaml:4.2.0")
 
     implementation("org.mozilla:rhino-runtime:1.7.14") // Purpur
@@ -277,6 +279,19 @@ tasks.jar {
         }
     }
 }
+
+// Lattice - apply SpongePowered Mixin at compile time
+val applyMixins by tasks.registering(JavaExec::class) {
+    group = "build"
+    description = "Apply SpongePowered Mixin transformations to compiled classes"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.bootstrap.MixinApplicator")
+    val classesDir = sourceSets.main.get().output.classesDirs.first()
+    args(classesDir.absolutePath)
+    dependsOn(tasks.compileJava)
+}
+tasks.jar { dependsOn(applyMixins) }
+// End Lattice
 
 // Compile tests with -parameters for better junit parameterized test names
 tasks.compileTestJava {

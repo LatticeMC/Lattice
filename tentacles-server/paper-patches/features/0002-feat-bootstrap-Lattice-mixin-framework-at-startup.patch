@@ -8,20 +8,13 @@ diff --git a/src/main/java/org/bukkit/craftbukkit/Main.java b/src/main/java/org/
 index d665dc3fbd0989eb399c55d0717bc6fd79a0db17..b940eb007d0bc0c12c74f951b6bfa0c64c407e84 100644
 --- a/src/main/java/org/bukkit/craftbukkit/Main.java
 +++ b/src/main/java/org/bukkit/craftbukkit/Main.java
-@@ -23,6 +23,17 @@ public class Main {
+@@ -23,6 +23,9 @@ public class Main {
      // Paper end - Reset loggers after shutdown
  
      public static void main(String[] args) {
-+        // Lattice - initialize mixin framework early (before any MC classes load)
-+        try {
-+            org.spongepowered.asm.launch.MixinBootstrap.init();
-+            org.spongepowered.asm.mixin.MixinEnvironment.getDefaultEnvironment()
-+                .setSide(org.spongepowered.asm.mixin.MixinEnvironment.Side.SERVER);
-+            org.spongepowered.asm.mixin.Mixins.addConfiguration("mixin.lattice.json", (org.spongepowered.asm.mixin.extensibility.IMixinConfigSource) null);
-+        } catch (Throwable t) {
-+            java.util.logging.Logger.getLogger("Lattice").log(java.util.logging.Level.WARNING, "Lattice mixin bootstrap failed", t);
-+        }
-+        // End Lattice
++        // Lattice start - log native acceleration status at startup
++        com.latticemc.lattice.bootstrap.LatticeBootstrap.onServerStart();
++        // Lattice end
 +
          if (System.getProperty("jdk.nio.maxCachedBufferSize") == null) System.setProperty("jdk.nio.maxCachedBufferSize", "262144"); // Paper - cap per-thread NIO cache size; https://www.evanjones.ca/java-bytebuffer-leak.html
          OptionParser parser = new OptionParser() {

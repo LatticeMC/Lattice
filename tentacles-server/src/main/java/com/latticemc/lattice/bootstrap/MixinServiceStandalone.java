@@ -9,18 +9,35 @@ import org.spongepowered.asm.launch.platform.container.IContainerHandle;
 import org.spongepowered.asm.logging.ILogger;
 import org.spongepowered.asm.logging.LoggerAdapterDefault;
 import org.spongepowered.asm.mixin.MixinEnvironment;
+import org.spongepowered.asm.mixin.transformer.IMixinTransformer;
+import org.spongepowered.asm.mixin.transformer.IMixinTransformerFactory;
 import org.spongepowered.asm.service.IClassBytecodeProvider;
 import org.spongepowered.asm.service.IClassProvider;
 import org.spongepowered.asm.service.IClassTracker;
 import org.spongepowered.asm.service.IMixinAuditTrail;
+import org.spongepowered.asm.service.IMixinInternal;
 import org.spongepowered.asm.service.ITransformer;
 import org.spongepowered.asm.service.ITransformerProvider;
 import org.spongepowered.asm.service.MixinServiceAbstract;
+import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.tree.ClassNode;
 
 public final class MixinServiceStandalone extends MixinServiceAbstract {
 
     public MixinServiceStandalone() {}
+
+    @Override
+    public void offer(IMixinInternal internal) {
+        super.offer(internal);
+        if (internal instanceof IMixinTransformerFactory factory) {
+            try {
+                IMixinTransformer transformer = factory.createTransformer();
+                MixinEnvironment.getDefaultEnvironment().setActiveTransformer(transformer);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to create mixin transformer", e);
+            }
+        }
+    }
 
     @Override
     public String getName() {
@@ -36,6 +53,7 @@ public final class MixinServiceStandalone extends MixinServiceAbstract {
     public IClassProvider getClassProvider() {
         return new IClassProvider() {
             @Override
+            @SuppressWarnings("deprecation")
             public URL[] getClassPath() {
                 return new URL[0];
             }
@@ -62,28 +80,26 @@ public final class MixinServiceStandalone extends MixinServiceAbstract {
         return new IClassBytecodeProvider() {
             @Override
             public ClassNode getClassNode(String name) throws ClassNotFoundException {
-                return getClassNode(name, false, 0);
+                return getClassNode(name, true);
             }
 
             @Override
-            public ClassNode getClassNode(String name, boolean load) throws ClassNotFoundException {
-                return getClassNode(name, load, 0);
+            public ClassNode getClassNode(String name, boolean runTransformers) throws ClassNotFoundException {
+                return getClassNode(name, runTransformers, 0);
             }
 
             @Override
-            public ClassNode getClassNode(String name, boolean load, int flags) throws ClassNotFoundException {
+            public ClassNode getClassNode(String name, boolean runTransformers, int readerFlags) throws ClassNotFoundException {
+                String resourceName = name.replace('.', '/') + ".class";
                 ClassLoader cl = Thread.currentThread().getContextClassLoader();
-                String resourcePath = name.replace('.', '/') + ".class";
-                try (InputStream is = cl.getResourceAsStream(resourcePath)) {
-                    if (is == null) {
-                        throw new ClassNotFoundException(name);
-                    }
+                try (InputStream is = cl != null ? cl.getResourceAsStream(resourceName) : ClassLoader.getSystemResourceAsStream(resourceName)) {
+                    if (is == null) throw new ClassNotFoundException(name);
+                    ClassReader reader = new ClassReader(is);
                     ClassNode node = new ClassNode();
-                    org.objectweb.asm.ClassReader reader = new org.objectweb.asm.ClassReader(is);
-                    reader.accept(node, flags);
+                    reader.accept(node, readerFlags);
                     return node;
-                } catch (ClassNotFoundException cnfe) {
-                    throw cnfe;
+                } catch (ClassNotFoundException e) {
+                    throw e;
                 } catch (Exception e) {
                     throw new ClassNotFoundException(name, e);
                 }
@@ -95,6 +111,9 @@ public final class MixinServiceStandalone extends MixinServiceAbstract {
     public ITransformerProvider getTransformerProvider() {
         return new ITransformerProvider() {
             @Override
+            public void addTransformerExclusion(String name) {}
+
+            @Override
             public Collection<ITransformer> getTransformers() {
                 return Collections.emptyList();
             }
@@ -103,28 +122,12 @@ public final class MixinServiceStandalone extends MixinServiceAbstract {
             public Collection<ITransformer> getDelegatedTransformers() {
                 return Collections.emptyList();
             }
-
-            @Override
-            public void addTransformerExclusion(String exclusion) {}
         };
     }
 
     @Override
     public IClassTracker getClassTracker() {
-        return new IClassTracker() {
-            @Override
-            public void registerInvalidClass(String className) {}
-
-            @Override
-            public boolean isClassLoaded(String className) {
-                return false;
-            }
-
-            @Override
-            public String getClassRestrictions(String className) {
-                return "";
-            }
-        };
+        return null;
     }
 
     @Override
