@@ -34,7 +34,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * </ul>
  */
 @Mixin(DynamicGraphMinFixedPoint.class)
-public abstract class LightEngineMixin {
+public abstract class LightEngineMixin implements LightEngineCallbacks {
 
     @Shadow @Final protected int levelCount;
 
@@ -49,38 +49,7 @@ public abstract class LightEngineMixin {
                               org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
         try {
-            this.lattice$nativeEngine = new NativeLightEngine(firstQueuedLevel, width, height) {
-                @Override
-                protected int callbackGetPropagatedLevel(long source, long target, int level) {
-                    return LightEngineMixin.this.lattice$computeLevelFromNeighbor(source, target, level);
-                }
-
-                @Override
-                protected void callbackPropagateLevel(long nativePtr, long source, long target,
-                                                      int level, boolean decrease) {
-                    LightEngineMixin.this.lattice$checkNeighborsAfterUpdate(target, level, decrease);
-                }
-
-                @Override
-                protected boolean callbackIsMarker(long id) {
-                    return LightEngineMixin.this.lattice$isSource(id);
-                }
-
-                @Override
-                protected int callbackRecalculateLevel(long id, long excludedId, int maxLevel) {
-                    return LightEngineMixin.this.lattice$getComputedLevel(id, excludedId, maxLevel);
-                }
-
-                @Override
-                protected int callbackGetCommittedLevel(long id) {
-                    return LightEngineMixin.this.lattice$getLevel(id);
-                }
-
-                @Override
-                protected void callbackSetCommittedLevel(long id, int level) {
-                    LightEngineMixin.this.lattice$setLevel(id, level);
-                }
-            };
+            this.lattice$nativeEngine = new NativeLightEngineBridge(this, firstQueuedLevel, width, height);
         } catch (Exception e) {
             LatticeNative.logFallbackOnce("light_engine", "failed to create native engine: " + e.getMessage());
             this.lattice$nativeDisabled = true;
@@ -127,35 +96,36 @@ public abstract class LightEngineMixin {
     @Shadow
     protected boolean isSource(long pos) { return false; }
 
-    // ---- Unique bridges to avoid name conflicts ----
+    // ---- LightEngineCallbacks implementation ----
 
-    @Unique
-    private int lattice$computeLevelFromNeighbor(long start, long end, int level) {
-        return this.computeLevelFromNeighbor(start, end, level);
+    @Override
+    public int callbackGetPropagatedLevel(long source, long target, int level) {
+        return this.computeLevelFromNeighbor(source, target, level);
     }
 
-    @Unique
-    private void lattice$checkNeighborsAfterUpdate(long pos, int level, boolean decrease) {
-        this.checkNeighborsAfterUpdate(pos, level, decrease);
+    @Override
+    public void callbackPropagateLevel(long nativePtr, long source, long target,
+                                       int level, boolean decrease) {
+        this.checkNeighborsAfterUpdate(target, level, decrease);
     }
 
-    @Unique
-    private int lattice$getComputedLevel(long pos, long excluded, int level) {
-        return this.getComputedLevel(pos, excluded, level);
+    @Override
+    public boolean callbackIsMarker(long id) {
+        return this.isSource(id);
     }
 
-    @Unique
-    private int lattice$getLevel(long pos) {
-        return this.getLevel(pos);
+    @Override
+    public int callbackRecalculateLevel(long id, long excludedId, int maxLevel) {
+        return this.getComputedLevel(id, excludedId, maxLevel);
     }
 
-    @Unique
-    private void lattice$setLevel(long pos, int level) {
-        this.setLevel(pos, level);
+    @Override
+    public int callbackGetCommittedLevel(long id) {
+        return this.getLevel(id);
     }
 
-    @Unique
-    private boolean lattice$isSource(long pos) {
-        return this.isSource(pos);
+    @Override
+    public void callbackSetCommittedLevel(long id, int level) {
+        this.setLevel(id, level);
     }
 }

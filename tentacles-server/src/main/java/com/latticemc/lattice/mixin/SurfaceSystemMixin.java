@@ -4,7 +4,6 @@ import com.latticemc.lattice.nativelib.CompiledSurfaceRules;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeMaterialRules;
 import com.latticemc.lattice.nativelib.SurfaceRuleCompiler;
-import com.latticemc.lattice.nativelib.SurfaceSystemAccess;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -36,7 +35,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(SurfaceSystem.class)
-public abstract class SurfaceSystemMixin {
+public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
     private final Map<SurfaceRules.RuleSource, CompiledSurfaceRules> lattice$compiled = new IdentityHashMap<>();
 
     @Shadow protected abstract BlockState getBand(int x, int y, int z);
@@ -47,10 +46,14 @@ public abstract class SurfaceSystemMixin {
     @Shadow private void frozenOceanExtension(int minSurfaceLevel, Biome biome, BlockColumn blockColumn, BlockPos.MutableBlockPos topWaterPos, int x, int z, int height) {}
     @Shadow private void erodedBadlandsExtension(BlockColumn blockColumn, int x, int z, int height, LevelHeightAccessor level) {}
 
-    private int lattice$seaLevel() { return ((SurfaceSystemAccessor) this).lattice$seaLevel(); }
-    private double lattice$surfaceNoiseValue(int x, int z) { return ((SurfaceSystemAccessor) this).lattice$surfaceNoise().getValue(x, 0.0, z); }
-    private double lattice$surfaceSecondaryValue(int x, int z) { return ((SurfaceSystemAccessor) this).lattice$surfaceSecondaryNoise().getValue(x, 0.0, z); }
-    private BlockState lattice$bandlands(int x, int y, int z) { return this.getBand(x, y, z); }
+    @Override
+    public int getSeaLevel() { return ((SurfaceSystemAccessor) this).lattice$seaLevel(); }
+    @Override
+    public double getSurfaceNoiseValue(int x, int z) { return ((SurfaceSystemAccessor) this).lattice$surfaceNoise().getValue(x, 0.0, z); }
+    @Override
+    public double getSurfaceSecondaryValue(int x, int z) { return ((SurfaceSystemAccessor) this).lattice$surfaceSecondaryNoise().getValue(x, 0.0, z); }
+    @Override
+    public BlockState getBandlands(int x, int y, int z) { return this.getBand(x, y, z); }
 
     @Inject(method = "buildSurface", at = @At("HEAD"), cancellable = true)
     private void lattice$buildSurface(RandomState randomState,
@@ -70,21 +73,7 @@ public abstract class SurfaceSystemMixin {
         final ChunkPos pos = chunk.getPos();
         final int minBlockX = pos.getMinBlockX();
         final int minBlockZ = pos.getMinBlockZ();
-        final BlockColumn blockColumn = new BlockColumn() {
-            @Override
-            public BlockState getBlock(int y) {
-                return chunk.getBlockState(mutableBlockPos.setY(y));
-            }
-
-            @Override
-            public void setBlock(int y, BlockState state) {
-                LevelHeightAccessor heightAccessorForGeneration = chunk.getHeightAccessorForGeneration();
-                if (heightAccessorForGeneration.isInsideBuildHeight(y)) {
-                    chunk.setBlockState(mutableBlockPos.setY(y), state);
-                    if (!state.getFluidState().isEmpty()) chunk.markPosForPostprocessing(mutableBlockPos);
-                }
-            }
-        };
+        final BlockColumn blockColumn = new ChunkBlockColumn(chunk, mutableBlockPos);
         final BlockPos.MutableBlockPos topPos = new BlockPos.MutableBlockPos();
 
         for (int lx = 0; lx < 16; lx++) {
@@ -128,13 +117,7 @@ public abstract class SurfaceSystemMixin {
                         int stoneDepthBelow = y - stoneBase + 1;
                         if (block == this.defaultBlock) {
                             BlockState out = compiled.tryApply(
-                                    new SurfaceSystemAccess() {
-                                        @Override public int seaLevel() { return SurfaceSystemMixin.this.lattice$seaLevel(); }
-                                        @Override public int biomeId(Biome b) { return biomes.getId(b); }
-                                        @Override public double surfaceNoiseValue(int xx, int zz) { return SurfaceSystemMixin.this.lattice$surfaceNoiseValue(xx, zz); }
-                                        @Override public double surfaceSecondaryValue(int xx, int zz) { return SurfaceSystemMixin.this.lattice$surfaceSecondaryValue(xx, zz); }
-                                        @Override public BlockState bandlands(int xx, int yy, int zz) { return SurfaceSystemMixin.this.lattice$bandlands(xx, yy, zz); }
-                                    },
+                                    new SurfaceSystemAccessImpl(this, biomes),
                                     chunk,
                                     biome,
                                     x,
@@ -182,13 +165,7 @@ public abstract class SurfaceSystemMixin {
         int surfaceDepth = this.getSurfaceDepth(x, z);
         int minSurfaceLevel = lattice$minSurfaceLevel(noiseChunk, x, z, surfaceDepth);
         BlockState out = compiled.tryApply(
-                new SurfaceSystemAccess() {
-                    @Override public int seaLevel() { return SurfaceSystemMixin.this.lattice$seaLevel(); }
-                    @Override public int biomeId(Biome b) { return biomes.getId(b); }
-                    @Override public double surfaceNoiseValue(int xx, int zz) { return SurfaceSystemMixin.this.lattice$surfaceNoiseValue(xx, zz); }
-                    @Override public double surfaceSecondaryValue(int xx, int zz) { return SurfaceSystemMixin.this.lattice$surfaceSecondaryValue(xx, zz); }
-                    @Override public BlockState bandlands(int xx, int yy, int zz) { return SurfaceSystemMixin.this.lattice$bandlands(xx, yy, zz); }
-                },
+                new SurfaceSystemAccessImpl(this, biomes),
                 chunk,
                 biome,
                 x,
