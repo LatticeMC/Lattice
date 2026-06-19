@@ -50,7 +50,7 @@
      }
  }
  val log4jPlugins = sourceSets.create("log4jPlugins") {
-@@ -154,7 +_,8 @@
+@@ -154,7 +_,10 @@
  }
  
  dependencies {
@@ -62,7 +62,7 @@
      implementation("ca.spottedleaf:concurrentutil:0.0.8")
      implementation("org.jline:jline-terminal-ffm:3.27.1") // use ffm on java 22+
      implementation("org.jline:jline-terminal-jni:3.27.1") // fall back to jni on java 21
-@@ -229,14 +_,17 @@
+@@ -229,14 +_,15 @@
          val gitBranch = git.exec(providers, "rev-parse", "--abbrev-ref", "HEAD").get().trim()
          attributes(
              "Main-Class" to "org.bukkit.craftbukkit.Main",
@@ -92,12 +92,11 @@
 +val applyMixins by tasks.registering(JavaExec::class) {
 +    group = "build"
 +    description = "Apply SpongePowered Mixin transformations to compiled classes"
-+    classpath = sourceSets.main.get().compileClasspath + sourceSets.main.get().output
++    classpath = sourceSets.main.get().runtimeClasspath
 +    mainClass.set("com.latticemc.lattice.bootstrap.MixinApplicator")
-+    args(sourceSets.main.get().output.classesDirs.first().absolutePath)
++    val classesDir = sourceSets.main.get().output.classesDirs.first()
++    args(classesDir.absolutePath)
 +    dependsOn(tasks.compileJava)
-+    inputs.files(sourceSets.main.get().output.classesDirs)
-+    outputs.files(sourceSets.main.get().output.classesDirs)
 +}
 +tasks.jar { dependsOn(applyMixins) }
 +
