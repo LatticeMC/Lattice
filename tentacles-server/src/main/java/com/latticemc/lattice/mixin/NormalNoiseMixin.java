@@ -33,16 +33,16 @@ public abstract class NormalNoiseMixin {
         if (firstSnapshot == null || secondSnapshot == null) return;
 
         this.lattice$native = NativeDoublePerlinNoise.tryCreate(
-                firstSnapshot.origins,
-                firstSnapshot.permutations,
-                firstSnapshot.amplitudes,
-                firstSnapshot.lacunarity,
-                firstSnapshot.persistence,
-                secondSnapshot.origins,
-                secondSnapshot.permutations,
-                secondSnapshot.amplitudes,
-                secondSnapshot.lacunarity,
-                secondSnapshot.persistence,
+                firstSnapshot.origins(),
+                firstSnapshot.permutations(),
+                firstSnapshot.amplitudes(),
+                firstSnapshot.lacunarity(),
+                firstSnapshot.persistence(),
+                secondSnapshot.origins(),
+                secondSnapshot.permutations(),
+                secondSnapshot.amplitudes(),
+                secondSnapshot.lacunarity(),
+                secondSnapshot.persistence(),
                 this.valueFactor
         );
     }
@@ -86,10 +86,5 @@ public abstract class NormalNoiseMixin {
         );
     }
 
-    @Unique
-    private record PerlinSnapshot(double[] origins,
-                                  byte[] permutations,
-                                  double[] amplitudes,
-                                  double lacunarity,
-                                  double persistence) {}
+
 }
