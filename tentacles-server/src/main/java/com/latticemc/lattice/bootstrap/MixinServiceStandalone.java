@@ -149,6 +149,11 @@ public final class MixinServiceStandalone extends MixinServiceAbstract {
     }
 
     @Override
+    public MixinEnvironment.Phase getInitialPhase() {
+        return MixinEnvironment.Phase.DEFAULT;
+    }
+
+    @Override
     public MixinEnvironment.CompatibilityLevel getMinCompatibilityLevel() {
         return MixinEnvironment.CompatibilityLevel.JAVA_8;
     }

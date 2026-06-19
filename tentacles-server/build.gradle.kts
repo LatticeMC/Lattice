@@ -148,10 +148,6 @@ sourceSets {
         resources { srcDir("../paper-server/src/main/resources") }
         java { srcDir("../purpur-server/src/main/java") }
         resources { srcDir("../purpur-server/src/main/resources") }
-        java {
-            exclude(
-            )
-        }
     }
     test {
         java { srcDir("../paper-server/src/test/java") }
@@ -262,10 +258,6 @@ tasks.jar {
         val gitBranch = git.exec(providers, "rev-parse", "--abbrev-ref", "HEAD").get().trim()
         attributes(
             "Main-Class" to "org.bukkit.craftbukkit.Main",
-            "Premain-Class" to "com.latticemc.lattice.bootstrap.LatticeAgent",
-            "Agent-Class" to "com.latticemc.lattice.bootstrap.LatticeAgent",
-            "Can-Redefine-Classes" to true,
-            "Can-Retransform-Classes" to true,
             "Implementation-Title" to "Tentacles", // Purpur // Tentacles
             "Implementation-Version" to implementationVersion,
             "Implementation-Vendor" to date,

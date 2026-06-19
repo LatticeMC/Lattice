@@ -15,9 +15,9 @@ index d665dc3fbd0989eb399c55d0717bc6fd79a0db17..b940eb007d0bc0c12c74f951b6bfa0c6
 +        // Lattice - initialize mixin framework early (before any MC classes load)
 +        try {
 +            org.spongepowered.asm.launch.MixinBootstrap.init();
-+            org.spongepowered.asm.mixin.Mixins.addConfiguration("mixin.lattice.json");
 +            org.spongepowered.asm.mixin.MixinEnvironment.getDefaultEnvironment()
 +                .setSide(org.spongepowered.asm.mixin.MixinEnvironment.Side.SERVER);
++            org.spongepowered.asm.mixin.Mixins.addConfiguration("mixin.lattice.json", (org.spongepowered.asm.mixin.extensibility.IMixinConfigSource) null);
 +        } catch (Throwable t) {
 +            java.util.logging.Logger.getLogger("Lattice").log(java.util.logging.Level.WARNING, "Lattice mixin bootstrap failed", t);
 +        }
