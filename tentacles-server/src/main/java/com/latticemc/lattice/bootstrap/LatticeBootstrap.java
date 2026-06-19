@@ -24,6 +24,7 @@ public final class LatticeBootstrap {
     public static synchronized void onServerStart() {
         if (startupLogged) return;
         startupLogged = true;
+        LatticeNative.ensureLoaded();
         if (LatticeNative.isLoaded()) {
             LOGGER.info("Lattice native acceleration active: {}",
                     LatticeNative.cpuSummary());
