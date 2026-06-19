@@ -20,13 +20,7 @@ import org.objectweb.asm.tree.ClassNode;
 
 public final class MixinServiceStandalone extends MixinServiceAbstract {
 
-    private static final MixinServiceStandalone INSTANCE = new MixinServiceStandalone();
-
-    public static MixinServiceStandalone getInstance() {
-        return INSTANCE;
-    }
-
-    private MixinServiceStandalone() {}
+    public MixinServiceStandalone() {}
 
     @Override
     public String getName() {
