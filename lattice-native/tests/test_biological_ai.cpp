@@ -193,6 +193,26 @@ TEST_CASE("biological_ai: weak nearby threats do not force panic") {
     CHECK(decision.action == BiologicalAction::wander);
 }
 
+TEST_CASE("biological_ai: weak threat does not mask reachable food") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::threat, 6.0F, 0.2F, true, true},
+        {BiologicalStimulusKind::food, 1.5F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.95F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_consume_food = true;
+    inputs.environment.can_idle_safely = true;
+    inputs.environment.can_path_to_food = true;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 2;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::sheep, inputs);
+    CHECK(decision.action == BiologicalAction::eat);
+    CHECK(decision.stimulus_index == 1);
+}
+
 TEST_CASE("biological_ai: species registry changes threat response") {
     const BiologicalStimulus stimuli[] = {
         {BiologicalStimulusKind::threat, 5.0F, 1.0F, true, true},

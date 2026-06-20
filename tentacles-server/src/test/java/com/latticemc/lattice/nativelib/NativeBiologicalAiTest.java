@@ -195,6 +195,22 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void weakThreatDoesNotMaskReachableFood() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 6.0F, 0.2F, true, true),
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 1.5F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision sheep = decide(0.95F, 0.35F, 0.0F, 1.5F,
+                false, false, true,
+                0.0F, true, true, true,
+                stimuli, BiologicalAiProfiles.SHEEP);
+
+        assertEquals(NativeBiologicalAi.Action.EAT, sheep.action());
+        assertEquals(1, sheep.stimulusIndex());
+    }
+
+    @Test
     void armadilloProfileFleesEarlierThanCowProfile() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 5.0F, 1.0F, true, true)

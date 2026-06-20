@@ -46,31 +46,45 @@ final class HerbivoreAiSupport {
         return nearest;
     }
 
+    static @Nullable LivingEntity cachedThreat(Mob self,
+                                               @Nullable LivingEntity cached,
+                                               double range,
+                                               Predicate<LivingEntity> predicate) {
+        if (cached == null || !cached.isAlive() || cached.isSpectator() || !predicate.test(cached)) return null;
+        return self.distanceToSqr(cached) <= range * range ? cached : null;
+    }
+
+    static boolean shouldRefreshThreatScan(Mob self, int interval) {
+        return interval <= 1 || (self.tickCount + self.getId()) % interval == 0;
+    }
+
     static NativeBiologicalAi.Stimulus[] buildStimuli(Entity self,
                                                       @Nullable LivingEntity threat,
                                                       @Nullable Player temptingPlayer,
                                                       float foodStrength) {
-        if (threat != null && threat.isAlive()) {
-            return new NativeBiologicalAi.Stimulus[] {
-                    new NativeBiologicalAi.Stimulus(
-                            NativeBiologicalAi.StimulusKind.THREAT,
-                            (float) Math.sqrt(self.distanceToSqr(threat)),
-                            1.0F,
-                            true,
-                            true)
-            };
+        final boolean hasThreat = threat != null && threat.isAlive();
+        final boolean hasFood = temptingPlayer != null;
+        if (!hasThreat && !hasFood) return NO_STIMULI;
+
+        final NativeBiologicalAi.Stimulus[] stimuli = new NativeBiologicalAi.Stimulus[(hasThreat ? 1 : 0) + (hasFood ? 1 : 0)];
+        int index = 0;
+        if (hasThreat) {
+            stimuli[index++] = new NativeBiologicalAi.Stimulus(
+                    NativeBiologicalAi.StimulusKind.THREAT,
+                    (float) Math.sqrt(self.distanceToSqr(threat)),
+                    1.0F,
+                    true,
+                    true);
         }
-        if (temptingPlayer != null) {
-            return new NativeBiologicalAi.Stimulus[] {
-                    new NativeBiologicalAi.Stimulus(
-                            NativeBiologicalAi.StimulusKind.FOOD,
-                            (float) Math.sqrt(self.distanceToSqr(temptingPlayer)),
-                            foodStrength,
-                            true,
-                            true)
-            };
+        if (hasFood) {
+            stimuli[index] = new NativeBiologicalAi.Stimulus(
+                    NativeBiologicalAi.StimulusKind.FOOD,
+                    (float) Math.sqrt(self.distanceToSqr(temptingPlayer)),
+                    foodStrength,
+                    true,
+                    true);
         }
-        return NO_STIMULI;
+        return stimuli;
     }
 
     static boolean applyDecision(Mob mob,

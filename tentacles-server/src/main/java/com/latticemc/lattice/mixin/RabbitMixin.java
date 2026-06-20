@@ -3,6 +3,7 @@ package com.latticemc.lattice.mixin;
 import com.latticemc.lattice.nativelib.BiologicalAiProfiles;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeBiologicalAi;
+import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
@@ -15,12 +16,18 @@ import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(Rabbit.class)
 public abstract class RabbitMixin {
+    @Unique private static final int lattice$THREAT_SCAN_INTERVAL = 8;
+    @Unique private static final double lattice$THREAT_SCAN_RANGE = 10.0;
+
+    @Unique private @Nullable LivingEntity lattice$cachedThreat;
+
     @Shadow public int moreCarrotTicks;
 
     @Shadow public abstract float getHealth();
@@ -49,13 +56,14 @@ public abstract class RabbitMixin {
         final Mob mob = (Mob) (Object) this;
         LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
         if (threat == null) {
-            threat = HerbivoreAiSupport.findNearestThreat(
-                    mob,
-                    level,
-                    10.0,
-                    entity -> entity instanceof Wolf
-                            || entity instanceof Monster
-                            || entity instanceof Player);
+            final Predicate<LivingEntity> threatPredicate = entity -> entity instanceof Wolf
+                    || entity instanceof Monster
+                    || entity instanceof Player;
+            threat = HerbivoreAiSupport.cachedThreat(mob, this.lattice$cachedThreat, lattice$THREAT_SCAN_RANGE, threatPredicate);
+            if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$THREAT_SCAN_INTERVAL)) {
+                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                threat = this.lattice$cachedThreat;
+            }
         }
         final Player temptingPlayer = level.getNearestPlayer(
                 this.getX(), this.getY(), this.getZ(), 9.0,
