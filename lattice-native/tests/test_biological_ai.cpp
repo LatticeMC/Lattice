@@ -262,6 +262,27 @@ TEST_CASE("biological_ai: axolotl rests when dry and low energy") {
     CHECK(decision.stimulus_index == -1);
 }
 
+TEST_CASE("biological_ai: scared panda rests instead of seeking food") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.15F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.ambient_danger = 0.75F;
+    inputs.environment.can_idle_safely = true;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::panda, inputs);
+    CHECK(decision.action == BiologicalAction::rest);
+    CHECK(decision.stimulus_index == -1);
+}
+
 TEST_CASE("biological_ai: species registry changes threat response") {
     const BiologicalStimulus stimuli[] = {
         {BiologicalStimulusKind::threat, 5.0F, 1.0F, true, true},

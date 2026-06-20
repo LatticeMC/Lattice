@@ -248,6 +248,21 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void scaredPandaRestsInsteadOfSeekingFood() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision panda = decide(0.9F, 0.15F, 0.0F, 1.2F,
+                false, false, false,
+                0.75F, true, true, false,
+                stimuli, BiologicalAiProfiles.PANDA);
+
+        assertEquals(NativeBiologicalAi.Action.REST, panda.action());
+        assertEquals(-1, panda.stimulusIndex());
+    }
+
+    @Test
     void armadilloProfileFleesEarlierThanCowProfile() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 5.0F, 1.0F, true, true)

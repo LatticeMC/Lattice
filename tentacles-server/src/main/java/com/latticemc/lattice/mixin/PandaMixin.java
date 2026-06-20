@@ -24,10 +24,11 @@ public abstract class PandaMixin {
     @Shadow public abstract boolean isOnFire();
     @Shadow public abstract boolean isPassenger();
     @Shadow public abstract boolean isVehicle();
-    @Shadow public abstract boolean isInWaterOrRain();
+    @Shadow public abstract boolean isInWater();
     @Shadow public abstract boolean isBaby();
     @Shadow public abstract boolean isFood(ItemStack stack);
     @Shadow public abstract boolean isSitting();
+    @Shadow public abstract boolean isOnBack();
     @Shadow public abstract boolean isEating();
     @Shadow public abstract boolean isRolling();
     @Shadow public abstract boolean isSneezing();
@@ -43,21 +44,32 @@ public abstract class PandaMixin {
     @Inject(method = "customServerAiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(ServerLevel level, CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
-        if (this.isPassenger() || this.isVehicle() || this.isInWaterOrRain()) return;
+        if (this.isPassenger() || this.isVehicle()) return;
 
         final float maxHealth = this.getMaxHealth();
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final LivingEntity threat = this.getTarget();
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final LivingEntity target = this.getTarget();
+        final LivingEntity threat = target != null && target.isAlive() ? target : null;
+        final boolean sitting = this.isSitting();
+        final boolean eating = this.isEating();
+        final boolean rolling = this.isRolling();
+        final boolean sneezing = this.isSneezing();
+        final boolean scared = this.isScared();
+        final boolean busy = sitting || eating || rolling || sneezing || this.isOnBack() || scared;
+        final Player temptingPlayer = !busy && !this.isInWater()
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final float energyRatio;
-        if (this.isEating() || this.isSitting()) {
-            energyRatio = 0.30F;
-        } else if (this.isRolling() || this.isSneezing()) {
+        if (scared) {
+            energyRatio = 0.15F;
+        } else if (eating || sitting) {
+            energyRatio = 0.25F;
+        } else if (rolling || sneezing) {
             energyRatio = 0.90F;
         } else if (this.isBaby()) {
             energyRatio = 0.55F;
@@ -73,10 +85,10 @@ public abstract class PandaMixin {
                 1.2F,
                 this.isOnFire(),
                 false,
-                true,
-                threat != null || this.isScared() ? 1.0F : 0.0F,
-                !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && !this.isScared(),
+                temptingPlayer != null,
+                this.isOnFire() ? 1.0F : (threat != null ? 0.8F : (scared ? 0.75F : 0.0F)),
+                sitting || !level.canSeeSky(this.blockPosition()),
+                threat == null && !this.isOnFire(),
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.isWorried() ? 0.65F : 0.85F),
                 BiologicalAiProfiles.PANDA);
