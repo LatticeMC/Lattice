@@ -383,6 +383,21 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void llamaProfileCanPursuePreyWhenAggressionIsRaised() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.PREY, 3.0F, 0.85F, true, true)
+        };
+
+        NativeBiologicalAi.Decision llama = decide(0.9F, 0.80F, 0.55F, 1.4F,
+                false, true, false,
+                0.0F, true, true, false,
+                stimuli, BiologicalAiProfiles.LLAMA);
+
+        assertEquals(NativeBiologicalAi.Action.PURSUE, llama.action());
+        assertEquals(0, llama.stimulusIndex());
+    }
+
+    @Test
     void armadilloProfileFleesEarlierThanCowProfile() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 5.0F, 1.0F, true, true)

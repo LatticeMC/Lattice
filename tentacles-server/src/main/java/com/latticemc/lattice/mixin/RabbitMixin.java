@@ -25,8 +25,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class RabbitMixin {
     @Unique private static final int lattice$THREAT_SCAN_INTERVAL = 8;
     @Unique private static final double lattice$THREAT_SCAN_RANGE = 10.0;
+    @Unique private static final int lattice$PREY_SCAN_INTERVAL = 8;
+    @Unique private static final double lattice$PREY_SCAN_RANGE = 10.0;
 
     @Unique private @Nullable LivingEntity lattice$cachedThreat;
+    @Unique private @Nullable LivingEntity lattice$cachedPrey;
 
     @Shadow public int moreCarrotTicks;
 
@@ -57,6 +60,14 @@ public abstract class RabbitMixin {
         final Mob mob = (Mob) (Object) this;
         final boolean killerRabbit = this.getVariant() == Rabbit.Variant.EVIL;
         LivingEntity prey = killerRabbit && this.getTarget() != null && this.getTarget().isAlive() ? this.getTarget() : null;
+        if (killerRabbit && prey == null) {
+            final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Wolf || entity instanceof Player;
+            prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
+            if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
+                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$PREY_SCAN_RANGE, preyPredicate);
+                prey = this.lattice$cachedPrey;
+            }
+        }
         LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
         if (!killerRabbit && threat == null) {
             final Predicate<LivingEntity> threatPredicate = entity -> entity instanceof Wolf

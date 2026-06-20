@@ -74,6 +74,9 @@ final class PollinatorAiSupport {
 
         if (decision.action() == NativeBiologicalAi.Action.EAT && decision.stimulusIndex() == foodIndex && temptingPlayer != null) {
             mob.lookAt(temptingPlayer, 20.0F, 20.0F);
+            if (mob.distanceToSqr(temptingPlayer) <= 9.0) {
+                mob.stopInPlace();
+            }
             return true;
         }
 
