@@ -362,6 +362,7 @@ target_sources(lattice PRIVATE
     src/world/entity/approach_target_sampler.cpp
     src/world/entity/visibility_scan.cpp
     src/world/entity/aabb_query.cpp
+    src/world/entity/entity_query.cpp
     src/world/entity/collision_sweep.cpp
     src/world/entity/los.cpp
     src/world/entity/pathfinder.cpp
@@ -371,6 +372,7 @@ target_sources(lattice PRIVATE
     src/world/entity/water_target_sampler.cpp
     src/world/entity/spawn_filter.cpp
     jni/biological_ai.cpp
+    jni/entity_query.cpp
     jni/entity_visibility.cpp
     jni/los.cpp
     jni/pathfinder.cpp

@@ -12,7 +12,6 @@ namespace {
 
 constexpr jint kPathfinderAbiVersion = 6;
 constexpr int kResultHeaderInts = 3;
-constexpr int kResultNodeInts = 3;
 
 } // namespace
 
@@ -146,7 +145,8 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
     output.coords = reinterpret_cast<int*>(out + kResultHeaderInts);
     output.capacity_nodes = maxVisitedNodes;
 
-    const bool ok = pf::find_path_into(inputs, output);
+    thread_local pf::PathfinderScratch scratch{};
+    const bool ok = pf::find_path_into(inputs, output, scratch);
 
     env->ReleaseIntArrayElements(jOutPath, out, 0);
     env->ReleaseFloatArrayElements(jPathfindingMalus, malus, JNI_ABORT);

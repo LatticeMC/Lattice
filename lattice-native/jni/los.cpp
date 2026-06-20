@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include "jni_helper.hpp"
 #include "world/entity/los.hpp"
@@ -26,6 +27,10 @@ namespace {
     const std::size_t needed = static_cast<std::size_t>(size_x) *
                                static_cast<std::size_t>(size_y) *
                                static_cast<std::size_t>(size_z);
+    if (needed > static_cast<std::size_t>(std::numeric_limits<jsize>::max())) {
+        lattice::jni::throw_illegal_arg(env, "lattice los: region too large");
+        return false;
+    }
     if (env->GetArrayLength(solid_mask) < static_cast<jsize>(needed)) {
         lattice::jni::throw_illegal_arg(env, "lattice los: solid mask too short");
         return false;

@@ -53,7 +53,7 @@ cd lattice-native/build && ctest --output-on-failure
 
 ## 架构
 
-Lattice 遵循标准的 Purpur 补丁系统。服务端修改以文件补丁的形式存储，而非完整源文件：
+Lattice 遵循标准的 Purpur 补丁系统。服务端修改以文件补丁的形式存储，而非完整源文件。未来将逐步弃用 Mixin hook，转向直接补丁方式，以提升可维护性和上游更新兼容性：
 
 - `tentacles-api/paper-patches/` -- 在 Paper 之上的 API 新增
 - `tentacles-server/paper-patches/` -- 在 Paper 之上的服务端修改
@@ -63,23 +63,25 @@ Lattice 遵循标准的 Purpur 补丁系统。服务端修改以文件补丁的�
 
 ## 原生模块
 
-`lattice-native` C++ 库加速了 16 个以上的 Minecraft 服务端系统：
+`lattice-native` C++ 库加速了 20 个以上的 Minecraft 服务端系统：
 
 | 模块 | 目标 |
 |---|---|
-| Zlib 编解码器 | 基于 libdeflate 的区块压缩 |
+| Zlib 编解码器 | 大数据包压缩（基于 libdeflate，待集成） |
 | NBT 解析器 | 二进制 NBT 反序列化 |
 | 紧凑存储 | 位打包 `long[]` 操作（标量、BMI2、AVX2、NEON） |
 | 光照等级传播器 | 基于 BFS 的光照等级传播 |
 | 方块光照引擎 | 完整的方块光照引擎，通过 JNI 查询世界数据 |
 | 高度图扫描 | 多段区块列高度图扫描器 |
 | 随机刻筛选器 | 随机刻候选掩码筛选 |
-| 生物 AI | 15 种动物物种的决策层 |
+| 生物 AI | 20 种动物物种的决策层 |
 | 接近/逃跑/家/水目标采样器 | 本地导航评估 |
 | 生成筛选器 | 实体生成资格判定 |
 | 实体可见性 | O(N x M) 距离扫描 |
 | AABB 查询 | O(Q x E) AABB 相交扫描 |
 | 碰撞扫描 | 实体移动的扫描式 AABB 钳位 |
+| 寻路器 | 原生 BinaryHeap 和节点池的 A* 寻路 |
+| 视野射线 | 带 Section 级跳过的 DDA 射线步进 |
 | 密度函数 | 批量网格填充与求值器 |
 | 区块噪声采样器 | NoiseRouter 包装外观 |
 | 矿脉采样器 | 基于 Xoroshiro128++ 的逐方块矿脉判定 |

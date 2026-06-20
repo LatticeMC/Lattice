@@ -27,6 +27,14 @@ public abstract class SensingMixin {
         try {
             Boolean result = NativeLineOfSight.tryHasLineOfSight(this.mob, entity);
             if (result == null) return;
+            if (LatticeNative.VERIFY) {
+                boolean vanilla = this.mob.hasLineOfSight(entity);
+                if (vanilla != result) {
+                    throw new AssertionError("lattice.verify: native_los mismatch mob="
+                            + this.mob.getType() + " target=" + entity.getType()
+                            + " vanilla=" + vanilla + " native=" + result);
+                }
+            }
             if (result) {
                 this.seen.add(id);
             } else {

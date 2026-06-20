@@ -136,22 +136,22 @@ constexpr std::int8_t kOpenFlag = 2;
 }
 
 struct MinHeap {
-    std::vector<int> entries{};
+    std::vector<int>* entries = nullptr;
     std::vector<int>* heap_index = nullptr;
     std::vector<PathfinderNode>* nodes = nullptr;
 
-    [[nodiscard]] bool empty() const noexcept { return entries.empty(); }
+    [[nodiscard]] bool empty() const noexcept { return entries->empty(); }
 
     void swap_entries(int a, int b) noexcept {
-        std::swap(entries[a], entries[b]);
-        (*heap_index)[entries[a]] = a;
-        (*heap_index)[entries[b]] = b;
+        std::swap((*entries)[a], (*entries)[b]);
+        (*heap_index)[(*entries)[a]] = a;
+        (*heap_index)[(*entries)[b]] = b;
     }
 
     void up(int index) noexcept {
         while (index > 0) {
             const int parent = (index - 1) >> 1;
-            if (!((*nodes)[entries[index]].f < (*nodes)[entries[parent]].f)) break;
+            if (!((*nodes)[(*entries)[index]].f < (*nodes)[(*entries)[parent]].f)) break;
             swap_entries(index, parent);
             index = parent;
         }
@@ -161,33 +161,33 @@ struct MinHeap {
         while (true) {
             const int left = (index << 1) + 1;
             const int right = left + 1;
-            if (left >= static_cast<int>(entries.size())) break;
+            if (left >= static_cast<int>(entries->size())) break;
             int best = left;
-            if (right < static_cast<int>(entries.size())
-                && (*nodes)[entries[right]].f < (*nodes)[entries[left]].f) {
+            if (right < static_cast<int>(entries->size())
+                && (*nodes)[(*entries)[right]].f < (*nodes)[(*entries)[left]].f) {
                 best = right;
             }
-            if (!((*nodes)[entries[best]].f < (*nodes)[entries[index]].f)) break;
+            if (!((*nodes)[(*entries)[best]].f < (*nodes)[(*entries)[index]].f)) break;
             swap_entries(index, best);
             index = best;
         }
     }
 
     void push(int node_index) noexcept {
-        entries.push_back(node_index);
-        (*heap_index)[node_index] = static_cast<int>(entries.size()) - 1;
+        entries->push_back(node_index);
+        (*heap_index)[node_index] = static_cast<int>(entries->size()) - 1;
         (*nodes)[node_index].flags |= kOpenFlag;
-        up(static_cast<int>(entries.size()) - 1);
+        up(static_cast<int>(entries->size()) - 1);
     }
 
     int pop() noexcept {
-        const int result = entries.front();
+        const int result = entries->front();
         (*nodes)[result].flags &= static_cast<std::int8_t>(~kOpenFlag);
         (*heap_index)[result] = -1;
-        entries[0] = entries.back();
-        entries.pop_back();
-        if (!entries.empty()) {
-            (*heap_index)[entries[0]] = 0;
+        (*entries)[0] = entries->back();
+        entries->pop_back();
+        if (!entries->empty()) {
+            (*heap_index)[(*entries)[0]] = 0;
             down(0);
         }
         return result;
@@ -218,7 +218,7 @@ struct MinHeap {
 }
 
 struct SearchResult {
-    std::vector<PathfinderNode> nodes{};
+    PathfinderScratch* scratch = nullptr;
     int end_index = -1;
     int target_index = -1;
     bool reached_target = false;
@@ -287,65 +287,67 @@ void build_pathfinder_masks(const std::int8_t* path_types,
 
 namespace {
 
-[[nodiscard]] SearchResult run_search(const PathfinderInputs& in) noexcept {
+[[nodiscard]] SearchResult run_search(const PathfinderInputs& in, PathfinderScratch& scratch) noexcept {
     if (!valid_inputs(in)) return empty_search();
     const int grid_volume = volume(in);
     if (grid_volume <= 0) return empty_search();
 
-    std::vector<std::uint8_t> passable(static_cast<std::size_t>(grid_volume), 0);
-    std::vector<std::uint8_t> standing(static_cast<std::size_t>(grid_volume), 0);
+    scratch.passable.assign(static_cast<std::size_t>(grid_volume), 0);
+    scratch.standing.assign(static_cast<std::size_t>(grid_volume), 0);
     build_pathfinder_masks(in.path_types, static_cast<std::size_t>(grid_volume),
                            in.pathfinding_malus, in.pathfinding_malus_count,
-                           PathfinderMasks{passable.data(), standing.data()});
+                           PathfinderMasks{scratch.passable.data(), scratch.standing.data()});
 
     int start_y = in.start_y;
     std::int8_t start_type = kBlocked;
     float start_malus = -1.0F;
-    if (!resolve_standing_node(in, in.start_x, in.start_y, in.start_z, passable, standing,
+    if (!resolve_standing_node(in, in.start_x, in.start_y, in.start_z, scratch.passable, scratch.standing,
                                start_y, start_type, start_malus)) {
         return empty_search();
     }
 
     const int max_nodes = std::min(in.config.max_visited_nodes, grid_volume);
-    std::vector<int> grid_to_node(static_cast<std::size_t>(grid_volume), -1);
-    std::vector<int> heap_index;
-    std::vector<PathfinderNode> nodes;
-    nodes.reserve(static_cast<std::size_t>(max_nodes));
-    heap_index.reserve(static_cast<std::size_t>(max_nodes));
+    scratch.grid_to_node.assign(static_cast<std::size_t>(grid_volume), -1);
+    scratch.heap_index.clear();
+    scratch.nodes.clear();
+    scratch.heap_entries.clear();
+    scratch.nodes.reserve(static_cast<std::size_t>(max_nodes));
+    scratch.heap_index.reserve(static_cast<std::size_t>(max_nodes));
+    scratch.heap_entries.reserve(static_cast<std::size_t>(max_nodes));
 
     auto get_node = [&](int x, int y, int z, std::int8_t type, float malus) noexcept -> int {
         const int gi = grid_index(in, x, y, z);
-        int index = grid_to_node[static_cast<std::size_t>(gi)];
+        int index = scratch.grid_to_node[static_cast<std::size_t>(gi)];
         if (index >= 0) return index;
-        if (static_cast<int>(nodes.size()) >= max_nodes) return -1;
-        index = static_cast<int>(nodes.size());
-        grid_to_node[static_cast<std::size_t>(gi)] = index;
+        if (static_cast<int>(scratch.nodes.size()) >= max_nodes) return -1;
+        index = static_cast<int>(scratch.nodes.size());
+        scratch.grid_to_node[static_cast<std::size_t>(gi)] = index;
         PathfinderNode node{};
         node.x = x;
         node.y = y;
         node.z = z;
         node.type = type;
         node.cost_malus = malus;
-        nodes.push_back(node);
-        heap_index.push_back(-1);
+        scratch.nodes.push_back(node);
+        scratch.heap_index.push_back(-1);
         return index;
     };
 
     int start_index = get_node(in.start_x, start_y, in.start_z, start_type, start_malus);
     if (start_index < 0) return empty_search();
     int best_target = -1;
-    nodes[start_index].h = best_h(in, nodes[start_index], &best_target);
-    nodes[start_index].f = nodes[start_index].h;
+    scratch.nodes[start_index].h = best_h(in, scratch.nodes[start_index], &best_target);
+    scratch.nodes[start_index].f = scratch.nodes[start_index].h;
 
     MinHeap heap{};
-    heap.heap_index = &heap_index;
-    heap.nodes = &nodes;
-    heap.entries.reserve(static_cast<std::size_t>(max_nodes));
+    heap.heap_index = &scratch.heap_index;
+    heap.nodes = &scratch.nodes;
+    heap.entries = &scratch.heap_entries;
     heap.push(start_index);
 
     int best_node = start_index;
     int best_node_target = best_target;
-    float best_node_h = nodes[start_index].h;
+    float best_node_h = scratch.nodes[start_index].h;
     int visited = 0;
 
     constexpr int dir_x[4] = {1, 0, -1, 0};
@@ -353,14 +355,14 @@ namespace {
 
     while (!heap.empty() && visited++ < in.config.max_visited_nodes) {
         const int current_index = heap.pop();
-        PathfinderNode& current = nodes[static_cast<std::size_t>(current_index)];
+        PathfinderNode& current = scratch.nodes[static_cast<std::size_t>(current_index)];
         current.flags |= kClosedFlag;
 
         for (int i = 0; i < in.target_count; ++i) {
             if (manhattan(current.x, current.y, current.z,
                           in.target_x[i], in.target_y[i], in.target_z[i]) <= in.config.reach_range) {
                 SearchResult result{};
-                result.nodes = std::move(nodes);
+                result.scratch = &scratch;
                 result.end_index = current_index;
                 result.target_index = i;
                 result.reached_target = true;
@@ -379,7 +381,7 @@ namespace {
             std::int8_t type = kBlocked;
             float malus = -1.0F;
             if (!resolve_standing_node(in, current.x + dir_x[d], current.y,
-                                       current.z + dir_z[d], passable, standing,
+                                       current.z + dir_z[d], scratch.passable, scratch.standing,
                                        ny, type, malus)) {
                 continue;
             }
@@ -397,13 +399,13 @@ namespace {
             const int a = cardinal[d];
             const int b = cardinal[(d + 1) & 3];
             if (a < 0 || b < 0) continue;
-            if (nodes[a].y > current.y || nodes[b].y > current.y) continue;
+            if (scratch.nodes[a].y > current.y || scratch.nodes[b].y > current.y) continue;
             int ny = current.y;
             std::int8_t type = kBlocked;
             float malus = -1.0F;
             if (!resolve_standing_node(in, current.x + dir_x[d] + dir_x[(d + 1) & 3],
                                        current.y, current.z + dir_z[d] + dir_z[(d + 1) & 3],
-                                       passable, standing, ny, type, malus)) {
+                                       scratch.passable, scratch.standing, ny, type, malus)) {
                 continue;
             }
             const int ni = get_node(current.x + dir_x[d] + dir_x[(d + 1) & 3],
@@ -414,7 +416,7 @@ namespace {
 
         for (int i = 0; i < neighbor_count; ++i) {
             const int ni = neighbors[i];
-            PathfinderNode& neighbor = nodes[static_cast<std::size_t>(ni)];
+            PathfinderNode& neighbor = scratch.nodes[static_cast<std::size_t>(ni)];
             if ((neighbor.flags & kClosedFlag) != 0) continue;
             const float step = distance(current.x, current.y, current.z,
                                         neighbor.x, neighbor.y, neighbor.z);
@@ -442,7 +444,7 @@ namespace {
     }
 
     SearchResult result{};
-    result.nodes = std::move(nodes);
+    result.scratch = &scratch;
     result.end_index = best_node;
     result.target_index = best_node_target;
     result.reached_target = false;
@@ -452,9 +454,10 @@ namespace {
 } // namespace
 
 PathfinderResult find_path(const PathfinderInputs& in) noexcept {
-    const SearchResult search = run_search(in);
-    if (search.end_index < 0) return PathfinderResult{};
-    return reconstruct(search.nodes, search.end_index, search.target_index, search.reached_target);
+    PathfinderScratch scratch{};
+    const SearchResult search = run_search(in, scratch);
+    if (search.end_index < 0 || !search.scratch) return PathfinderResult{};
+    return reconstruct(search.scratch->nodes, search.end_index, search.target_index, search.reached_target);
 }
 
 bool find_path_into(const PathfinderInputs& in, PathfinderOutput& output) noexcept {
@@ -463,18 +466,30 @@ bool find_path_into(const PathfinderInputs& in, PathfinderOutput& output) noexce
     output.reached_target = false;
     if (!output.coords || output.capacity_nodes <= 0) return false;
 
-    SearchResult search = run_search(in);
-    if (search.end_index < 0) return false;
+    PathfinderScratch scratch{};
+    return find_path_into(in, output, scratch);
+}
+
+bool find_path_into(const PathfinderInputs& in, PathfinderOutput& output,
+                    PathfinderScratch& scratch) noexcept {
+    output.path_length = 0;
+    output.target_index = -1;
+    output.reached_target = false;
+    if (!output.coords || output.capacity_nodes <= 0) return false;
+
+    SearchResult search = run_search(in, scratch);
+    if (search.end_index < 0 || !search.scratch) return false;
 
     int count = 0;
-    for (int i = search.end_index; i >= 0; i = search.nodes[static_cast<std::size_t>(i)].came_from) {
+    const auto& nodes = search.scratch->nodes;
+    for (int i = search.end_index; i >= 0; i = nodes[static_cast<std::size_t>(i)].came_from) {
         ++count;
     }
     if (count > output.capacity_nodes) return false;
 
     int out_index = count - 1;
-    for (int i = search.end_index; i >= 0; i = search.nodes[static_cast<std::size_t>(i)].came_from) {
-        const PathfinderNode& node = search.nodes[static_cast<std::size_t>(i)];
+    for (int i = search.end_index; i >= 0; i = nodes[static_cast<std::size_t>(i)].came_from) {
+        const PathfinderNode& node = nodes[static_cast<std::size_t>(i)];
         const int base = out_index * 3;
         output.coords[base] = node.x;
         output.coords[base + 1] = node.y;

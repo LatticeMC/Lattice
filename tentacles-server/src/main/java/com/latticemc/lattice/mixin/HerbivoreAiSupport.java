@@ -2,9 +2,14 @@ package com.latticemc.lattice.mixin;
 
 import com.latticemc.lattice.nativelib.NativeApproachTargetSampler;
 import com.latticemc.lattice.nativelib.NativeBiologicalAi;
+import com.latticemc.lattice.nativelib.NativeEntityQuery;
 import com.latticemc.lattice.nativelib.NativeFleeTargetSampler;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Predicate;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -27,11 +32,73 @@ final class HerbivoreAiSupport {
         return null;
     }
 
+    @SafeVarargs
     static @Nullable LivingEntity findNearestThreat(Mob self,
                                                     ServerLevel level,
                                                     double range,
-                                                    Predicate<LivingEntity> predicate) {
+                                                    Predicate<LivingEntity> predicate,
+                                                    Class<? extends LivingEntity>... nativePrefilterTypes) {
         final AABB area = self.getBoundingBox().inflate(range);
+        if (NativeEntityQuery.isAvailable()) {
+            final List<LivingEntity> candidates = level.getEntitiesOfClass(LivingEntity.class, area, entity -> true);
+            if (candidates.size() >= 8) {
+                final Map<Integer, LivingEntity> byId = new HashMap<>(candidates.size());
+                final NativeEntityQuery.EntitySnapshot[] snapshots = new NativeEntityQuery.EntitySnapshot[candidates.size()];
+                int snapshotCount = 0;
+                for (int i = 0; i < candidates.size(); ++i) {
+                    final LivingEntity entity = candidates.get(i);
+                    if (!lattice$matchesAnyType(entity, nativePrefilterTypes)) continue;
+                    final AABB box = entity.getBoundingBox();
+                    byId.put(entity.getId(), entity);
+                    snapshots[snapshotCount++] = new NativeEntityQuery.EntitySnapshot(
+                            entity.getId(),
+                            BuiltInRegistries.ENTITY_TYPE.getId(entity.getType()),
+                            entity.getX(), entity.getY(), entity.getZ(),
+                            box.minX, box.minY, box.minZ,
+                            box.maxX, box.maxY, box.maxZ,
+                            entity.isAlive(),
+                            entity.isSpectator());
+                }
+                if (snapshotCount < 8) {
+                    return lattice$findNearestThreatFallback(self, level, range, predicate, area);
+                }
+                final int[] nearestIds = NativeEntityQuery.query(
+                        area.minX, area.minY, area.minZ,
+                        area.maxX, area.maxY, area.maxZ,
+                        snapshotCount == snapshots.length ? snapshots : Arrays.copyOf(snapshots, snapshotCount),
+                        null,
+                        NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC,
+                        self.getId(),
+                        true,
+                        snapshotCount,
+                        self.getX(), self.getY(), self.getZ());
+                final double maxDistance = range * range;
+                for (int id : nearestIds) {
+                    final LivingEntity candidate = byId.get(id);
+                    if (candidate != null && self.distanceToSqr(candidate) <= maxDistance && predicate.test(candidate)) {
+                        return candidate;
+                    }
+                }
+                return null;
+            }
+        }
+        return lattice$findNearestThreatFallback(self, level, range, predicate, area);
+    }
+
+    private static boolean lattice$matchesAnyType(LivingEntity entity,
+                                                  Class<? extends LivingEntity>[] nativePrefilterTypes) {
+        if (nativePrefilterTypes == null || nativePrefilterTypes.length == 0) return true;
+        for (Class<? extends LivingEntity> type : nativePrefilterTypes) {
+            if (type.isInstance(entity)) return true;
+        }
+        return false;
+    }
+
+    private static @Nullable LivingEntity lattice$findNearestThreatFallback(Mob self,
+                                                                            ServerLevel level,
+                                                                            double range,
+                                                                            Predicate<LivingEntity> predicate,
+                                                                            AABB area) {
         final List<LivingEntity> candidates = level.getEntitiesOfClass(
                 LivingEntity.class,
                 area,

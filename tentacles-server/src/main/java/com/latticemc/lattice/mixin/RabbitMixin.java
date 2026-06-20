@@ -66,7 +66,8 @@ public abstract class RabbitMixin {
             final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Wolf || entity instanceof Player;
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
-                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$PREY_SCAN_RANGE, preyPredicate);
+                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(
+                        mob, level, lattice$PREY_SCAN_RANGE, preyPredicate, Wolf.class, Player.class);
                 prey = this.lattice$cachedPrey;
             }
         }
@@ -77,7 +78,8 @@ public abstract class RabbitMixin {
                     || entity instanceof Player;
             threat = HerbivoreAiSupport.cachedThreat(mob, this.lattice$cachedThreat, lattice$THREAT_SCAN_RANGE, threatPredicate);
             if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$THREAT_SCAN_INTERVAL)) {
-                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(
+                        mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate, Wolf.class, Monster.class, Player.class);
                 threat = this.lattice$cachedThreat;
             }
         }

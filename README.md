@@ -53,7 +53,7 @@ cd lattice-native/build && ctest --output-on-failure
 
 ## Architecture
 
-Lattice follows the standard Purpur patch system. Server modifications are stored as file patches rather than full source files:
+Lattice follows the standard Purpur patch system. Server modifications are stored as file patches rather than full source files. Over time, Mixin-based hooks will be gradually phased out in favor of direct patches for better maintainability and compatibility with upstream updates:
 
 - `tentacles-api/paper-patches/` -- API additions on top of Paper
 - `tentacles-server/paper-patches/` -- Server changes on top of Paper
@@ -63,23 +63,25 @@ The native library is a shared object (`liblattice.so` / `lattice.dll` / `liblat
 
 ## Native Modules
 
-The `lattice-native` C++ library accelerates 16+ Minecraft server systems:
+The `lattice-native` C++ library accelerates 20+ Minecraft server systems:
 
 | Module | Target |
 |---|---|
-| Zlib Codec | Chunk compression via libdeflate |
+| Zlib Codec | Large packet compression via libdeflate (pending integration) |
 | NBT Parser | Binary NBT deserialisation |
 | Packed Storage | Bit-packed `long[]` operations (scalar, BMI2, AVX2, NEON) |
 | Level Propagator | BFS-based light level propagation |
 | Block Light Engine | Full block light engine with JNI world queries |
 | Heightmap Scan | Multi-section column heightmap scanner |
 | Random Tick Filter | Random-tick candidate mask filter |
-| Biological AI | Decision layer for 15 animal species |
+| Biological AI | Decision layer for 20 animal species |
 | Approach/Flee/Home/Water Target Samplers | Local navigation evaluation |
 | Spawn Filter | Entity spawn eligibility |
 | Entity Visibility | O(N x M) distance scan |
 | AABB Query | O(Q x E) AABB intersection scan |
 | Collision Sweep | Swept-AABB clamp for entity movement |
+| Pathfinder | A* pathfinding with native BinaryHeap and node pool |
+| Line-of-Sight | DDA raytrace with section-level skip |
 | Density Function | Batched grid fill and evaluator |
 | Chunk Noise Sampler | NoiseRouter bundle facade |
 | Ore Vein Sampler | Per-block vein decision with Xoroshiro128++ |

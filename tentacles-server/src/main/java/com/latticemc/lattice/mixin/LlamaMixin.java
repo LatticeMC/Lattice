@@ -61,7 +61,8 @@ public abstract class LlamaMixin {
         if (prey == null) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedWolfPrey, lattice$PREY_SCAN_RANGE, entity -> entity instanceof Wolf);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
-                this.lattice$cachedWolfPrey = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$PREY_SCAN_RANGE, entity -> entity instanceof Wolf);
+                this.lattice$cachedWolfPrey = PredatoryAnimalAiSupport.findNearestPrey(
+                        mob, level, lattice$PREY_SCAN_RANGE, entity -> entity instanceof Wolf, Wolf.class);
                 prey = this.lattice$cachedWolfPrey;
             }
         }

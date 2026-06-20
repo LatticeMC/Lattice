@@ -67,7 +67,8 @@ public abstract class BeeMixin {
                     && ((NeutralMob) (Object) this).isAngryAt(player, level);
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedAngerTarget, lattice$ANGER_SCAN_RANGE, angerPredicate);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$ANGER_SCAN_INTERVAL)) {
-                this.lattice$cachedAngerTarget = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$ANGER_SCAN_RANGE, angerPredicate);
+                this.lattice$cachedAngerTarget = PredatoryAnimalAiSupport.findNearestPrey(
+                        mob, level, lattice$ANGER_SCAN_RANGE, angerPredicate, Player.class);
                 prey = this.lattice$cachedAngerTarget;
             }
         }

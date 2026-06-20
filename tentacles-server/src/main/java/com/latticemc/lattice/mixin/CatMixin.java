@@ -67,7 +67,8 @@ public abstract class CatMixin {
         if (prey == null && !busy) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
-                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$PREY_SCAN_RANGE, preyPredicate);
+                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(
+                        mob, level, lattice$PREY_SCAN_RANGE, preyPredicate, Rabbit.class, Turtle.class);
                 prey = this.lattice$cachedPrey;
             }
         }
@@ -75,7 +76,8 @@ public abstract class CatMixin {
         if (threat == null && !busy) {
             threat = HerbivoreAiSupport.cachedThreat(mob, this.lattice$cachedThreat, lattice$THREAT_SCAN_RANGE, threatPredicate);
             if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$THREAT_SCAN_INTERVAL)) {
-                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(
+                        mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate, Player.class);
                 threat = this.lattice$cachedThreat;
             }
         }

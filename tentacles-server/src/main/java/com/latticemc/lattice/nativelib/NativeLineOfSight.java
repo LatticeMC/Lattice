@@ -1,9 +1,14 @@
 package com.latticemc.lattice.nativelib;
 
 import java.util.Arrays;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -12,6 +17,20 @@ public final class NativeLineOfSight {
     private static final double MIN_NATIVE_DISTANCE_SQ = 4.0D * 4.0D;
     private static final double MAX_LOS_DISTANCE_SQ = 128.0D * 128.0D;
     private static final int MAX_RAY_MASK_VOLUME = 32768;
+    private static final int SECTION_SIZE = 16;
+    private static final int SECTION_VOLUME = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
+    private static final int MAX_SECTION_CACHE_ENTRIES = 2048;
+    private static final Map<SectionKey, SectionMask> SECTION_MASK_CACHE = new ConcurrentHashMap<>();
+    private static final ClassValue<Boolean> USES_LIVING_ENTITY_LOS = new ClassValue<>() {
+        @Override
+        protected Boolean computeValue(Class<?> type) {
+            try {
+                return type.getMethod("hasLineOfSight", Entity.class).getDeclaringClass() == LivingEntity.class;
+            } catch (ReflectiveOperationException e) {
+                return Boolean.FALSE;
+            }
+        }
+    };
 
     private NativeLineOfSight() {}
 
@@ -20,6 +39,10 @@ public final class NativeLineOfSight {
             int regionMinX, int regionMinY, int regionMinZ,
             int regionSizeX, int regionSizeY, int regionSizeZ
     ) {}
+
+    private record SectionKey(int levelIdentity, ResourceKey<Level> dimension, int sectionX, int sectionY, int sectionZ) {}
+
+    private record SectionMask(byte[] data, long gameTime) {}
 
     public static boolean isAvailable() {
         LatticeNative.ensureLoaded();
@@ -34,6 +57,9 @@ public final class NativeLineOfSight {
         int sizeX = radius * 2 + 1;
         int sizeY = Math.min(level.getMaxY(), centerY + radius) - minY + 1;
         int sizeZ = radius * 2 + 1;
+        if (volume(sizeX, sizeY, sizeZ) > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("mask region too large");
+        }
         byte[] data = new byte[sizeX * sizeY * sizeZ];
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int y = 0; y < sizeY; ++y) {
@@ -83,6 +109,7 @@ public final class NativeLineOfSight {
 
     public static Boolean tryHasLineOfSight(Mob mob, Entity entity) {
         if (entity.level() != mob.level()) return Boolean.FALSE;
+        if (!USES_LIVING_ENTITY_LOS.get(mob.getClass())) return null;
         if (!isAvailable()) return null;
 
         double fromX = mob.getX();
@@ -100,6 +127,10 @@ public final class NativeLineOfSight {
         return hasLineOfSight(fromX, fromY, fromZ, toX, toY, toZ, mask) ? Boolean.TRUE : null;
     }
 
+    public static void invalidateSection(Level level, BlockPos pos) {
+        SECTION_MASK_CACHE.remove(sectionKey(level, pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4));
+    }
+
     private static SolidMask computeRaySolidMask(Level level,
                                                  double fromX, double fromY, double fromZ,
                                                  double toX, double toY, double toZ) {
@@ -112,7 +143,7 @@ public final class NativeLineOfSight {
         int sizeX = maxX - minX + 1;
         int sizeY = maxY - minY + 1;
         int sizeZ = maxZ - minZ + 1;
-        if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0 || sizeX * sizeY * sizeZ > MAX_RAY_MASK_VOLUME) {
+        if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0 || volume(sizeX, sizeY, sizeZ) > MAX_RAY_MASK_VOLUME) {
             return null;
         }
 
@@ -183,7 +214,7 @@ public final class NativeLineOfSight {
             return;
         }
         pos.set(x, y, z);
-        if (isOpaqueToLos(level.getBlockState(pos))) {
+        if (isSectionMaskSolid(level, pos, x, y, z)) {
             int localX = x - mask.regionMinX;
             int localY = y - mask.regionMinY;
             int localZ = z - mask.regionMinZ;
@@ -275,14 +306,66 @@ public final class NativeLineOfSight {
         return !state.isAir();
     }
 
+    private static boolean isSectionMaskSolid(Level level, BlockPos.MutableBlockPos pos, int x, int y, int z) {
+        int sectionX = x >> 4;
+        int sectionY = y >> 4;
+        int sectionZ = z >> 4;
+        SectionMask mask = getSectionMask(level, sectionX, sectionY, sectionZ);
+        int localIndex = index(x & 15, y & 15, z & 15, SECTION_SIZE, SECTION_SIZE);
+        byte value = mask.data[localIndex];
+        if (value < 0) {
+            pos.set(x, y, z);
+            value = (byte)(isOpaqueToLos(level.getBlockState(pos)) ? 1 : 0);
+            mask.data[localIndex] = value;
+        }
+        return value != 0;
+    }
+
+    private static SectionMask getSectionMask(Level level, int sectionX, int sectionY, int sectionZ) {
+        long gameTime = level.getGameTime();
+        SectionKey key = sectionKey(level, sectionX, sectionY, sectionZ);
+        SectionMask cached = SECTION_MASK_CACHE.get(key);
+        if (cached != null && cached.gameTime == gameTime) return cached;
+
+        SectionMask built = newSectionMask(gameTime);
+        SECTION_MASK_CACHE.put(key, built);
+        if (SECTION_MASK_CACHE.size() > MAX_SECTION_CACHE_ENTRIES) {
+            pruneSectionCache(gameTime);
+        }
+        return built;
+    }
+
+    private static SectionMask newSectionMask(long gameTime) {
+        byte[] data = new byte[SECTION_VOLUME];
+        Arrays.fill(data, (byte)-1);
+        return new SectionMask(data, gameTime);
+    }
+
+    private static SectionKey sectionKey(Level level, int sectionX, int sectionY, int sectionZ) {
+        return new SectionKey(System.identityHashCode(level), level.dimension(), sectionX, sectionY, sectionZ);
+    }
+
+    private static void pruneSectionCache(long gameTime) {
+        Iterator<Map.Entry<SectionKey, SectionMask>> iterator = SECTION_MASK_CACHE.entrySet().iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().getValue().gameTime != gameTime) {
+                iterator.remove();
+            }
+        }
+        if (SECTION_MASK_CACHE.size() > MAX_SECTION_CACHE_ENTRIES) {
+            SECTION_MASK_CACHE.clear();
+        }
+    }
+
     private static int index(int x, int y, int z, int sizeX, int sizeZ) {
         return (y * sizeZ + z) * sizeX + x;
     }
 
     private static void validate(SolidMask mask) {
         if (mask == null || mask.data == null) throw new IllegalArgumentException("null mask");
-        int needed = mask.regionSizeX * mask.regionSizeY * mask.regionSizeZ;
-        if (mask.regionSizeX <= 0 || mask.regionSizeY <= 0 || mask.regionSizeZ <= 0 || mask.data.length < needed) {
+        long needed = volume(mask.regionSizeX, mask.regionSizeY, mask.regionSizeZ);
+        if (mask.regionSizeX <= 0 || mask.regionSizeY <= 0 || mask.regionSizeZ <= 0
+                || needed > Integer.MAX_VALUE || mask.data.length < needed) {
             throw new IllegalArgumentException("invalid mask");
         }
     }
@@ -305,6 +388,10 @@ public final class NativeLineOfSight {
         double dy = toY - fromY;
         double dz = toZ - fromZ;
         return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static long volume(int sizeX, int sizeY, int sizeZ) {
+        return (long)sizeX * (long)sizeY * (long)sizeZ;
     }
 
     private static native boolean nativeCheckSingle(

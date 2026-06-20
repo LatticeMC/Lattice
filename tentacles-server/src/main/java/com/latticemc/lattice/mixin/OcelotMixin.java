@@ -62,7 +62,8 @@ public abstract class OcelotMixin {
                     || entity instanceof Turtle turtle && turtle.isBaby() && !turtle.isInWater();
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
-                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$PREY_SCAN_RANGE, preyPredicate);
+                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(
+                        mob, level, lattice$PREY_SCAN_RANGE, preyPredicate, Chicken.class, Turtle.class);
                 prey = this.lattice$cachedPrey;
             }
         }

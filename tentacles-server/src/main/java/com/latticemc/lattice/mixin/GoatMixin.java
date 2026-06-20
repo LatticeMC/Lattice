@@ -3,16 +3,22 @@ package com.latticemc.lattice.mixin;
 import com.latticemc.lattice.nativelib.BiologicalAiProfiles;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeBiologicalAi;
+import com.latticemc.lattice.nativelib.NativeEntityQuery;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import net.minecraft.world.entity.ai.Brain;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.goat.Goat;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
@@ -140,9 +146,47 @@ public abstract class GoatMixin {
     }
 
     private static @Nullable LivingEntity lattice$findRamTarget(ServerLevel level, Mob mob, Vec3 ramTarget) {
+        final AABB area = mob.getBoundingBox().inflate(8.0);
+        if (NativeEntityQuery.isAvailable()) {
+            final List<LivingEntity> candidates = level.getEntitiesOfClass(LivingEntity.class, area, entity -> true);
+            if (candidates.size() >= 8) {
+                final Map<Integer, LivingEntity> byId = new HashMap<>(candidates.size());
+                final NativeEntityQuery.EntitySnapshot[] snapshots = new NativeEntityQuery.EntitySnapshot[candidates.size()];
+                int snapshotCount = 0;
+                for (LivingEntity entity : candidates) {
+                    final AABB box = entity.getBoundingBox();
+                    byId.put(entity.getId(), entity);
+                    snapshots[snapshotCount++] = new NativeEntityQuery.EntitySnapshot(
+                            entity.getId(),
+                            BuiltInRegistries.ENTITY_TYPE.getId(entity.getType()),
+                            entity.getX(), entity.getY(), entity.getZ(),
+                            box.minX, box.minY, box.minZ,
+                            box.maxX, box.maxY, box.maxZ,
+                            entity.isAlive(),
+                            entity.isSpectator());
+                }
+                final int[] nearestIds = NativeEntityQuery.query(
+                        area.minX, area.minY, area.minZ,
+                        area.maxX, area.maxY, area.maxZ,
+                        snapshotCount == snapshots.length ? snapshots : Arrays.copyOf(snapshots, snapshotCount),
+                        null,
+                        NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC,
+                        mob.getId(),
+                        true,
+                        snapshotCount,
+                        ramTarget.x, ramTarget.y, ramTarget.z);
+                for (int id : nearestIds) {
+                    final LivingEntity candidate = byId.get(id);
+                    if (candidate != null && !(candidate instanceof Goat) && candidate.position().distanceToSqr(ramTarget) <= 16.0) {
+                        return candidate;
+                    }
+                }
+                return null;
+            }
+        }
         final List<LivingEntity> candidates = level.getEntitiesOfClass(
                 LivingEntity.class,
-                mob.getBoundingBox().inflate(8.0),
+                area,
                 entity -> entity != mob && entity.isAlive() && !(entity instanceof Goat) && entity.position().distanceToSqr(ramTarget) <= 16.0);
         LivingEntity best = null;
         double bestDistance = Double.POSITIVE_INFINITY;

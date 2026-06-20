@@ -76,7 +76,9 @@ public abstract class WolfMixin {
         if (prey == null && !inLove) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
-                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$PREY_SCAN_RANGE, preyPredicate);
+                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(
+                        mob, level, lattice$PREY_SCAN_RANGE, preyPredicate,
+                        Sheep.class, Rabbit.class, Fox.class, Turtle.class, AbstractSkeleton.class);
                 prey = this.lattice$cachedPrey;
             }
         }
@@ -84,7 +86,8 @@ public abstract class WolfMixin {
         if (threat == null && prey == null && !inLove) {
             threat = HerbivoreAiSupport.cachedThreat(mob, this.lattice$cachedThreat, lattice$THREAT_SCAN_RANGE, threatPredicate);
             if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$THREAT_SCAN_INTERVAL)) {
-                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(
+                        mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate, Llama.class);
                 threat = this.lattice$cachedThreat;
             }
         }

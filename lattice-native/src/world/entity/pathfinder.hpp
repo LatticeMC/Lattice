@@ -69,6 +69,15 @@ struct PathfinderOutput {
     bool reached_target = false;
 };
 
+struct PathfinderScratch {
+    std::vector<std::uint8_t> passable{};
+    std::vector<std::uint8_t> standing{};
+    std::vector<int> grid_to_node{};
+    std::vector<int> heap_index{};
+    std::vector<int> heap_entries{};
+    std::vector<PathfinderNode> nodes{};
+};
+
 struct PathfinderMasks {
     std::uint8_t* passable = nullptr;
     std::uint8_t* standing = nullptr;
@@ -108,5 +117,9 @@ void build_pathfinder_masks(const std::int8_t* path_types,
 
 [[nodiscard]] bool find_path_into(const PathfinderInputs& inputs,
                                   PathfinderOutput& output) noexcept;
+
+[[nodiscard]] bool find_path_into(const PathfinderInputs& inputs,
+                                  PathfinderOutput& output,
+                                  PathfinderScratch& scratch) noexcept;
 
 } // namespace lattice::world::entity

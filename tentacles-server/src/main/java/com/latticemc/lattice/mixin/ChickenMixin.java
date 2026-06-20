@@ -41,7 +41,8 @@ public abstract class ChickenMixin {
             final Predicate<LivingEntity> threatPredicate = entity -> entity instanceof Ocelot || entity instanceof Fox;
             threat = HerbivoreAiSupport.cachedThreat(mob, this.lattice$cachedChickenThreat, lattice$THREAT_SCAN_RANGE, threatPredicate);
             if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$THREAT_SCAN_INTERVAL)) {
-                this.lattice$cachedChickenThreat = HerbivoreAiSupport.findNearestThreat(mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                this.lattice$cachedChickenThreat = HerbivoreAiSupport.findNearestThreat(
+                        mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate, Ocelot.class, Fox.class);
                 threat = this.lattice$cachedChickenThreat;
             }
         }

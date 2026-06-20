@@ -62,7 +62,8 @@ public abstract class PolarBearMixin {
         if (prey == null && !busy && !polarBear.isBaby()) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, scannedPreyPredicate);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
-                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$PREY_SCAN_RANGE, scannedPreyPredicate);
+                this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(
+                        mob, level, lattice$PREY_SCAN_RANGE, scannedPreyPredicate, Fox.class);
                 prey = this.lattice$cachedPrey;
             }
         }

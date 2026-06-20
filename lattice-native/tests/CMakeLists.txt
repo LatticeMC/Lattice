@@ -123,6 +123,10 @@ lattice_add_test(aabb_query
              ${_entity_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
+lattice_add_test(entity_query
+    SOURCES  test_entity_query.cpp
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/entity_query.cpp)
+
 lattice_add_test(collision_sweep
     SOURCES  test_collision_sweep.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep.cpp
