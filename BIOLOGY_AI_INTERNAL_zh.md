@@ -40,6 +40,7 @@
 - `Wolf`：新增 wild wolf 物种支持，nearby prey 扫描覆盖原版 `Sheep/Rabbit/Fox`，tamed wolf 和已有非 prey 目标直接跳过，避免干扰宠物/愤怒目标逻辑。
 - `Cat`：新增 untamed cat 物种支持，nearby prey 扫描覆盖原版 `Rabbit/land baby Turtle`，tamed cat 直接跳过避免干扰宠物/owner/睡觉礼物逻辑。
 - `Fox`：新增保守捕食和避让支持，仅在非 `sleeping/sitting/crouching/pouncing/faceplanted/defending/inLove` 状态下扫描 `Chicken/Rabbit/land baby Turtle`；避让扫描覆盖未信任玩家、野狼、北极熊；暂不接管捡物/浆果/鱼类目标。
+- `PolarBear`：新增保守攻击/诱食支持，复用 `WOLF` profile；仅接已有 target 和 nearby `Fox` 扫描，不实现“附近幼崽触发主动扫玩家”的群体逻辑。
 - `MushroomCow`：新增 cow-like 支持，复用 `COW` species/profile，覆盖 food temptation、threat、inLove busy 输入，不新增 ABI。
 - `AbstractHorse`：新增 horse-family 支持，复用 `CAMEL` species/profile，覆盖 food temptation、threat、tamed/baby/eating/standing/inLove 输入，骑乘中跳过，不新增 ABI。
 - `Chicken`：补 `Fox/Ocelot` threat 扫描。
@@ -63,7 +64,7 @@
 - `Goat`：准备冲撞时不被诱食打断；可根据 `RAM_TARGET` memory 反推出附近冲撞目标并进入攻击态。
 - `Camel`：坐下/起身过渡/冲刺时不诱食，坐下时可休息。
 - `Llama`：吐口水后和 caravan 中不被诱食打断；面对狼时可 nearby 扫描目标，并走中距离压制而不是贴脸近战。
-- `Pig/Cow/MushroomCow/AbstractHorse/Sheep/Chicken/Rabbit/Ocelot/Wolf/Cat/Fox/Llama/Camel/Goat/Armadillo` 等陆生物种已移除 `isInWaterOrRain()` 的整段硬跳过。
+- `Pig/Cow/MushroomCow/AbstractHorse/Sheep/Chicken/Rabbit/Ocelot/Wolf/Cat/Fox/PolarBear/Llama/Camel/Goat/Armadillo` 等陆生物种已移除 `isInWaterOrRain()` 的整段硬跳过。
 
 ## 当前验证状态
 
