@@ -47,20 +47,24 @@ public abstract class LlamaMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final LivingEntity threat = this.getTarget();
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final LivingEntity target = this.getTarget();
+        final LivingEntity threat = target != null && target.isAlive() ? target : null;
+        final boolean inCaravan = this.inCaravan();
+        final Player temptingPlayer = !this.didSpit && !inCaravan
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.LLAMA,
                 this.getHealth() / maxHealth,
-                this.didSpit ? 0.90F : (this.inCaravan() ? 0.80F : (this.isBaby() ? 0.55F : 0.65F + this.getStrength() * 0.05F)),
+                this.didSpit ? 0.90F : (inCaravan ? 0.80F : (this.isBaby() ? 0.55F : 0.65F + this.getStrength() * 0.05F)),
                 this.didSpit ? 0.45F : 0.10F,
                 1.4F,
                 this.isOnFire(),
                 false,
-                true,
+                temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(this.blockPosition()) || this.getCaravanHead() != null,
                 threat == null && !this.isOnFire() && !this.didSpit,

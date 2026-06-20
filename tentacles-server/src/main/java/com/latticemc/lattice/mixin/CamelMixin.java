@@ -48,15 +48,23 @@ public abstract class CamelMixin {
 
         final Mob mob = (Mob) (Object) this;
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 12.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final boolean sitting = this.isCamelSitting();
+        final boolean poseTransition = this.isInPoseTransition();
+        final boolean dashing = this.isDashing();
+        final boolean busy = dashing || sitting || poseTransition || this.refuseToMove();
+        final Player temptingPlayer = !busy
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 12.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final float energyRatio;
-        if (this.isDashing()) {
+        if (dashing) {
             energyRatio = 0.95F;
-        } else if (this.isCamelSitting() || this.isInPoseTransition()) {
-            energyRatio = 0.35F;
+        } else if (sitting) {
+            energyRatio = 0.15F;
+        } else if (poseTransition) {
+            energyRatio = 0.25F;
         } else if (this.isBaby()) {
             energyRatio = 0.55F;
         } else {
@@ -71,10 +79,10 @@ public abstract class CamelMixin {
                 1.5F,
                 this.isOnFire(),
                 false,
-                true,
+                temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
-                !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && !this.refuseToMove(),
+                sitting || !level.canSeeSky(this.blockPosition()),
+                threat == null && !this.isOnFire() && !dashing,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.7F),
                 BiologicalAiProfiles.CAMEL);

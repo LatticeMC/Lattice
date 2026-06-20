@@ -308,6 +308,51 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void sittingCamelRestsInsteadOfSeekingFood() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision camel = decide(0.9F, 0.15F, 0.0F, 1.5F,
+                false, false, false,
+                0.0F, true, true, false,
+                stimuli, BiologicalAiProfiles.CAMEL);
+
+        assertEquals(NativeBiologicalAi.Action.REST, camel.action());
+        assertEquals(-1, camel.stimulusIndex());
+    }
+
+    @Test
+    void caravanLlamaIgnoresFoodStimulus() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision llama = decide(0.9F, 0.80F, 0.1F, 1.4F,
+                false, false, false,
+                0.0F, true, true, false,
+                stimuli, BiologicalAiProfiles.LLAMA);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, llama.action());
+        assertEquals(-1, llama.stimulusIndex());
+    }
+
+    @Test
+    void eatingSheepRestsInsteadOfSeekingFood() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision sheep = decide(0.9F, 0.15F, 0.0F, 1.5F,
+                false, false, false,
+                0.0F, true, true, false,
+                stimuli, BiologicalAiProfiles.SHEEP);
+
+        assertEquals(NativeBiologicalAi.Action.REST, sheep.action());
+        assertEquals(-1, sheep.stimulusIndex());
+    }
+
+    @Test
     void armadilloProfileFleesEarlierThanCowProfile() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 5.0F, 1.0F, true, true)

@@ -47,13 +47,16 @@ public abstract class SheepMixin {
 
         final Mob mob = (Mob) (Object) this;
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final boolean eating = this.eatAnimationTick > 0;
+        final Player temptingPlayer = !eating
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final float energyRatio;
-        if (this.eatAnimationTick > 0) {
-            energyRatio = 1.0F;
+        if (eating) {
+            energyRatio = 0.15F;
         } else if (this.isSheared()) {
             energyRatio = 0.25F;
         } else if (this.isBaby()) {
@@ -70,10 +73,10 @@ public abstract class SheepMixin {
                 1.5F,
                 this.isOnFire(),
                 false,
-                true,
+                temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && this.eatAnimationTick == 0,
+                threat == null && !this.isOnFire(),
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.isSheared() ? 1.0F : 0.7F),
                 BiologicalAiProfiles.SHEEP);
