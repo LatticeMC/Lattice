@@ -35,6 +35,7 @@ public abstract class LlamaMixin {
     @Shadow public abstract boolean isVehicle();
     @Shadow public abstract boolean isInWaterOrRain();
     @Shadow public abstract boolean isBaby();
+    @Shadow public abstract boolean isInLove();
     @Shadow public abstract boolean isFood(ItemStack stack);
     @Shadow public abstract int getStrength();
     @Shadow public abstract boolean inCaravan();
@@ -56,6 +57,7 @@ public abstract class LlamaMixin {
         final Mob mob = (Mob) (Object) this;
         final LivingEntity target = this.getTarget();
         LivingEntity prey = target instanceof Wolf wolf && wolf.isAlive() ? wolf : null;
+        final boolean inLove = this.isInLove();
         if (prey == null) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedWolfPrey, lattice$PREY_SCAN_RANGE, entity -> entity instanceof Wolf);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
@@ -65,11 +67,24 @@ public abstract class LlamaMixin {
         }
         final LivingEntity threat = target != null && target.isAlive() && prey == null ? target : null;
         final boolean inCaravan = this.inCaravan();
-        final Player temptingPlayer = !this.didSpit && !inCaravan
+        final Player temptingPlayer = !this.didSpit && !inCaravan && !inLove
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 10.0,
                         entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
                 : null;
+
+        final float energyRatio;
+        if (this.didSpit) {
+            energyRatio = 0.90F;
+        } else if (inCaravan) {
+            energyRatio = 0.80F;
+        } else if (inLove) {
+            energyRatio = 0.35F;
+        } else if (this.isBaby()) {
+            energyRatio = 0.55F;
+        } else {
+            energyRatio = 0.65F + this.getStrength() * 0.05F;
+        }
 
         int stimulusCount = 0;
         if (threat != null) stimulusCount++;
@@ -111,7 +126,7 @@ public abstract class LlamaMixin {
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.LLAMA,
                 this.getHealth() / maxHealth,
-                this.didSpit ? 0.90F : (inCaravan ? 0.80F : (this.isBaby() ? 0.55F : 0.65F + this.getStrength() * 0.05F)),
+                energyRatio,
                 prey != null ? 0.55F : (this.didSpit ? 0.45F : 0.10F),
                 1.4F,
                 this.isOnFire(),
@@ -119,7 +134,7 @@ public abstract class LlamaMixin {
                 temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(this.blockPosition()) || this.getCaravanHead() != null,
-                threat == null && !this.isOnFire() && !this.didSpit,
+                threat == null && !this.isOnFire() && !this.didSpit && !inLove,
                 temptingPlayer != null,
                 stimuli,
                 BiologicalAiProfiles.LLAMA);

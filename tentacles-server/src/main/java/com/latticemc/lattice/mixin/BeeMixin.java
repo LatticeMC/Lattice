@@ -58,6 +58,7 @@ public abstract class BeeMixin {
         final boolean angry = this.isAngry();
         final boolean hasNectar = this.hasNectar();
         final boolean hasStung = this.hasStung();
+        final boolean hasHive = this.hasHive() && this.getHivePos() != null;
         LivingEntity prey = angry && !hasStung && this.getTarget() != null && this.getTarget().isAlive()
                 ? this.getTarget()
                 : null;
@@ -113,14 +114,14 @@ public abstract class BeeMixin {
                 this.isOnFire(),
                 prey != null,
                 temptingPlayer != null,
-                this.isOnFire() ? 1.0F : (angry ? 0.75F : (hasStung ? 0.40F : 0.0F)),
-                this.hasHive(),
-                !angry && !hasStung && !this.isOnFire() && prey == null,
+                this.isOnFire() ? 1.0F : (angry ? 0.75F : (hasNectar && !hasHive ? 0.35F : (hasStung ? 0.40F : 0.0F))),
+                hasHive,
+                !angry && !hasStung && !this.isOnFire() && prey == null && !hasNectar,
                 temptingPlayer != null,
                 stimuli,
                 BiologicalAiProfiles.BEE);
 
-        if (this.hasHive() && this.getHivePos() != null && hasNectar && prey == null) {
+        if (hasHive && hasNectar && prey == null) {
             BlockPos hivePos = this.getHivePos();
             double[] candidates = buildHomeCandidates(hivePos, 2.0);
             int candidate = NativeHomeTargetSampler.sampleHomeTarget(

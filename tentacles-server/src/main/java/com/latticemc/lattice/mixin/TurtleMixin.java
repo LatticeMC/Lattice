@@ -59,10 +59,11 @@ public abstract class TurtleMixin {
         final boolean hasEgg = this.hasEgg();
         final boolean layingEgg = this.isLayingEgg();
         final boolean returningHome = this.goingHome || hasEgg;
+        final boolean travelling = this.travelPos != null && inWater && !returningHome;
         final Vec3 position = new Vec3(this.getX(), this.getY(), this.getZ());
         final boolean nearHome = this.homePos.closerToCenterThan(position, 16.0);
         final boolean closeEnoughToLayEgg = this.homePos.closerToCenterThan(position, 9.0);
-        final Player temptingPlayer = !returningHome && !layingEgg
+        final Player temptingPlayer = !returningHome && !layingEgg && !travelling
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 10.0,
                         entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
@@ -75,6 +76,8 @@ public abstract class TurtleMixin {
             energyRatio = 0.35F;
         } else if (this.goingHome) {
             energyRatio = 0.45F;
+        } else if (travelling) {
+            energyRatio = 0.90F;
         } else if (inWater) {
             energyRatio = 0.85F;
         } else if (this.isBaby()) {
@@ -94,7 +97,7 @@ public abstract class TurtleMixin {
                 temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 inWater || nearHome,
-                threat == null && !this.isOnFire() && !layingEgg && !returningHome,
+                threat == null && !this.isOnFire() && !layingEgg && !returningHome && !travelling,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, hasEgg ? 0.6F : 0.8F),
                 BiologicalAiProfiles.TURTLE);
@@ -117,6 +120,16 @@ public abstract class TurtleMixin {
                         0.7);
                 return;
             }
+        }
+
+        if (travelling && threat == null) {
+            final BlockPos travelPos = this.travelPos;
+            mob.getNavigation().moveTo(
+                    travelPos.getX() + 0.5,
+                    travelPos.getY(),
+                    travelPos.getZ() + 0.5,
+                    1.0);
+            return;
         }
 
         AquaticAiSupport.applyDecision(mob, decision, threat, temptingPlayer, 0.7, this.isInWater());

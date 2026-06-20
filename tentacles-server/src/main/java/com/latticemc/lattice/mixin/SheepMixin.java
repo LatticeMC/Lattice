@@ -29,6 +29,7 @@ public abstract class SheepMixin {
     @Shadow public abstract boolean isInWaterOrRain();
     @Shadow public abstract boolean isBaby();
     @Shadow public abstract boolean isSheared();
+    @Shadow public abstract boolean isInLove();
     @Shadow public abstract boolean isFood(ItemStack stack);
     @Shadow public abstract @Nullable LivingEntity getLastHurtByMob();
     @Shadow public abstract @Nullable LivingEntity getTarget();
@@ -47,8 +48,9 @@ public abstract class SheepMixin {
 
         final Mob mob = (Mob) (Object) this;
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
+        final boolean inLove = this.isInLove();
         final boolean eating = this.eatAnimationTick > 0;
-        final Player temptingPlayer = !eating
+        final Player temptingPlayer = !eating && !inLove
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 10.0,
                         entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
@@ -57,6 +59,8 @@ public abstract class SheepMixin {
         final float energyRatio;
         if (eating) {
             energyRatio = 0.15F;
+        } else if (inLove) {
+            energyRatio = 0.35F;
         } else if (this.isSheared()) {
             energyRatio = 0.25F;
         } else if (this.isBaby()) {
@@ -76,7 +80,7 @@ public abstract class SheepMixin {
                 temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire(),
+                threat == null && !this.isOnFire() && !inLove,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.isSheared() ? 1.0F : 0.7F),
                 BiologicalAiProfiles.SHEEP);

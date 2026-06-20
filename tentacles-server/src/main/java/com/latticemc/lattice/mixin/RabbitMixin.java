@@ -40,6 +40,7 @@ public abstract class RabbitMixin {
     @Shadow public abstract boolean isVehicle();
     @Shadow public abstract boolean isInWaterOrRain();
     @Shadow public abstract boolean isBaby();
+    @Shadow public abstract boolean isInLove();
     @Shadow public abstract boolean isFood(ItemStack stack);
     @Shadow public abstract @Nullable LivingEntity getLastHurtByMob();
     @Shadow public abstract @Nullable LivingEntity getTarget();
@@ -59,6 +60,7 @@ public abstract class RabbitMixin {
 
         final Mob mob = (Mob) (Object) this;
         final boolean killerRabbit = this.getVariant() == Rabbit.Variant.EVIL;
+        final boolean inLove = !killerRabbit && this.isInLove();
         LivingEntity prey = killerRabbit && this.getTarget() != null && this.getTarget().isAlive() ? this.getTarget() : null;
         if (killerRabbit && prey == null) {
             final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Wolf || entity instanceof Player;
@@ -79,7 +81,7 @@ public abstract class RabbitMixin {
                 threat = this.lattice$cachedThreat;
             }
         }
-        final Player temptingPlayer = !killerRabbit
+        final Player temptingPlayer = !killerRabbit && !inLove
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 9.0,
                         entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
@@ -88,6 +90,8 @@ public abstract class RabbitMixin {
         final float energyRatio;
         if (killerRabbit) {
             energyRatio = 0.85F;
+        } else if (inLove) {
+            energyRatio = 0.35F;
         } else if (this.isBaby()) {
             energyRatio = 0.45F;
         } else if (this.moreCarrotTicks > 0) {
@@ -153,7 +157,7 @@ public abstract class RabbitMixin {
                 true,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire(),
+                threat == null && !this.isOnFire() && !inLove,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 1.0F),
                 BiologicalAiProfiles.RABBIT);

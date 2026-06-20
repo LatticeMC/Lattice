@@ -29,24 +29,27 @@ public abstract class PigMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = pig;
+        final boolean inLove = pig.isInLove();
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(pig.getLastHurtByMob(), pig.getTarget());
-        final Player temptingPlayer = level.getNearestPlayer(
-                pig.getX(), pig.getY(), pig.getZ(), 10.0,
-                entity -> entity instanceof Player player
-                        && (player.isHolding(Items.CARROT_ON_A_STICK) || pig.isFood(player.getMainHandItem())));
+        final Player temptingPlayer = !inLove
+                ? level.getNearestPlayer(
+                        pig.getX(), pig.getY(), pig.getZ(), 10.0,
+                        entity -> entity instanceof Player player
+                                && (player.isHolding(Items.CARROT_ON_A_STICK) || pig.isFood(player.getMainHandItem())))
+                : null;
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.PIG,
                 pig.getHealth() / maxHealth,
-                pig.isSaddled() ? 0.85F : (pig.isBaby() ? 0.60F : 0.75F),
+                inLove ? 0.35F : (pig.isSaddled() ? 0.85F : (pig.isBaby() ? 0.60F : 0.75F)),
                 0.0F,
                 1.5F,
                 pig.isOnFire(),
                 false,
-                true,
+                temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(pig.blockPosition()),
-                threat == null && !pig.isOnFire(),
+                threat == null && !pig.isOnFire() && !inLove,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer,
                         temptingPlayer != null && temptingPlayer.isHolding(Items.CARROT_ON_A_STICK) ? 1.0F : 0.8F),

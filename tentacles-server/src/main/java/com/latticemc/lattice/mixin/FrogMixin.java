@@ -6,6 +6,8 @@ import com.latticemc.lattice.nativelib.NativeBiologicalAi;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.ai.Brain;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.frog.Frog;
@@ -35,6 +37,7 @@ public abstract class FrogMixin {
     @Shadow public abstract boolean isInWater();
     @Shadow public abstract boolean isBaby();
     @Shadow public abstract boolean isFood(ItemStack stack);
+    @Shadow public abstract Brain<Frog> getBrain();
     @Shadow public abstract @Nullable LivingEntity getTarget();
     @Shadow public abstract BlockPos blockPosition();
     @Shadow public abstract double getX();
@@ -51,6 +54,7 @@ public abstract class FrogMixin {
 
         final Mob mob = (Mob) (Object) this;
         final boolean inWater = this.isInWater();
+        final boolean pregnant = this.getBrain().hasMemoryValue(MemoryModuleType.IS_PREGNANT);
         final LivingEntity target = this.getTarget();
         final LivingEntity threat = target != null && target.isAlive() && this.isOnFire() && !Frog.canEat(target) ? target : null;
         LivingEntity prey = target != null && target.isAlive() && Frog.canEat(target) ? target : null;
@@ -62,9 +66,11 @@ public abstract class FrogMixin {
                 prey = this.lattice$cachedPrey;
             }
         }
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final Player temptingPlayer = !pregnant
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         int stimulusCount = 0;
         if (threat != null) stimulusCount++;
@@ -106,7 +112,7 @@ public abstract class FrogMixin {
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.FROG,
                 this.getHealth() / maxHealth,
-                inWater ? 0.85F : (this.isBaby() ? 0.55F : 0.70F),
+                pregnant ? 0.35F : (inWater ? 0.85F : (this.isBaby() ? 0.55F : 0.70F)),
                 prey != null ? 0.55F : 0.15F,
                 1.2F,
                 this.isOnFire(),
@@ -114,7 +120,7 @@ public abstract class FrogMixin {
                 temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 inWater || !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire(),
+                threat == null && !this.isOnFire() && !pregnant,
                 temptingPlayer != null,
                 stimuli,
                 BiologicalAiProfiles.FROG);

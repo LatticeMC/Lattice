@@ -45,12 +45,17 @@ public abstract class ChickenMixin {
                 threat = this.lattice$cachedChickenThreat;
             }
         }
-        final Player temptingPlayer = level.getNearestPlayer(
-                chicken.getX(), chicken.getY(), chicken.getZ(), 8.0,
-                entity -> entity instanceof Player player && chicken.isFood(player.getMainHandItem()));
+        final boolean inLove = chicken.isInLove();
+        final Player temptingPlayer = !inLove
+                ? level.getNearestPlayer(
+                        chicken.getX(), chicken.getY(), chicken.getZ(), 8.0,
+                        entity -> entity instanceof Player player && chicken.isFood(player.getMainHandItem()))
+                : null;
 
         final float energyRatio;
-        if (chicken.isBaby()) {
+        if (inLove) {
+            energyRatio = 0.35F;
+        } else if (chicken.isBaby()) {
             energyRatio = 0.50F;
         } else if (chicken.eggTime < 1200) {
             energyRatio = 0.35F;
@@ -69,7 +74,7 @@ public abstract class ChickenMixin {
                 true,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(chicken.blockPosition()),
-                threat == null && !chicken.isOnFire(),
+                threat == null && !chicken.isOnFire() && !inLove,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.9F),
                 BiologicalAiProfiles.CHICKEN);

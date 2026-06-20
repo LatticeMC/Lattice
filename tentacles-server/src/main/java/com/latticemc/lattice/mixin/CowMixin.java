@@ -26,6 +26,7 @@ public abstract class CowMixin {
     @Shadow public abstract boolean isVehicle();
     @Shadow public abstract boolean isInWaterOrRain();
     @Shadow public abstract boolean isBaby();
+    @Shadow public abstract boolean isInLove();
     @Shadow public abstract boolean isFood(ItemStack stack);
     @Shadow public abstract @Nullable LivingEntity getLastHurtByMob();
     @Shadow public abstract @Nullable LivingEntity getTarget();
@@ -43,23 +44,26 @@ public abstract class CowMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
+        final boolean inLove = this.isInLove();
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final Player temptingPlayer = !inLove
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.COW,
                 this.getHealth() / maxHealth,
-                this.isBaby() ? 0.60F : 0.75F,
+                inLove ? 0.35F : (this.isBaby() ? 0.60F : 0.75F),
                 0.0F,
                 1.5F,
                 this.isOnFire(),
                 false,
-                true,
+                temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire(),
+                threat == null && !this.isOnFire() && !inLove,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.8F),
                 BiologicalAiProfiles.COW);

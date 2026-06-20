@@ -469,6 +469,206 @@ TEST_CASE("biological_ai: llama profile can pursue prey when aggression is raise
     CHECK(decision.stimulus_index == 0);
 }
 
+TEST_CASE("biological_ai: pregnant frog ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::frog, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: travelling turtle ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.90F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::turtle, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: in-love cow ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::cow, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: in-love sheep ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::sheep, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: in-love chicken ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::chicken, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: in-love rabbit ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::rabbit, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: in-love camel ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::camel, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: in-love goat ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::goat, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: in-love llama ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::llama, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: in-love armadillo ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::armadillo, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
 TEST_CASE("biological_ai: species registry changes threat response") {
     const BiologicalStimulus stimuli[] = {
         {BiologicalStimulusKind::threat, 5.0F, 1.0F, true, true},

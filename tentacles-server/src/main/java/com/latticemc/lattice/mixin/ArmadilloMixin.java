@@ -26,6 +26,7 @@ public abstract class ArmadilloMixin {
     @Shadow public abstract boolean isVehicle();
     @Shadow public abstract boolean isInWaterOrRain();
     @Shadow public abstract boolean isBaby();
+    @Shadow public abstract boolean isInLove();
     @Shadow public abstract boolean isFood(ItemStack stack);
     @Shadow public abstract boolean isScared();
     @Shadow public abstract @Nullable LivingEntity getLastHurtByMob();
@@ -45,8 +46,9 @@ public abstract class ArmadilloMixin {
 
         final Mob mob = (Mob) (Object) this;
         final boolean scared = this.isScared();
+        final boolean inLove = this.isInLove();
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
-        final Player temptingPlayer = !scared
+        final Player temptingPlayer = !scared && !inLove
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 10.0,
                         entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
@@ -55,7 +57,7 @@ public abstract class ArmadilloMixin {
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.ARMADILLO,
                 this.getHealth() / maxHealth,
-                scared ? 0.10F : (this.isBaby() ? 0.55F : 0.70F),
+                scared ? 0.10F : (inLove ? 0.35F : (this.isBaby() ? 0.55F : 0.70F)),
                 0.0F,
                 1.0F,
                 this.isOnFire(),
@@ -63,7 +65,7 @@ public abstract class ArmadilloMixin {
                 temptingPlayer != null,
                 this.isOnFire() ? 1.0F : (threat != null ? 0.8F : (scared ? 0.75F : 0.0F)),
                 !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire(),
+                threat == null && !this.isOnFire() && !inLove,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.75F),
                 BiologicalAiProfiles.ARMADILLO);

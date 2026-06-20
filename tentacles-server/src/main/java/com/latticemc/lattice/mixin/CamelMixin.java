@@ -26,6 +26,7 @@ public abstract class CamelMixin {
     @Shadow public abstract boolean isVehicle();
     @Shadow public abstract boolean isInWaterOrRain();
     @Shadow public abstract boolean isBaby();
+    @Shadow public abstract boolean isInLove();
     @Shadow public abstract boolean isFood(ItemStack stack);
     @Shadow public abstract boolean isCamelSitting();
     @Shadow public abstract boolean isInPoseTransition();
@@ -48,11 +49,12 @@ public abstract class CamelMixin {
 
         final Mob mob = (Mob) (Object) this;
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
+        final boolean inLove = this.isInLove();
         final boolean sitting = this.isCamelSitting();
         final boolean poseTransition = this.isInPoseTransition();
         final boolean dashing = this.isDashing();
         final boolean busy = dashing || sitting || poseTransition || this.refuseToMove();
-        final Player temptingPlayer = !busy
+        final Player temptingPlayer = !busy && !inLove
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 12.0,
                         entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
@@ -65,6 +67,8 @@ public abstract class CamelMixin {
             energyRatio = 0.15F;
         } else if (poseTransition) {
             energyRatio = 0.25F;
+        } else if (inLove) {
+            energyRatio = 0.35F;
         } else if (this.isBaby()) {
             energyRatio = 0.55F;
         } else {
@@ -82,7 +86,7 @@ public abstract class CamelMixin {
                 temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 sitting || !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && !dashing,
+                threat == null && !this.isOnFire() && !dashing && !inLove,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.7F),
                 BiologicalAiProfiles.CAMEL);
