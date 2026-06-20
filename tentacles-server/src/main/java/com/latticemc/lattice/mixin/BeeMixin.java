@@ -4,8 +4,10 @@ import com.latticemc.lattice.nativelib.BiologicalAiProfiles;
 import com.latticemc.lattice.nativelib.NativeHomeTargetSampler;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeBiologicalAi;
+import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.bee.Bee;
@@ -14,12 +16,18 @@ import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(Bee.class)
 public abstract class BeeMixin {
+    @Unique private static final int lattice$ANGER_SCAN_INTERVAL = 8;
+    @Unique private static final double lattice$ANGER_SCAN_RANGE = 10.0;
+
+    @Unique private @Nullable LivingEntity lattice$cachedAngerTarget;
+
     @Shadow public abstract float getHealth();
     @Shadow public abstract float getMaxHealth();
     @Shadow public abstract boolean isOnFire();
@@ -50,9 +58,18 @@ public abstract class BeeMixin {
         final boolean angry = this.isAngry();
         final boolean hasNectar = this.hasNectar();
         final boolean hasStung = this.hasStung();
-        final LivingEntity prey = angry && !hasStung && this.getTarget() != null && this.getTarget().isAlive()
+        LivingEntity prey = angry && !hasStung && this.getTarget() != null && this.getTarget().isAlive()
                 ? this.getTarget()
                 : null;
+        if (prey == null && angry && !hasStung) {
+            final Predicate<LivingEntity> angerPredicate = entity -> entity instanceof Player player
+                    && ((NeutralMob) (Object) this).isAngryAt(player, level);
+            prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedAngerTarget, lattice$ANGER_SCAN_RANGE, angerPredicate);
+            if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$ANGER_SCAN_INTERVAL)) {
+                this.lattice$cachedAngerTarget = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$ANGER_SCAN_RANGE, angerPredicate);
+                prey = this.lattice$cachedAngerTarget;
+            }
+        }
         final Player temptingPlayer = !hasNectar && !hasStung
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 8.0,

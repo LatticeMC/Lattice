@@ -3,13 +3,50 @@ package com.latticemc.lattice.mixin;
 import com.latticemc.lattice.nativelib.NativeApproachTargetSampler;
 import com.latticemc.lattice.nativelib.NativeBiologicalAi;
 import com.latticemc.lattice.nativelib.NativeFleeTargetSampler;
+import java.util.List;
+import java.util.function.Predicate;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 
 final class PredatoryAnimalAiSupport {
     private PredatoryAnimalAiSupport() {}
+
+    static @Nullable LivingEntity findNearestPrey(Mob self,
+                                                  ServerLevel level,
+                                                  double range,
+                                                  Predicate<LivingEntity> predicate) {
+        final AABB area = self.getBoundingBox().inflate(range);
+        final List<LivingEntity> candidates = level.getEntitiesOfClass(
+                LivingEntity.class,
+                area,
+                entity -> entity != self && entity.isAlive() && !entity.isSpectator() && predicate.test(entity));
+        LivingEntity nearest = null;
+        double nearestDistance = range * range;
+        for (LivingEntity candidate : candidates) {
+            final double distance = self.distanceToSqr(candidate);
+            if (distance <= nearestDistance) {
+                nearest = candidate;
+                nearestDistance = distance;
+            }
+        }
+        return nearest;
+    }
+
+    static @Nullable LivingEntity cachedPrey(Mob self,
+                                             @Nullable LivingEntity cached,
+                                             double range,
+                                             Predicate<LivingEntity> predicate) {
+        if (cached == null || !cached.isAlive() || cached.isSpectator() || !predicate.test(cached)) return null;
+        return self.distanceToSqr(cached) <= range * range ? cached : null;
+    }
+
+    static boolean shouldRefreshPreyScan(Mob self, int interval) {
+        return interval <= 1 || (self.tickCount + self.getId()) % interval == 0;
+    }
 
     static boolean applyDecision(Mob mob,
                                  NativeBiologicalAi.Decision decision,
