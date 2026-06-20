@@ -10,8 +10,11 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.chicken.Chicken;
 import net.minecraft.world.entity.animal.fox.Fox;
+import net.minecraft.world.entity.animal.polarbear.PolarBear;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
 import net.minecraft.world.entity.animal.turtle.Turtle;
+import net.minecraft.world.entity.animal.wolf.Wolf;
+import net.minecraft.world.entity.player.Player;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -24,8 +27,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class FoxMixin {
     @Unique private static final int lattice$PREY_SCAN_INTERVAL = 8;
     @Unique private static final double lattice$PREY_SCAN_RANGE = 10.0;
+    @Unique private static final int lattice$THREAT_SCAN_INTERVAL = 8;
+    @Unique private static final double lattice$THREAT_SCAN_RANGE = 12.0;
 
     @Unique private @Nullable LivingEntity lattice$cachedPrey;
+    @Unique private @Nullable LivingEntity lattice$cachedThreat;
 
     @Shadow public abstract float getHealth();
     @Shadow public abstract float getMaxHealth();
@@ -43,6 +49,7 @@ public abstract class FoxMixin {
     @Shadow public abstract @Nullable LivingEntity getLastHurtByMob();
     @Shadow public abstract @Nullable LivingEntity getTarget();
     @Shadow public abstract BlockPos blockPosition();
+    @Shadow abstract boolean trusts(LivingEntity entity);
 
     @Inject(method = "aiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(CallbackInfo ci) {
@@ -65,8 +72,11 @@ public abstract class FoxMixin {
         final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Chicken
                 || entity instanceof Rabbit
                 || entity instanceof Turtle turtle && turtle.isBaby() && !turtle.isInWater();
+        final Predicate<LivingEntity> threatPredicate = entity -> entity instanceof PolarBear
+                || entity instanceof Wolf wolf && !wolf.isTame()
+                || entity instanceof Player && !this.trusts(entity);
         final LivingEntity target = this.getTarget();
-        if (target != null && target.isAlive() && !preyPredicate.test(target) && !this.isOnFire()) return;
+        if (target != null && target.isAlive() && !preyPredicate.test(target) && !threatPredicate.test(target) && !this.isOnFire()) return;
         LivingEntity prey = target != null && target.isAlive() && preyPredicate.test(target) ? target : null;
         if (prey == null && !busy) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
@@ -75,7 +85,18 @@ public abstract class FoxMixin {
                 prey = this.lattice$cachedPrey;
             }
         }
-        final LivingEntity threat = prey == null ? HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), target) : null;
+        LivingEntity threat = null;
+        if (prey == null) {
+            final LivingEntity selectedThreat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), target);
+            threat = selectedThreat != null && threatPredicate.test(selectedThreat) ? selectedThreat : null;
+            if (threat == null && !busy) {
+                threat = HerbivoreAiSupport.cachedThreat(mob, this.lattice$cachedThreat, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$THREAT_SCAN_INTERVAL)) {
+                    this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                    threat = this.lattice$cachedThreat;
+                }
+            }
+        }
 
         int stimulusCount = 0;
         if (threat != null) stimulusCount++;

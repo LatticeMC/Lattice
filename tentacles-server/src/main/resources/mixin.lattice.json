@@ -50,6 +50,7 @@
     "WolfMixin",
     "CatMixin",
     "FoxMixin",
+    "MushroomCowMixin",
     "LightEngineMixin",
     "NaturalSpawnerMixin"
   ],
