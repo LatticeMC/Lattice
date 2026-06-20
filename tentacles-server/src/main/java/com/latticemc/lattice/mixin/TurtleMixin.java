@@ -45,7 +45,7 @@ public abstract class TurtleMixin {
     @Inject(method = "aiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
-        if (this.isPassenger() || this.isVehicle() || this.isInWaterOrRain()) return;
+        if (this.isPassenger() || this.isVehicle()) return;
 
         if (!(((Turtle) (Object) this).level() instanceof ServerLevel level)) return;
 
@@ -53,22 +53,34 @@ public abstract class TurtleMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final LivingEntity threat = this.getTarget();
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final LivingEntity target = this.getTarget();
+        final LivingEntity threat = target != null && target.isAlive() ? target : null;
+        final boolean inWater = this.isInWater();
+        final boolean hasEgg = this.hasEgg();
+        final boolean layingEgg = this.isLayingEgg();
+        final boolean returningHome = this.goingHome || hasEgg;
+        final Vec3 position = new Vec3(this.getX(), this.getY(), this.getZ());
+        final boolean nearHome = this.homePos.closerToCenterThan(position, 16.0);
+        final boolean closeEnoughToLayEgg = this.homePos.closerToCenterThan(position, 9.0);
+        final Player temptingPlayer = !returningHome && !layingEgg
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final float energyRatio;
-        if (this.isLayingEgg()) {
-            energyRatio = 0.25F;
-        } else if (this.hasEgg() || this.goingHome) {
-            energyRatio = 0.40F;
-        } else if (this.isInWater()) {
+        if (layingEgg) {
+            energyRatio = 0.20F;
+        } else if (hasEgg) {
+            energyRatio = 0.35F;
+        } else if (this.goingHome) {
+            energyRatio = 0.45F;
+        } else if (inWater) {
             energyRatio = 0.85F;
         } else if (this.isBaby()) {
-            energyRatio = 0.50F;
+            energyRatio = 0.55F;
         } else {
-            energyRatio = 0.70F;
+            energyRatio = 0.65F;
         }
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
@@ -79,15 +91,15 @@ public abstract class TurtleMixin {
                 1.0F,
                 this.isOnFire(),
                 false,
-                true,
-                threat != null ? 1.0F : 0.0F,
-                this.isInWater() || this.homePos.closerToCenterThan(new Vec3(this.getX(), this.getY(), this.getZ()), 16.0),
-                threat == null && !this.isOnFire() && !this.isLayingEgg(),
                 temptingPlayer != null,
-                HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.hasEgg() ? 0.6F : 0.8F),
+                threat != null ? 1.0F : 0.0F,
+                inWater || nearHome,
+                threat == null && !this.isOnFire() && !layingEgg && !returningHome,
+                temptingPlayer != null,
+                HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, hasEgg ? 0.6F : 0.8F),
                 BiologicalAiProfiles.TURTLE);
 
-        if ((this.goingHome || this.hasEgg()) && threat == null) {
+        if ((this.goingHome || (hasEgg && !closeEnoughToLayEgg)) && !layingEgg && threat == null) {
             double[] candidates = buildHomeCandidates(this.homePos, 4.0);
             int candidate = NativeHomeTargetSampler.sampleHomeTarget(
                     candidates,

@@ -37,13 +37,15 @@ public abstract class FrogMixin {
     @Inject(method = "customServerAiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(ServerLevel level, CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
-        if (this.isPassenger() || this.isVehicle() || this.isInWaterOrRain()) return;
+        if (this.isPassenger() || this.isVehicle()) return;
 
         final float maxHealth = this.getMaxHealth();
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final LivingEntity threat = this.getTarget() != null && this.isOnFire() ? this.getTarget() : null;
+        final boolean inWater = this.isInWater();
+        final LivingEntity target = this.getTarget();
+        final LivingEntity threat = target != null && target.isAlive() && this.isOnFire() ? target : null;
         final Player temptingPlayer = level.getNearestPlayer(
                 this.getX(), this.getY(), this.getZ(), 10.0,
                 entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
@@ -51,19 +53,19 @@ public abstract class FrogMixin {
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.FROG,
                 this.getHealth() / maxHealth,
-                this.isInWater() ? 0.85F : (this.isBaby() ? 0.55F : 0.70F),
+                inWater ? 0.85F : (this.isBaby() ? 0.55F : 0.70F),
                 0.15F,
                 1.2F,
                 this.isOnFire(),
                 false,
-                true,
+                temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
-                this.isInWater() || !level.canSeeSky(this.blockPosition()),
+                inWater || !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire(),
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.75F),
                 BiologicalAiProfiles.FROG);
 
-        AquaticAiSupport.applyDecision(mob, decision, threat, temptingPlayer, 0.8, true);
+        AquaticAiSupport.applyDecision(mob, decision, threat, temptingPlayer, 0.8, inWater);
     }
 }

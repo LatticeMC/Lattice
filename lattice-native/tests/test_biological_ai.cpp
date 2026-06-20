@@ -213,6 +213,55 @@ TEST_CASE("biological_ai: weak threat does not mask reachable food") {
     CHECK(decision.stimulus_index == 1);
 }
 
+TEST_CASE("biological_ai: bee rests after stinging energy collapse") {
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.8F;
+    inputs.entity.energy_ratio = 0.05F;
+    inputs.entity.aggression = 0.0F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = true;
+    inputs.environment.can_path_to_food = false;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::bee, inputs);
+    CHECK(decision.action == BiologicalAction::rest);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: turtle carrying egg ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::turtle, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: axolotl rests when dry and low energy") {
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.30F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.ambient_danger = 0.65F;
+    inputs.environment.can_idle_safely = true;
+    inputs.environment.can_path_to_food = false;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::axolotl, inputs);
+    CHECK(decision.action == BiologicalAction::rest);
+    CHECK(decision.stimulus_index == -1);
+}
+
 TEST_CASE("biological_ai: species registry changes threat response") {
     const BiologicalStimulus stimuli[] = {
         {BiologicalStimulusKind::threat, 5.0F, 1.0F, true, true},

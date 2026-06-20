@@ -211,6 +211,43 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void beeProfileRestsAfterStingingEnergyCollapse() {
+        NativeBiologicalAi.Decision bee = decide(0.8F, 0.05F, 0.0F, 1.4F,
+                false, false, false,
+                0.4F, true, true, false,
+                new NativeBiologicalAi.Stimulus[0], BiologicalAiProfiles.BEE);
+
+        assertEquals(NativeBiologicalAi.Action.REST, bee.action());
+        assertEquals(-1, bee.stimulusIndex());
+    }
+
+    @Test
+    void turtleCarryingEggIgnoresFoodStimulus() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision turtle = decide(0.9F, 0.35F, 0.0F, 1.0F,
+                false, false, false,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.TURTLE);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, turtle.action());
+        assertEquals(-1, turtle.stimulusIndex());
+    }
+
+    @Test
+    void axolotlRestsWhenDryAndLowEnergy() {
+        NativeBiologicalAi.Decision axolotl = decide(0.9F, 0.30F, 0.0F, 1.0F,
+                false, false, false,
+                0.65F, true, true, false,
+                new NativeBiologicalAi.Stimulus[0], BiologicalAiProfiles.AXOLOTL);
+
+        assertEquals(NativeBiologicalAi.Action.REST, axolotl.action());
+        assertEquals(-1, axolotl.stimulusIndex());
+    }
+
+    @Test
     void armadilloProfileFleesEarlierThanCowProfile() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 5.0F, 1.0F, true, true)

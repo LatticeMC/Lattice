@@ -38,22 +38,30 @@ public abstract class AxolotlMixin {
     @Inject(method = "customServerAiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(ServerLevel level, CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
-        if (this.isPassenger() || this.isVehicle() || this.isInWaterOrRain()) return;
+        if (this.isPassenger() || this.isVehicle()) return;
 
         final float maxHealth = this.getMaxHealth();
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final LivingEntity threat = this.getTarget() != null && this.isOnFire() ? this.getTarget() : null;
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final boolean inWater = this.isInWater();
+        final boolean hydrated = this.isInWaterOrRain();
+        final boolean playingDead = this.isPlayingDead();
+        final LivingEntity target = this.getTarget();
+        final LivingEntity threat = !playingDead && this.isOnFire() && target != null && target.isAlive() ? target : null;
+        final Player temptingPlayer = !playingDead
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final float energyRatio;
-        if (this.isPlayingDead()) {
-            energyRatio = 0.20F;
-        } else if (this.isInWater()) {
+        if (playingDead) {
+            energyRatio = 0.05F;
+        } else if (inWater) {
             energyRatio = 0.90F;
+        } else if (!hydrated) {
+            energyRatio = 0.30F;
         } else if (this.isBaby()) {
             energyRatio = 0.55F;
         } else {
@@ -68,14 +76,14 @@ public abstract class AxolotlMixin {
                 1.0F,
                 this.isOnFire(),
                 false,
-                true,
-                threat != null || this.isPlayingDead() ? 1.0F : 0.0F,
-                this.isInWater() || !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && !this.isPlayingDead(),
+                temptingPlayer != null,
+                this.isOnFire() ? 1.0F : (!hydrated ? 0.65F : 0.0F),
+                hydrated || !level.canSeeSky(this.blockPosition()),
+                threat == null && !this.isOnFire(),
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.75F),
                 BiologicalAiProfiles.AXOLOTL);
 
-        AquaticAiSupport.applyDecision(mob, decision, threat, temptingPlayer, 0.8, this.isInWater());
+        AquaticAiSupport.applyDecision(mob, decision, threat, temptingPlayer, 0.8, true);
     }
 }

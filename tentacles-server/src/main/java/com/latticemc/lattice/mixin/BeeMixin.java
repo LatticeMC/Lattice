@@ -47,14 +47,19 @@ public abstract class BeeMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final LivingEntity prey = this.isAngry() && !this.hasStung() && this.getTarget() != null && this.getTarget().isAlive()
+        final boolean angry = this.isAngry();
+        final boolean hasNectar = this.hasNectar();
+        final boolean hasStung = this.hasStung();
+        final LivingEntity prey = angry && !hasStung && this.getTarget() != null && this.getTarget().isAlive()
                 ? this.getTarget()
                 : null;
-        final Player temptingPlayer = !this.hasNectar()
+        final Player temptingPlayer = !hasNectar && !hasStung
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 8.0,
                         entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
                 : null;
+        final float energyRatio = beeEnergyRatio(angry, hasNectar, hasStung, this.hasSavedFlowerPos());
+        final float aggression = angry && !hasStung ? (prey != null ? 0.95F : 0.70F) : 0.05F;
 
         int stimulusCount = 0;
         if (prey != null) stimulusCount++;
@@ -85,20 +90,20 @@ public abstract class BeeMixin {
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.BEE,
                 this.getHealth() / maxHealth,
-                this.hasNectar() ? 0.9F : (this.hasSavedFlowerPos() ? 0.7F : 0.5F),
-                this.isAngry() ? 0.85F : 0.10F,
+                energyRatio,
+                aggression,
                 1.4F,
                 this.isOnFire(),
                 prey != null,
                 temptingPlayer != null,
-                this.isAngry() ? 0.8F : 0.0F,
+                this.isOnFire() ? 1.0F : (angry ? 0.75F : (hasStung ? 0.40F : 0.0F)),
                 this.hasHive(),
-                !this.isAngry() && !this.isOnFire() && prey == null,
+                !angry && !hasStung && !this.isOnFire() && prey == null,
                 temptingPlayer != null,
                 stimuli,
                 BiologicalAiProfiles.BEE);
 
-        if (this.hasHive() && this.getHivePos() != null && this.hasNectar() && prey == null) {
+        if (this.hasHive() && this.getHivePos() != null && hasNectar && prey == null) {
             BlockPos hivePos = this.getHivePos();
             double[] candidates = buildHomeCandidates(hivePos, 2.0);
             int candidate = NativeHomeTargetSampler.sampleHomeTarget(
@@ -120,6 +125,13 @@ public abstract class BeeMixin {
         }
 
         PollinatorAiSupport.applyDecision(mob, decision, prey, temptingPlayer, preyIndex, foodIndex, 1.2, 1.0);
+    }
+
+    private static float beeEnergyRatio(boolean angry, boolean hasNectar, boolean hasStung, boolean hasSavedFlowerPos) {
+        if (hasStung) return 0.05F;
+        if (hasNectar) return 0.95F;
+        if (angry) return 0.80F;
+        return hasSavedFlowerPos ? 0.70F : 0.45F;
     }
 
     private double[] buildHomeCandidates(BlockPos home, double preferredDistance) {
