@@ -49,6 +49,7 @@
     "OcelotMixin",
     "WolfMixin",
     "CatMixin",
+    "FoxMixin",
     "LightEngineMixin",
     "NaturalSpawnerMixin"
   ],

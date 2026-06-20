@@ -29,6 +29,7 @@ constexpr BiologicalAiProfile kPandaProfile{0.42F, 0.58F, 0.65F, 0.35F, 0.25F, 0
 constexpr BiologicalAiProfile kOcelotProfile{0.45F, 0.50F, 0.75F, 0.45F, 0.30F, 0.75F, 0.16F, 0.45F, 4.5F, 2.0F};
 constexpr BiologicalAiProfile kWolfProfile{0.35F, 0.60F, 0.70F, 0.45F, 0.35F, 0.72F, 0.18F, 0.35F, 4.0F, 2.0F};
 constexpr BiologicalAiProfile kCatProfile{0.42F, 0.58F, 0.65F, 0.45F, 0.30F, 0.72F, 0.18F, 0.35F, 4.0F, 2.0F};
+constexpr BiologicalAiProfile kFoxProfile{0.38F, 0.58F, 0.65F, 0.45F, 0.30F, 0.78F, 0.18F, 0.35F, 4.0F, 2.0F};
 
 [[nodiscard]] inline float clamp_unit(float value, float fallback) noexcept {
     if (!std::isfinite(value)) return fallback;
@@ -223,6 +224,7 @@ const BiologicalAiProfile& biological_profile(BiologicalSpecies species) noexcep
     case BiologicalSpecies::ocelot: return kOcelotProfile;
     case BiologicalSpecies::wolf: return kWolfProfile;
     case BiologicalSpecies::cat: return kCatProfile;
+    case BiologicalSpecies::fox: return kFoxProfile;
     case BiologicalSpecies::generic:
     default:
         return kGenericProfile;

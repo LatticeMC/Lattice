@@ -812,3 +812,23 @@ TEST_CASE("biological_ai: cat profile can pursue prey") {
     CHECK(decision.action == BiologicalAction::pursue);
     CHECK(decision.stimulus_index == 0);
 }
+
+TEST_CASE("biological_ai: fox profile can pursue prey") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::prey, 3.0F, 0.85F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.75F;
+    inputs.entity.aggression = 0.55F;
+    inputs.entity.attack_range = 1.2F;
+    inputs.entity.can_attack = true;
+    inputs.environment.can_idle_safely = true;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::fox, inputs);
+    CHECK(decision.action == BiologicalAction::pursue);
+    CHECK(decision.stimulus_index == 0);
+}

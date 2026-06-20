@@ -846,6 +846,21 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void foxProfileCanPursuePrey() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.PREY, 3.0F, 0.85F, true, true)
+        };
+
+        NativeBiologicalAi.Decision fox = decide(0.9F, 0.75F, 0.55F, 1.2F,
+                false, true, true,
+                0.0F, true, true, true,
+                stimuli, BiologicalAiProfiles.FOX);
+
+        assertEquals(NativeBiologicalAi.Action.PURSUE, fox.action());
+        assertEquals(0, fox.stimulusIndex());
+    }
+
+    @Test
     void homeSamplerPrefersCandidateNearHomeRadius() {
         double[] candidates = {
                 1.0, 0.0, 0.0,

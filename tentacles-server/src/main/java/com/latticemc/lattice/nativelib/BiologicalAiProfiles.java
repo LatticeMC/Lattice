@@ -39,6 +39,8 @@ public final class BiologicalAiProfiles {
             new NativeBiologicalAi.Profile(0.35F, 0.60F, 0.70F, 0.45F, 0.35F, 0.72F, 0.18F, 0.35F, 4.0F, 2.0F);
     public static final NativeBiologicalAi.Profile CAT =
             new NativeBiologicalAi.Profile(0.42F, 0.58F, 0.65F, 0.45F, 0.30F, 0.72F, 0.18F, 0.35F, 4.0F, 2.0F);
+    public static final NativeBiologicalAi.Profile FOX =
+            new NativeBiologicalAi.Profile(0.38F, 0.58F, 0.65F, 0.45F, 0.30F, 0.78F, 0.18F, 0.35F, 4.0F, 2.0F);
 
     private BiologicalAiProfiles() {}
 }
