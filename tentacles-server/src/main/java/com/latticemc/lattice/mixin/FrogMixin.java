@@ -107,7 +107,7 @@ public abstract class FrogMixin {
                 NativeBiologicalAi.Species.FROG,
                 this.getHealth() / maxHealth,
                 inWater ? 0.85F : (this.isBaby() ? 0.55F : 0.70F),
-                prey != null ? 0.45F : 0.15F,
+                prey != null ? 0.55F : 0.15F,
                 1.2F,
                 this.isOnFire(),
                 prey != null,

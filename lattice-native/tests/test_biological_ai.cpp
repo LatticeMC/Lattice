@@ -412,7 +412,7 @@ TEST_CASE("biological_ai: frog can pursue prey when prey stimulus is present") {
     BiologicalAiInputs inputs{};
     inputs.entity.health_ratio = 0.9F;
     inputs.entity.energy_ratio = 0.85F;
-    inputs.entity.aggression = 0.45F;
+    inputs.entity.aggression = 0.55F;
     inputs.entity.attack_range = 1.2F;
     inputs.entity.can_attack = true;
     inputs.entity.can_consume_food = false;

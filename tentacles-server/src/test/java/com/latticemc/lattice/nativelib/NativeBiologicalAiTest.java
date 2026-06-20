@@ -358,7 +358,7 @@ class NativeBiologicalAiTest {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.PREY, 2.5F, 0.85F, true, true)
         };
 
-        NativeBiologicalAi.Decision frog = decide(0.9F, 0.85F, 0.45F, 1.2F,
+        NativeBiologicalAi.Decision frog = decide(0.9F, 0.85F, 0.55F, 1.2F,
                 false, true, false,
                 0.0F, true, true, false,
                 stimuli, BiologicalAiProfiles.FROG);
