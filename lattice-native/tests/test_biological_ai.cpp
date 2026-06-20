@@ -425,6 +425,29 @@ TEST_CASE("biological_ai: frog can pursue prey when prey stimulus is present") {
     CHECK(decision.stimulus_index == 0);
 }
 
+TEST_CASE("biological_ai: killer rabbit custom profile pursues prey") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::prey, 2.0F, 1.0F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.85F;
+    inputs.entity.aggression = 0.95F;
+    inputs.entity.attack_range = 1.4F;
+    inputs.entity.can_attack = true;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = true;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(inputs, {
+        0.45F, 0.55F, 0.55F, 0.45F, 0.35F, 0.70F, 0.18F, 0.30F, 5.0F, 2.0F,
+    });
+    CHECK(decision.action == BiologicalAction::pursue);
+    CHECK(decision.stimulus_index == 0);
+}
+
 TEST_CASE("biological_ai: species registry changes threat response") {
     const BiologicalStimulus stimuli[] = {
         {BiologicalStimulusKind::threat, 5.0F, 1.0F, true, true},

@@ -49,7 +49,7 @@ public abstract class OcelotMixin {
     @Inject(method = "customServerAiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(ServerLevel level, CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
-        if (this.isPassenger() || this.isVehicle() || this.isInWaterOrRain()) return;
+        if (this.isPassenger() || this.isVehicle()) return;
 
         final float maxHealth = this.getMaxHealth();
         if (maxHealth <= 0.0F) return;

@@ -11,6 +11,8 @@ public final class BiologicalAiProfiles {
             new NativeBiologicalAi.Profile(0.55F, 0.45F, 0.35F, 0.95F, 0.95F, 0.90F, 0.28F, 0.35F, 6.0F, 2.0F);
     public static final NativeBiologicalAi.Profile RABBIT =
             new NativeBiologicalAi.Profile(0.60F, 0.40F, 0.30F, 0.98F, 0.98F, 0.92F, 0.22F, 0.30F, 6.5F, 2.0F);
+    public static final NativeBiologicalAi.Profile KILLER_RABBIT =
+            new NativeBiologicalAi.Profile(0.45F, 0.55F, 0.55F, 0.45F, 0.35F, 0.70F, 0.18F, 0.30F, 5.0F, 2.0F);
     public static final NativeBiologicalAi.Profile BEE =
             new NativeBiologicalAi.Profile(0.25F, 0.70F, 0.80F, 0.30F, 0.25F, 0.70F, 0.10F, 0.25F, 3.0F, 2.0F);
     public static final NativeBiologicalAi.Profile GOAT =

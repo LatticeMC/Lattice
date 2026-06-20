@@ -40,6 +40,7 @@ public abstract class RabbitMixin {
     @Shadow public abstract boolean isFood(ItemStack stack);
     @Shadow public abstract @Nullable LivingEntity getLastHurtByMob();
     @Shadow public abstract @Nullable LivingEntity getTarget();
+    @Shadow public abstract Rabbit.Variant getVariant();
     @Shadow public abstract BlockPos blockPosition();
     @Shadow public abstract double getX();
     @Shadow public abstract double getY();
@@ -48,14 +49,16 @@ public abstract class RabbitMixin {
     @Inject(method = "customServerAiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(ServerLevel level, CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
-        if (this.isPassenger() || this.isVehicle() || this.isInWaterOrRain()) return;
+        if (this.isPassenger() || this.isVehicle()) return;
 
         final float maxHealth = this.getMaxHealth();
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
+        final boolean killerRabbit = this.getVariant() == Rabbit.Variant.EVIL;
+        LivingEntity prey = killerRabbit && this.getTarget() != null && this.getTarget().isAlive() ? this.getTarget() : null;
         LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
-        if (threat == null) {
+        if (!killerRabbit && threat == null) {
             final Predicate<LivingEntity> threatPredicate = entity -> entity instanceof Wolf
                     || entity instanceof Monster
                     || entity instanceof Player;
@@ -65,17 +68,67 @@ public abstract class RabbitMixin {
                 threat = this.lattice$cachedThreat;
             }
         }
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 9.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final Player temptingPlayer = !killerRabbit
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 9.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final float energyRatio;
-        if (this.isBaby()) {
+        if (killerRabbit) {
+            energyRatio = 0.85F;
+        } else if (this.isBaby()) {
             energyRatio = 0.45F;
         } else if (this.moreCarrotTicks > 0) {
             energyRatio = 0.80F;
         } else {
             energyRatio = 0.40F;
+        }
+
+        if (killerRabbit) {
+            int stimulusCount = 0;
+            if (threat != null && threat.isAlive()) stimulusCount++;
+            if (prey != null) stimulusCount++;
+            final NativeBiologicalAi.Stimulus[] stimuli = new NativeBiologicalAi.Stimulus[stimulusCount];
+            int threatIndex = -1;
+            int preyIndex = -1;
+            int index = 0;
+            if (threat != null && threat.isAlive()) {
+                threatIndex = index;
+                stimuli[index++] = new NativeBiologicalAi.Stimulus(
+                        NativeBiologicalAi.StimulusKind.THREAT,
+                        (float) Math.sqrt(mob.distanceToSqr(threat)),
+                        1.0F,
+                        true,
+                        true);
+            }
+            if (prey != null) {
+                preyIndex = index;
+                stimuli[index] = new NativeBiologicalAi.Stimulus(
+                        NativeBiologicalAi.StimulusKind.PREY,
+                        (float) Math.sqrt(mob.distanceToSqr(prey)),
+                        1.0F,
+                        true,
+                        true);
+            }
+
+            final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
+                    this.getHealth() / maxHealth,
+                    energyRatio,
+                    0.95F,
+                    1.4F,
+                    this.isOnFire(),
+                    prey != null,
+                    false,
+                    threat != null ? 1.0F : 0.0F,
+                    !level.canSeeSky(this.blockPosition()),
+                    threat == null && !this.isOnFire(),
+                    false,
+                    stimuli,
+                    BiologicalAiProfiles.KILLER_RABBIT);
+
+            PredatoryAnimalAiSupport.applyDecision(mob, decision, threat, prey, null, threatIndex, preyIndex, -1, 1.1, 0.0);
+            return;
         }
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(

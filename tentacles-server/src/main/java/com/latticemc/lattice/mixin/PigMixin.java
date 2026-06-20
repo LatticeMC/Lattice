@@ -22,7 +22,7 @@ public abstract class PigMixin {
     private void lattice$runPigBiologicalAi(ServerLevel level, CallbackInfo ci) {
         if (!((Object) this instanceof Pig pig)) return;
         if (!LatticeNative.isLoaded()) return;
-        if (pig.isPassenger() || pig.isVehicle() || pig.isInWaterOrRain()) return;
+        if (pig.isPassenger() || pig.isVehicle()) return;
         if (pig.getControllingPassenger() != null) return;
 
         final float maxHealth = pig.getMaxHealth();
