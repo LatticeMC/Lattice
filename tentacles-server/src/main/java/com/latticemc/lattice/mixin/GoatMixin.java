@@ -92,7 +92,7 @@ public abstract class GoatMixin {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.THREAT,
                     (float) Math.sqrt(mob.distanceToSqr(threat)),
-                    1.0F,
+                    HerbivoreAiSupport.threatStrength(threat),
                     true,
                     true);
         }
@@ -124,7 +124,7 @@ public abstract class GoatMixin {
                 this.isOnFire(),
                 !this.isBaby() && this.hasLeftHorn() && this.hasRightHorn() && prey != null,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && !preparingRam && !inLove,
                 temptingPlayer != null,

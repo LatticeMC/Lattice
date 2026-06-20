@@ -25,8 +25,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class CatMixin {
     @Unique private static final int lattice$PREY_SCAN_INTERVAL = 8;
     @Unique private static final double lattice$PREY_SCAN_RANGE = 10.0;
+    @Unique private static final int lattice$THREAT_SCAN_INTERVAL = 8;
+    @Unique private static final double lattice$THREAT_SCAN_RANGE = 16.0;
 
     @Unique private @Nullable LivingEntity lattice$cachedPrey;
+    @Unique private @Nullable LivingEntity lattice$cachedThreat;
 
     @Shadow public abstract float getHealth();
     @Shadow public abstract float getMaxHealth();
@@ -55,7 +58,11 @@ public abstract class CatMixin {
         final boolean busy = this.isLying() || this.isRelaxStateOne();
         final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Rabbit
                 || entity instanceof Turtle turtle && turtle.isBaby() && !turtle.isInWater();
+        final Predicate<LivingEntity> threatPredicate = entity -> entity instanceof Player player
+                && !player.isCreative()
+                && !player.isSpectator();
         final LivingEntity target = this.getTarget();
+        if (target != null && target.isAlive() && !preyPredicate.test(target) && !threatPredicate.test(target) && !this.isOnFire()) return;
         LivingEntity prey = target != null && target.isAlive() && preyPredicate.test(target) ? target : null;
         if (prey == null && !busy) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
@@ -64,7 +71,14 @@ public abstract class CatMixin {
                 prey = this.lattice$cachedPrey;
             }
         }
-        final LivingEntity threat = target != null && target.isAlive() && prey == null ? target : null;
+        LivingEntity threat = target != null && target.isAlive() && prey == null && threatPredicate.test(target) ? target : null;
+        if (threat == null && !busy) {
+            threat = HerbivoreAiSupport.cachedThreat(mob, this.lattice$cachedThreat, lattice$THREAT_SCAN_RANGE, threatPredicate);
+            if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$THREAT_SCAN_INTERVAL)) {
+                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                threat = this.lattice$cachedThreat;
+            }
+        }
         final Player temptingPlayer = !busy
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 10.0,
@@ -85,7 +99,7 @@ public abstract class CatMixin {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.THREAT,
                     (float) Math.sqrt(mob.distanceToSqr(threat)),
-                    1.0F,
+                    HerbivoreAiSupport.threatStrength(threat),
                     true,
                     true);
         }
@@ -117,7 +131,7 @@ public abstract class CatMixin {
                 this.isOnFire(),
                 prey != null,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && prey == null && !busy,
                 temptingPlayer != null,

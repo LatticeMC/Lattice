@@ -5,16 +5,19 @@ import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeBiologicalAi;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.chicken.Chicken;
+import net.minecraft.world.entity.animal.fish.AbstractSchoolingFish;
 import net.minecraft.world.entity.animal.fox.Fox;
 import net.minecraft.world.entity.animal.polarbear.PolarBear;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
 import net.minecraft.world.entity.animal.turtle.Turtle;
 import net.minecraft.world.entity.animal.wolf.Wolf;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -71,12 +74,20 @@ public abstract class FoxMixin {
 
         final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Chicken
                 || entity instanceof Rabbit
-                || entity instanceof Turtle turtle && turtle.isBaby() && !turtle.isInWater();
+                || entity instanceof Turtle turtle && turtle.isBaby() && !turtle.isInWater()
+                || entity instanceof AbstractSchoolingFish;
         final Predicate<LivingEntity> threatPredicate = entity -> entity instanceof PolarBear
                 || entity instanceof Wolf wolf && !wolf.isTame()
                 || entity instanceof Player && !this.trusts(entity);
         final LivingEntity target = this.getTarget();
+        final ItemStack carried = mob.getMainHandItem();
+        final boolean eatingCarriedFood = carried.has(DataComponents.FOOD)
+                && carried.has(DataComponents.CONSUMABLE)
+                && target == null
+                && mob.onGround()
+                && !this.isSleeping();
         if (target != null && target.isAlive() && !preyPredicate.test(target) && !threatPredicate.test(target) && !this.isOnFire()) return;
+        if (eatingCarriedFood) return;
         LivingEntity prey = target != null && target.isAlive() && preyPredicate.test(target) ? target : null;
         if (prey == null && !busy) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
@@ -110,7 +121,7 @@ public abstract class FoxMixin {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.THREAT,
                     (float) Math.sqrt(mob.distanceToSqr(threat)),
-                    1.0F,
+                    HerbivoreAiSupport.threatStrength(threat),
                     true,
                     true);
         }
@@ -133,7 +144,7 @@ public abstract class FoxMixin {
                 this.isOnFire(),
                 prey != null && !this.isBaby(),
                 false,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && prey == null && !busy,
                 false,

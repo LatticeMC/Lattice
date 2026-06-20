@@ -10,6 +10,7 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.cow.MushroomCow;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Blocks;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -48,7 +49,11 @@ public abstract class MushroomCowMixin {
         final Player temptingPlayer = !inLove
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 10.0,
-                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                        entity -> entity instanceof Player player
+                                && (this.isFood(player.getMainHandItem())
+                                || level.purpurConfig.cowFeedMushrooms > 0
+                                && (player.getMainHandItem().is(Blocks.RED_MUSHROOM.asItem())
+                                || player.getMainHandItem().is(Blocks.BROWN_MUSHROOM.asItem()))))
                 : null;
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
@@ -60,7 +65,7 @@ public abstract class MushroomCowMixin {
                 this.isOnFire(),
                 false,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && !inLove,
                 temptingPlayer != null,

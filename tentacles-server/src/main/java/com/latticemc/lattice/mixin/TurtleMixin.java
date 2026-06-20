@@ -95,7 +95,7 @@ public abstract class TurtleMixin {
                 this.isOnFire(),
                 false,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 inWater || nearHome,
                 threat == null && !this.isOnFire() && !layingEgg && !returningHome && !travelling,
                 temptingPlayer != null,

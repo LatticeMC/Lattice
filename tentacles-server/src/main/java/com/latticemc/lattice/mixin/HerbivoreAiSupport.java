@@ -9,6 +9,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.NeutralMob;
+import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
@@ -58,10 +60,18 @@ final class HerbivoreAiSupport {
         return interval <= 1 || (self.tickCount + self.getId()) % interval == 0;
     }
 
+    static float threatStrength(@Nullable LivingEntity threat) {
+        if (threat == null) return 0.0F;
+        if (threat instanceof Monster) return 1.0F;
+        if (threat instanceof NeutralMob) return 0.7F;
+        if (threat instanceof Player) return 0.85F;
+        return 0.6F;
+    }
+
     static NativeBiologicalAi.Stimulus[] buildStimuli(Entity self,
-                                                      @Nullable LivingEntity threat,
-                                                      @Nullable Player temptingPlayer,
-                                                      float foodStrength) {
+                                                       @Nullable LivingEntity threat,
+                                                       @Nullable Player temptingPlayer,
+                                                       float foodStrength) {
         final boolean hasThreat = threat != null && threat.isAlive();
         final boolean hasFood = temptingPlayer != null;
         if (!hasThreat && !hasFood) return NO_STIMULI;
@@ -72,7 +82,7 @@ final class HerbivoreAiSupport {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.THREAT,
                     (float) Math.sqrt(self.distanceToSqr(threat)),
-                    1.0F,
+                    threatStrength(threat),
                     true,
                     true);
         }
@@ -92,6 +102,18 @@ final class HerbivoreAiSupport {
                                  @Nullable LivingEntity threat,
                                  @Nullable Player temptingPlayer,
                                  double minPursueSpeed) {
+        try {
+            return applyDecisionInner(mob, decision, threat, temptingPlayer, minPursueSpeed);
+        } catch (final Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean applyDecisionInner(Mob mob,
+                                              NativeBiologicalAi.Decision decision,
+                                              @Nullable LivingEntity threat,
+                                              @Nullable Player temptingPlayer,
+                                              double minPursueSpeed) {
         if (decision.action() == NativeBiologicalAi.Action.FLEE && threat != null && threat.isAlive()) {
             double[] candidates = buildFleeCandidates(mob, threat, 4.0);
             int candidate = NativeFleeTargetSampler.sampleFleeTarget(

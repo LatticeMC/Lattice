@@ -58,6 +58,24 @@ final class PredatoryAnimalAiSupport {
                                  int foodIndex,
                                  double minPreyPursueSpeed,
                                  double minFoodPursueSpeed) {
+        try {
+            return applyDecisionInner(mob, decision, threat, prey, temptingPlayer,
+                    threatIndex, preyIndex, foodIndex, minPreyPursueSpeed, minFoodPursueSpeed);
+        } catch (final Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean applyDecisionInner(Mob mob,
+                                              NativeBiologicalAi.Decision decision,
+                                              @Nullable LivingEntity threat,
+                                              @Nullable LivingEntity prey,
+                                              @Nullable Player temptingPlayer,
+                                              int threatIndex,
+                                              int preyIndex,
+                                              int foodIndex,
+                                              double minPreyPursueSpeed,
+                                              double minFoodPursueSpeed) {
         if (decision.action() == NativeBiologicalAi.Action.FLEE && decision.stimulusIndex() == threatIndex && threat != null && threat.isAlive()) {
             double[] candidates = buildFleeCandidates(mob, threat, 6.0);
             int candidate = NativeFleeTargetSampler.sampleFleeTarget(

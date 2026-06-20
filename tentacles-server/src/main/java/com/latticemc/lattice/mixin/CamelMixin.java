@@ -84,7 +84,7 @@ public abstract class CamelMixin {
                 this.isOnFire(),
                 false,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 sitting || !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && !dashing && !inLove,
                 temptingPlayer != null,

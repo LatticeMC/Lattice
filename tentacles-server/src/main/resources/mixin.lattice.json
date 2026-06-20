@@ -53,6 +53,7 @@
     "MushroomCowMixin",
     "AbstractHorseMixin",
     "PolarBearMixin",
+    "ParrotMixin",
     "LightEngineMixin",
     "NaturalSpawnerMixin"
   ],

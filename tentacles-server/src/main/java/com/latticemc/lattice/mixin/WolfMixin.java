@@ -8,10 +8,13 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.equine.Llama;
 import net.minecraft.world.entity.animal.fox.Fox;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
 import net.minecraft.world.entity.animal.sheep.Sheep;
+import net.minecraft.world.entity.animal.turtle.Turtle;
 import net.minecraft.world.entity.animal.wolf.Wolf;
+import net.minecraft.world.entity.monster.skeleton.AbstractSkeleton;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
@@ -26,8 +29,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class WolfMixin {
     @Unique private static final int lattice$PREY_SCAN_INTERVAL = 8;
     @Unique private static final double lattice$PREY_SCAN_RANGE = 12.0;
+    @Unique private static final int lattice$THREAT_SCAN_INTERVAL = 8;
+    @Unique private static final double lattice$THREAT_SCAN_RANGE = 24.0;
 
     @Unique private @Nullable LivingEntity lattice$cachedPrey;
+    @Unique private @Nullable LivingEntity lattice$cachedThreat;
 
     @Shadow public abstract float getHealth();
     @Shadow public abstract float getMaxHealth();
@@ -59,9 +65,13 @@ public abstract class WolfMixin {
         final boolean inLove = this.isInLove();
         final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Sheep
                 || entity instanceof Rabbit
-                || entity instanceof Fox;
+                || entity instanceof Fox
+                || entity instanceof Turtle turtle && turtle.isBaby() && !turtle.isInWater()
+                || entity instanceof AbstractSkeleton;
+        final Predicate<LivingEntity> threatPredicate = entity -> entity instanceof Llama llama
+                && llama.getStrength() >= 3;
         final LivingEntity target = this.getTarget();
-        if (target != null && target.isAlive() && !preyPredicate.test(target) && !this.isOnFire()) return;
+        if (target != null && target.isAlive() && !preyPredicate.test(target) && !threatPredicate.test(target) && !this.isOnFire()) return;
         LivingEntity prey = target != null && target.isAlive() && preyPredicate.test(target) ? target : null;
         if (prey == null && !inLove) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
@@ -70,7 +80,14 @@ public abstract class WolfMixin {
                 prey = this.lattice$cachedPrey;
             }
         }
-        final LivingEntity threat = prey == null ? HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), target) : null;
+        LivingEntity threat = prey == null && target != null && target.isAlive() && threatPredicate.test(target) ? target : null;
+        if (threat == null && prey == null && !inLove) {
+            threat = HerbivoreAiSupport.cachedThreat(mob, this.lattice$cachedThreat, lattice$THREAT_SCAN_RANGE, threatPredicate);
+            if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$THREAT_SCAN_INTERVAL)) {
+                this.lattice$cachedThreat = HerbivoreAiSupport.findNearestThreat(mob, level, lattice$THREAT_SCAN_RANGE, threatPredicate);
+                threat = this.lattice$cachedThreat;
+            }
+        }
         final Player temptingPlayer = !inLove
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 10.0,
@@ -91,7 +108,7 @@ public abstract class WolfMixin {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.THREAT,
                     (float) Math.sqrt(mob.distanceToSqr(threat)),
-                    1.0F,
+                    HerbivoreAiSupport.threatStrength(threat),
                     true,
                     true);
         }
@@ -123,7 +140,7 @@ public abstract class WolfMixin {
                 this.isOnFire(),
                 prey != null && !this.isBaby(),
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && prey == null && !inLove,
                 temptingPlayer != null,

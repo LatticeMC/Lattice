@@ -13,6 +13,7 @@ import net.minecraft.world.entity.animal.fox.Fox;
 import net.minecraft.world.entity.animal.polarbear.PolarBear;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -24,8 +25,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class PolarBearMixin {
     @Unique private static final int lattice$PREY_SCAN_INTERVAL = 8;
     @Unique private static final double lattice$PREY_SCAN_RANGE = 10.0;
+    @Unique private static final int lattice$BABY_ALERT_SCAN_INTERVAL = 8;
+    @Unique private static final double lattice$BABY_ALERT_SCAN_RANGE_XZ = 8.0;
+    @Unique private static final double lattice$BABY_ALERT_SCAN_RANGE_Y = 4.0;
 
     @Unique private @Nullable LivingEntity lattice$cachedPrey;
+    @Unique private boolean lattice$cachedBabyAlert;
 
     @Inject(method = "customServerAiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(ServerLevel level, CallbackInfo ci) {
@@ -38,11 +43,22 @@ public abstract class PolarBearMixin {
 
         final Mob mob = polarBear;
         final boolean busy = polarBear.isStanding() || polarBear.isInLove();
+        if (HerbivoreAiSupport.shouldRefreshThreatScan(mob, lattice$BABY_ALERT_SCAN_INTERVAL)) {
+            this.lattice$cachedBabyAlert = lattice$hasNearbyBabyPolarBear(mob, level);
+        }
         final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Fox || entity instanceof Player;
         final Predicate<LivingEntity> scannedPreyPredicate = entity -> entity instanceof Fox;
         final LivingEntity target = polarBear.getTarget();
         if (target != null && target.isAlive() && !preyPredicate.test(target) && !polarBear.isOnFire()) return;
         LivingEntity prey = target != null && target.isAlive() && preyPredicate.test(target) ? target : null;
+        if (prey == null && !busy && !polarBear.isBaby() && this.lattice$cachedBabyAlert) {
+            final Player nearbyPlayer = level.getNearestPlayer(
+                    polarBear.getX(), polarBear.getY(), polarBear.getZ(), 10.0,
+                    entity -> entity instanceof Player player && !player.isCreative() && !player.isSpectator());
+            if (nearbyPlayer != null) {
+                prey = nearbyPlayer;
+            }
+        }
         if (prey == null && !busy && !polarBear.isBaby()) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, scannedPreyPredicate);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
@@ -71,7 +87,7 @@ public abstract class PolarBearMixin {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.THREAT,
                     (float) Math.sqrt(mob.distanceToSqr(threat)),
-                    1.0F,
+                    HerbivoreAiSupport.threatStrength(threat),
                     true,
                     true);
         }
@@ -103,7 +119,7 @@ public abstract class PolarBearMixin {
                 polarBear.isOnFire(),
                 prey != null && !polarBear.isBaby(),
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(polarBear.blockPosition()),
                 threat == null && !polarBear.isOnFire() && prey == null && !busy,
                 temptingPlayer != null,
@@ -111,5 +127,16 @@ public abstract class PolarBearMixin {
                 BiologicalAiProfiles.WOLF);
 
         PredatoryAnimalAiSupport.applyDecision(mob, decision, threat, prey, temptingPlayer, threatIndex, preyIndex, foodIndex, 1.0, 0.8);
+    }
+    @Unique
+    private static boolean lattice$hasNearbyBabyPolarBear(Mob self, ServerLevel level) {
+        final AABB area = self.getBoundingBox().inflate(
+                lattice$BABY_ALERT_SCAN_RANGE_XZ,
+                lattice$BABY_ALERT_SCAN_RANGE_Y,
+                lattice$BABY_ALERT_SCAN_RANGE_XZ);
+        return !level.getEntitiesOfClass(
+                PolarBear.class,
+                area,
+                bear -> bear != self && bear.isAlive() && bear.isBaby()).isEmpty();
     }
 }

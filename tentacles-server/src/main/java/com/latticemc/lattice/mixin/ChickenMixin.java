@@ -72,7 +72,7 @@ public abstract class ChickenMixin {
                 chicken.isOnFire(),
                 false,
                 true,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(chicken.blockPosition()),
                 threat == null && !chicken.isOnFire() && !inLove,
                 temptingPlayer != null,

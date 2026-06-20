@@ -69,48 +69,44 @@ TEST_CASE("collision: scalar and dispatcher agree") {
     CHECK(mv_d[2] == mv_s[2]);
 }
 
-TEST_CASE("collision: touching boxes (gap=0) are not blocked") {
+TEST_CASE("collision: touching boxes (gap=0) are blocked like Paper") {
     const double moving[6] = {0, 0, 0, 1, 1, 1};
-    // Obstacle starts exactly at moving box max (touching, not overlapping)
+    // Obstacle starts exactly at moving box max (touching)
     const double obstacles[6] = {1, -5, -5, 2, 5, 5};
     double mv[3] = {5.0, 0.0, 0.0};
     adjust_movement_scalar(moving, mv, obstacles, 1);
-    // With epsilon: max_move = 1 - 1 = 0, which is > -epsilon, so NOT blocked
-    CHECK(mv[0] == 5.0);
+    // gap = 1 - 1 = 0, not < -eps so not skipped, min(0, 5) = 0
+    CHECK(mv[0] == 0.0);
 }
 
-TEST_CASE("collision: near-touching within epsilon is not blocked") {
+TEST_CASE("collision: near-touching within epsilon clamps to gap") {
     const double moving[6] = {0, 0, 0, 1, 1, 1};
-    // Obstacle starts 0.5*epsilon ahead of moving box
     const double eps = kCollisionEpsilon;
     const double obstacles[6] = {1.0 + 0.5 * eps, -5, -5, 2, 5, 5};
     double mv[3] = {5.0, 0.0, 0.0};
     adjust_movement_scalar(moving, mv, obstacles, 1);
-    // gap = 0.5*eps, which is < desired (5.0) but > -eps, so NOT blocked
-    CHECK(mv[0] == 5.0);
+    // gap = 0.5*eps, not < -eps so not skipped, min(0.5*eps, 5) = 0.5*eps
+    CHECK(mv[0] == 0.5 * eps);
 }
 
-TEST_CASE("collision: penetrating beyond epsilon is blocked") {
+TEST_CASE("collision: slight penetration clamps to gap") {
     const double moving[6] = {0, 0, 0, 1, 1, 1};
-    // Obstacle starts 0.5*epsilon BEFORE moving box max (slight penetration)
     const double eps = kCollisionEpsilon;
     const double obstacles[6] = {1.0 - 0.5 * eps, -5, -5, 2, 5, 5};
     double mv[3] = {5.0, 0.0, 0.0};
     adjust_movement_scalar(moving, mv, obstacles, 1);
-    // max_move = (1 - 0.5*eps) - 1 = -0.5*eps, which is < -eps? No, -0.5*eps > -eps
-    // So NOT blocked (epsilon tolerance allows this)
-    CHECK(mv[0] == 5.0);
+    // gap = -0.5*eps, not < -eps (since -0.5*eps > -eps), min(-0.5*eps, 5) = -0.5*eps
+    CHECK(mv[0] == -0.5 * eps);
 }
 
-TEST_CASE("collision: penetrating beyond epsilon by more than epsilon is blocked") {
+TEST_CASE("collision: deep penetration beyond epsilon skips obstacle") {
     const double moving[6] = {0, 0, 0, 1, 1, 1};
-    // Obstacle starts 2*epsilon BEFORE moving box max
     const double eps = kCollisionEpsilon;
     const double obstacles[6] = {1.0 - 2.0 * eps, -5, -5, 2, 5, 5};
     double mv[3] = {5.0, 0.0, 0.0};
     adjust_movement_scalar(moving, mv, obstacles, 1);
-    // max_move = (1 - 2*eps) - 1 = -2*eps, which IS < -eps, so blocked
-    CHECK(mv[0] == 5.0 - 2.0 * eps);
+    // gap = -2*eps, IS < -eps so skipped, returns source_move
+    CHECK(mv[0] == 5.0);
 }
 
 TEST_CASE("collision: calc_max_offset single axis matches adjust_movement") {

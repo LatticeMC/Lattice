@@ -86,7 +86,7 @@ public abstract class FrogMixin {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.THREAT,
                     (float) Math.sqrt(mob.distanceToSqr(threat)),
-                    1.0F,
+                    HerbivoreAiSupport.threatStrength(threat),
                     true,
                     true);
         }
@@ -118,7 +118,7 @@ public abstract class FrogMixin {
                 this.isOnFire(),
                 prey != null,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 inWater || !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && !pregnant,
                 temptingPlayer != null,

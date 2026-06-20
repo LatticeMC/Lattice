@@ -458,6 +458,66 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void busyCamelProfileHerbivoreIgnoresFoodStimulus() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision horseLike = decide(0.9F, 0.25F, 0.0F, 1.5F,
+                false, false, false,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.CAMEL);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, horseLike.action());
+        assertEquals(-1, horseLike.stimulusIndex());
+    }
+
+    @Test
+    void busyWolfProfilePredatorIgnoresFoodStimulus() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision polarBearLike = decide(0.9F, 0.35F, 0.0F, 2.0F,
+                false, false, false,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.WOLF);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, polarBearLike.action());
+        assertEquals(-1, polarBearLike.stimulusIndex());
+    }
+
+    @Test
+    void busyBeeProfileFlierRestsInsteadOfChasingFood() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision parrotLike = decide(0.9F, 0.20F, 0.0F, 1.0F,
+                false, false, false,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.BEE);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, parrotLike.action());
+        assertEquals(-1, parrotLike.stimulusIndex());
+    }
+
+    @Test
+    void beeProfileFleesStrongNearbyThreat() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 2.5F, 1.0F, true, true)
+        };
+
+        NativeBiologicalAi.Decision parrotLike = decide(0.9F, 0.75F, 0.0F, 1.0F,
+                false, false, false,
+                0.0F, true, true, false,
+                stimuli, BiologicalAiProfiles.BEE);
+
+        assertEquals(NativeBiologicalAi.Action.FLEE, parrotLike.action());
+        assertEquals(0, parrotLike.stimulusIndex());
+    }
+
+    @Test
     void playingDeadAxolotlIgnoresFoodStimulus() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)

@@ -113,7 +113,7 @@ public abstract class RabbitMixin {
                 stimuli[index++] = new NativeBiologicalAi.Stimulus(
                         NativeBiologicalAi.StimulusKind.THREAT,
                         (float) Math.sqrt(mob.distanceToSqr(threat)),
-                        1.0F,
+                        HerbivoreAiSupport.threatStrength(threat),
                         true,
                         true);
             }
@@ -135,7 +135,7 @@ public abstract class RabbitMixin {
                     this.isOnFire(),
                     prey != null,
                     false,
-                    threat != null ? 1.0F : 0.0F,
+                    HerbivoreAiSupport.threatStrength(threat),
                     !level.canSeeSky(this.blockPosition()),
                     threat == null && !this.isOnFire(),
                     false,
@@ -155,7 +155,7 @@ public abstract class RabbitMixin {
                 this.isOnFire(),
                 false,
                 true,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && !inLove,
                 temptingPlayer != null,

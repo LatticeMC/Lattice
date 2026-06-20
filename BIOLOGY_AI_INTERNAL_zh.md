@@ -37,12 +37,14 @@
 
 - `Rabbit`：普通兔子 nearby threat 扫描；`EVIL` 兔子走单独攻击 profile，并可 nearby 扫描 `Player/Wolf` 进入攻击态。
 - `Ocelot`：补 nearby prey 扫描，覆盖鸡和陆地幼龟。
-- `Wolf`：新增 wild wolf 物种支持，nearby prey 扫描覆盖原版 `Sheep/Rabbit/Fox`，tamed wolf 和已有非 prey 目标直接跳过，避免干扰宠物/愤怒目标逻辑。
-- `Cat`：新增 untamed cat 物种支持，nearby prey 扫描覆盖原版 `Rabbit/land baby Turtle`，tamed cat 直接跳过避免干扰宠物/owner/睡觉礼物逻辑。
-- `Fox`：新增保守捕食和避让支持，仅在非 `sleeping/sitting/crouching/pouncing/faceplanted/defending/inLove` 状态下扫描 `Chicken/Rabbit/land baby Turtle`；避让扫描覆盖未信任玩家、野狼、北极熊；暂不接管捡物/浆果/鱼类目标。
-- `PolarBear`：新增保守攻击/诱食支持，复用 `WOLF` profile；仅接已有 target 和 nearby `Fox` 扫描，不实现“附近幼崽触发主动扫玩家”的群体逻辑。
+- `Wolf`：新增 wild wolf 物种支持，nearby prey 扫描覆盖原版 `Sheep/Rabbit/Fox/land baby Turtle/AbstractSkeleton`；nearby threat 扫描补了高强度 `Llama` 避让；tamed wolf 和已有非 prey/threat 目标直接跳过，避免干扰宠物/愤怒目标逻辑。
+- `Cat`：新增 untamed cat 物种支持，nearby prey 扫描覆盖原版 `Rabbit/land baby Turtle`；nearby threat 扫描补了未创造/非旁观玩家避让；tamed cat 直接跳过避免干扰宠物/owner/睡觉礼物逻辑。
+- `Fox`：新增保守捕食和避让支持，仅在非 `sleeping/sitting/crouching/pouncing/faceplanted/defending/inLove` 状态下扫描 `Chicken/Rabbit/land baby Turtle/schooling fish`；避让扫描覆盖未信任玩家、野狼、北极熊；手持可食物时直接让原版吃食流程接管，暂不接管浆果目标。
+- `PolarBear`：新增保守攻击/诱食支持，复用 `WOLF` profile；接已有 target、nearby `Fox` 扫描，以及缓存版“附近幼崽 -> 敌视玩家”输入；仍不实现更复杂的群体仇恨联动。
+- `Parrot`：新增保守 busy/flee 支持，复用 `BEE` profile；仅映射 `party/sit/flying` 等明显 busy 状态和 threat 输入，不接管 taming food / shoulder / 飞行路径决策。
 - `MushroomCow`：新增 cow-like 支持，复用 `COW` species/profile，覆盖 food temptation、threat、inLove busy 输入，不新增 ABI。
-- `AbstractHorse`：新增 horse-family 支持，复用 `CAMEL` species/profile，覆盖 food temptation、threat、tamed/baby/eating/standing/inLove 输入，骑乘中跳过，不新增 ABI。
+- `Cow/MushroomCow`：当 Purpur `cowFeedMushrooms > 0` 时，food temptation 额外识别红/棕蘑菇，与 `AbstractCow` 的 `TemptGoal` 对齐。
+- `AbstractHorse`：新增 horse-family 支持，复用 `CAMEL` species/profile，覆盖 food temptation、threat、tamed/baby/eating/standing/inLove 输入，骑乘中跳过；`SkeletonTrap` 视为 busy，chested horse 轻微上调已驯服输入强度，不新增 ABI。
 - `Chicken`：补 `Fox/Ocelot` threat 扫描。
 - `Bee`：愤怒未蜇时可扫描并锁定附近应仇恨玩家。
 - `Bee`：携蜜但没蜂巢时不会 idle，危险感上调；有蜂巢时更强约束回巢。
@@ -64,7 +66,7 @@
 - `Goat`：准备冲撞时不被诱食打断；可根据 `RAM_TARGET` memory 反推出附近冲撞目标并进入攻击态。
 - `Camel`：坐下/起身过渡/冲刺时不诱食，坐下时可休息。
 - `Llama`：吐口水后和 caravan 中不被诱食打断；面对狼时可 nearby 扫描目标，并走中距离压制而不是贴脸近战。
-- `Pig/Cow/MushroomCow/AbstractHorse/Sheep/Chicken/Rabbit/Ocelot/Wolf/Cat/Fox/PolarBear/Llama/Camel/Goat/Armadillo` 等陆生物种已移除 `isInWaterOrRain()` 的整段硬跳过。
+- `Pig/Cow/MushroomCow/AbstractHorse/Sheep/Chicken/Rabbit/Ocelot/Wolf/Cat/Fox/PolarBear/Llama/Camel/Goat/Armadillo` 等陆生物种已移除 `isInWaterOrRain()` 的整段硬跳过；`Parrot` 走独立 flying busy 输入，不依赖该规则。
 
 ## 当前验证状态
 
@@ -111,6 +113,10 @@ Windows 下用 `gradlew.bat`。
   - cat pursuit
   - fox pursuit
   - fox strong threat flee
+  - camel-profile busy herbivore ignore-food
+  - wolf-profile busy predator ignore-food
+  - bee-profile busy flier ignore-food
+  - bee-profile strong threat flee
   - camel/llama/sheep/bee/axolotl/sniffer busy-state rest or ignore-food
 - 仍需依赖实机验证的部分主要集中在：
   - `PredatoryAnimalAiSupport` 对 `Frog` 这类特殊攻击动物是否会过度贴脸

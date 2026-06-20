@@ -47,7 +47,7 @@ public abstract class PigMixin {
                 pig.isOnFire(),
                 false,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(pig.blockPosition()),
                 threat == null && !pig.isOnFire() && !inLove,
                 temptingPlayer != null,

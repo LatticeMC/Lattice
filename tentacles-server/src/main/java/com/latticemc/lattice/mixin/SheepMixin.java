@@ -78,7 +78,7 @@ public abstract class SheepMixin {
                 this.isOnFire(),
                 false,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && !inLove,
                 temptingPlayer != null,

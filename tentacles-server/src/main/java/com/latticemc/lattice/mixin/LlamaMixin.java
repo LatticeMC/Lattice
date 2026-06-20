@@ -100,7 +100,7 @@ public abstract class LlamaMixin {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.THREAT,
                     (float) Math.sqrt(mob.distanceToSqr(threat)),
-                    1.0F,
+                    HerbivoreAiSupport.threatStrength(threat),
                     true,
                     true);
         }
@@ -132,7 +132,7 @@ public abstract class LlamaMixin {
                 this.isOnFire(),
                 prey != null,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()) || this.getCaravanHead() != null,
                 threat == null && !this.isOnFire() && !this.didSpit && !inLove,
                 temptingPlayer != null,

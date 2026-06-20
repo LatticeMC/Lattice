@@ -549,6 +549,84 @@ TEST_CASE("biological_ai: busy panda ignores food stimulus") {
     CHECK(decision.stimulus_index == -1);
 }
 
+TEST_CASE("biological_ai: busy camel-profile herbivore ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.25F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::camel, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: busy wolf-profile predator ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.35F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::wolf, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: busy bee-profile flier rests instead of chasing food") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.20F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::bee, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: bee-profile flees strong nearby threat") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::threat, 2.5F, 1.0F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.75F;
+    inputs.entity.can_attack = false;
+    inputs.environment.can_idle_safely = true;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::bee, inputs);
+    CHECK(decision.action == BiologicalAction::flee);
+    CHECK(decision.stimulus_index == 0);
+}
+
 TEST_CASE("biological_ai: playing-dead axolotl ignores food stimulus") {
     const BiologicalStimulus stimuli[] = {
         {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},

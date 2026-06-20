@@ -8,6 +8,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.equine.AbstractHorse;
+import net.minecraft.world.entity.animal.equine.AbstractChestedHorse;
+import net.minecraft.world.entity.animal.equine.SkeletonHorse;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
@@ -47,7 +49,9 @@ public abstract class AbstractHorseMixin {
         final float maxHealth = this.getMaxHealth();
         if (maxHealth <= 0.0F) return;
 
-        final boolean busy = this.isEating() || this.isStanding() || this.isInLove();
+        final boolean skeletonTrap = this instanceof SkeletonHorse skeletonHorse && skeletonHorse.isTrap();
+        final boolean chested = this instanceof AbstractChestedHorse abstractChestedHorse && abstractChestedHorse.hasChest();
+        final boolean busy = this.isEating() || this.isStanding() || this.isInLove() || skeletonTrap;
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
         final Player temptingPlayer = !busy
                 ? level.getNearestPlayer(
@@ -58,17 +62,17 @@ public abstract class AbstractHorseMixin {
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.CAMEL,
                 this.getHealth() / maxHealth,
-                busy ? 0.25F : (this.isBaby() ? 0.60F : (this.isTamed() ? 0.80F : 0.65F)),
+                busy ? 0.25F : (this.isBaby() ? 0.60F : (this.isTamed() ? (chested ? 0.82F : 0.80F) : 0.65F)),
                 0.0F,
                 1.5F,
                 this.isOnFire(),
                 false,
                 temptingPlayer != null,
-                threat != null ? 1.0F : 0.0F,
+                HerbivoreAiSupport.threatStrength(threat),
                 !level.canSeeSky(this.blockPosition()),
                 threat == null && !this.isOnFire() && !busy,
                 temptingPlayer != null,
-                HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.isTamed() ? 0.75F : 0.65F),
+                HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.isTamed() ? (chested ? 0.80F : 0.75F) : 0.65F),
                 BiologicalAiProfiles.CAMEL);
 
         HerbivoreAiSupport.applyDecision(mob, decision, threat, temptingPlayer, 0.8);
