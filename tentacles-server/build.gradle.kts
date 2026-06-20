@@ -184,6 +184,8 @@ abstract class MockitoAgentProvider : CommandLineArgumentProvider {
 dependencies {
     implementation(project(":tentacles-api")) // Purpur // Tentacles
     implementation("org.spongepowered:mixin:0.8.7")
+    implementation("org.ow2.asm:asm-util:9.8")
+    implementation("org.ow2.asm:asm-analysis:9.8")
     implementation("ca.spottedleaf:concurrentutil:0.0.8")
     implementation("org.jline:jline-terminal-ffm:3.27.1") // use ffm on java 22+
     implementation("org.jline:jline-terminal-jni:3.27.1") // fall back to jni on java 21
@@ -207,8 +209,6 @@ dependencies {
     implementation("io.netty:netty-codec-haproxy:4.2.7.Final") // Add support for proxy protocol
     implementation("org.apache.logging.log4j:log4j-iostreams:2.24.1")
     implementation("org.ow2.asm:asm-commons:9.8")
-    implementation("org.ow2.asm:asm-util:9.8")
-    implementation("org.ow2.asm:asm-analysis:9.8")
     implementation("org.spongepowered:configurate-yaml:4.2.0")
 
     implementation("org.mozilla:rhino-runtime:1.7.14") // Purpur
@@ -280,6 +280,8 @@ tasks.jar {
     }
 }
 
+// Compile tests with -parameters for better junit parameterized test names
+
 // Lattice - apply SpongePowered Mixin at compile time
 val applyMixins by tasks.registering(JavaExec::class) {
     group = "build"
@@ -291,9 +293,7 @@ val applyMixins by tasks.registering(JavaExec::class) {
     dependsOn(tasks.compileJava)
 }
 tasks.jar { dependsOn(applyMixins) }
-// End Lattice
 
-// Compile tests with -parameters for better junit parameterized test names
 tasks.compileTestJava {
     options.compilerArgs.add("-parameters")
 }
