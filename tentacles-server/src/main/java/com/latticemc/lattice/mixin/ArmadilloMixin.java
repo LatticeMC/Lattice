@@ -44,23 +44,26 @@ public abstract class ArmadilloMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
+        final boolean scared = this.isScared();
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final Player temptingPlayer = !scared
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.ARMADILLO,
                 this.getHealth() / maxHealth,
-                this.isScared() ? 0.95F : (this.isBaby() ? 0.55F : 0.70F),
+                scared ? 0.10F : (this.isBaby() ? 0.55F : 0.70F),
                 0.0F,
                 1.0F,
                 this.isOnFire(),
                 false,
-                true,
-                threat != null || this.isScared() ? 1.0F : 0.0F,
+                temptingPlayer != null,
+                this.isOnFire() ? 1.0F : (threat != null ? 0.8F : (scared ? 0.75F : 0.0F)),
                 !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && !this.isScared(),
+                threat == null && !this.isOnFire(),
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.75F),
                 BiologicalAiProfiles.ARMADILLO);

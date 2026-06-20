@@ -278,6 +278,36 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void scaredArmadilloRestsInsteadOfSeekingFood() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision armadillo = decide(0.9F, 0.10F, 0.0F, 1.0F,
+                false, false, false,
+                0.75F, true, true, false,
+                stimuli, BiologicalAiProfiles.ARMADILLO);
+
+        assertEquals(NativeBiologicalAi.Action.REST, armadillo.action());
+        assertEquals(-1, armadillo.stimulusIndex());
+    }
+
+    @Test
+    void goatPreparingRamIgnoresFoodStimulus() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision goat = decide(0.9F, 0.90F, 0.35F, 2.0F,
+                false, true, false,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.GOAT);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, goat.action());
+        assertEquals(-1, goat.stimulusIndex());
+    }
+
+    @Test
     void armadilloProfileFleesEarlierThanCowProfile() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 5.0F, 1.0F, true, true)

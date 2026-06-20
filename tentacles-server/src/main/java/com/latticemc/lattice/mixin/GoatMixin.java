@@ -48,13 +48,16 @@ public abstract class GoatMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
+        final boolean preparingRam = this.lowerHeadTick > 0;
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 10.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final Player temptingPlayer = !preparingRam
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 10.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
 
         final float energyRatio;
-        if (this.lowerHeadTick > 0 || this.isScreamingGoat()) {
+        if (preparingRam || this.isScreamingGoat()) {
             energyRatio = 0.90F;
         } else if (this.isBaby()) {
             energyRatio = 0.55F;
@@ -72,10 +75,10 @@ public abstract class GoatMixin {
                 2.0F,
                 this.isOnFire(),
                 !this.isBaby() && this.hasLeftHorn() && this.hasRightHorn(),
-                true,
+                temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && this.lowerHeadTick == 0,
+                threat == null && !this.isOnFire() && !preparingRam,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.isScreamingGoat() ? 0.75F : 0.65F),
                 BiologicalAiProfiles.GOAT);
