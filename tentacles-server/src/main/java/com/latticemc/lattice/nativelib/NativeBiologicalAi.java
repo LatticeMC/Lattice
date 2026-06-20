@@ -1,6 +1,10 @@
 package com.latticemc.lattice.nativelib;
 
 public final class NativeBiologicalAi {
+    private static final int EXPECTED_NATIVE_ABI = 2;
+    private static volatile boolean nativeChecked;
+    private static volatile boolean nativeCompatible;
+    private static volatile boolean nativeDisabled;
 
     public enum Species {
         GENERIC,
@@ -70,7 +74,7 @@ public final class NativeBiologicalAi {
 
     public static boolean isAvailable() {
         LatticeNative.ensureLoaded();
-        return LatticeNative.isLoaded();
+        return isNativeUsable();
     }
 
     public static Decision decide(float healthRatio,
@@ -89,11 +93,15 @@ public final class NativeBiologicalAi {
         final Stimulus[] safeStimuli = stimuli != null ? stimuli : new Stimulus[0];
         final Profile safeProfile = profile != null ? profile : DEFAULT_PROFILE;
         LatticeNative.ensureLoaded();
-        if (LatticeNative.isLoaded()) {
-            return nativeDecideWrapper(healthRatio, energyRatio, aggression, attackRange,
-                    isOnFire, canAttack, canConsumeFood,
-                    ambientDanger, hasShelter, canIdleSafely, canPathToFood,
-                    safeStimuli, safeProfile);
+        if (isNativeUsable()) {
+            try {
+                return nativeDecideWrapper(healthRatio, energyRatio, aggression, attackRange,
+                        isOnFire, canAttack, canConsumeFood,
+                        ambientDanger, hasShelter, canIdleSafely, canPathToFood,
+                        safeStimuli, safeProfile);
+            } catch (UnsatisfiedLinkError | RuntimeException e) {
+                disableNative(e);
+            }
         }
         return javaDecide(healthRatio, energyRatio, aggression, attackRange,
                 isOnFire, canAttack, canConsumeFood,
@@ -119,12 +127,16 @@ public final class NativeBiologicalAi {
         final Stimulus[] safeStimuli = stimuli != null ? stimuli : new Stimulus[0];
         final Profile safeProfile = resolveProfile(safeSpecies, fallbackProfile);
         LatticeNative.ensureLoaded();
-        if (LatticeNative.isLoaded()) {
-            return nativeDecideForSpeciesWrapper(safeSpecies,
-                    healthRatio, energyRatio, aggression, attackRange,
-                    isOnFire, canAttack, canConsumeFood,
-                    ambientDanger, hasShelter, canIdleSafely, canPathToFood,
-                    safeStimuli);
+        if (isNativeUsable()) {
+            try {
+                return nativeDecideForSpeciesWrapper(safeSpecies,
+                        healthRatio, energyRatio, aggression, attackRange,
+                        isOnFire, canAttack, canConsumeFood,
+                        ambientDanger, hasShelter, canIdleSafely, canPathToFood,
+                        safeStimuli);
+            } catch (UnsatisfiedLinkError | RuntimeException e) {
+                disableNative(e);
+            }
         }
         return javaDecide(healthRatio, energyRatio, aggression, attackRange,
                 isOnFire, canAttack, canConsumeFood,
@@ -373,6 +385,33 @@ public final class NativeBiologicalAi {
         };
     }
 
+    private static boolean isNativeUsable() {
+        if (!LatticeNative.isLoaded() || nativeDisabled) return false;
+        if (nativeChecked) return nativeCompatible;
+        synchronized (NativeBiologicalAi.class) {
+            if (nativeChecked) return nativeCompatible;
+            try {
+                final int actual = nativeAbiVersion();
+                nativeCompatible = actual == EXPECTED_NATIVE_ABI;
+                if (!nativeCompatible) {
+                    LatticeNative.logFallbackOnce("biological_ai",
+                            "native ABI mismatch: expected " + EXPECTED_NATIVE_ABI + ", got " + actual);
+                }
+            } catch (UnsatisfiedLinkError | RuntimeException e) {
+                nativeCompatible = false;
+                LatticeNative.logFallbackOnce("biological_ai",
+                        "native ABI unavailable: " + e.getMessage());
+            }
+            nativeChecked = true;
+            return nativeCompatible;
+        }
+    }
+
+    private static void disableNative(Throwable throwable) {
+        nativeDisabled = true;
+        LatticeNative.logFallbackOnce("biological_ai", throwable.getMessage());
+    }
+
     private static float clampUnit(float value, float fallback) {
         if (!Float.isFinite(value)) return fallback;
         return Math.max(0.0F, Math.min(1.0F, value));
@@ -382,6 +421,8 @@ public final class NativeBiologicalAi {
         if (!Float.isFinite(value)) return fallback;
         return Math.max(0.0F, value);
     }
+
+    private static native int nativeAbiVersion();
 
     private static native void nativeDecide(
             float healthRatio,

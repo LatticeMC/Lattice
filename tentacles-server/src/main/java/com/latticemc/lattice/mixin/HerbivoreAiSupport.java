@@ -3,10 +3,14 @@ package com.latticemc.lattice.mixin;
 import com.latticemc.lattice.nativelib.NativeApproachTargetSampler;
 import com.latticemc.lattice.nativelib.NativeBiologicalAi;
 import com.latticemc.lattice.nativelib.NativeFleeTargetSampler;
+import java.util.List;
+import java.util.function.Predicate;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 
 final class HerbivoreAiSupport {
@@ -16,7 +20,30 @@ final class HerbivoreAiSupport {
 
     static @Nullable LivingEntity selectThreat(@Nullable LivingEntity lastHurtByMob,
                                                @Nullable LivingEntity target) {
-        return lastHurtByMob != null ? lastHurtByMob : target;
+        if (lastHurtByMob != null && lastHurtByMob.isAlive()) return lastHurtByMob;
+        if (target != null && target.isAlive()) return target;
+        return null;
+    }
+
+    static @Nullable LivingEntity findNearestThreat(Mob self,
+                                                    ServerLevel level,
+                                                    double range,
+                                                    Predicate<LivingEntity> predicate) {
+        final AABB area = self.getBoundingBox().inflate(range);
+        final List<LivingEntity> candidates = level.getEntitiesOfClass(
+                LivingEntity.class,
+                area,
+                entity -> entity != self && entity.isAlive() && !entity.isSpectator() && predicate.test(entity));
+        LivingEntity nearest = null;
+        double nearestDistance = range * range;
+        for (LivingEntity candidate : candidates) {
+            final double distance = self.distanceToSqr(candidate);
+            if (distance <= nearestDistance) {
+                nearest = candidate;
+                nearestDistance = distance;
+            }
+        }
+        return nearest;
     }
 
     static NativeBiologicalAi.Stimulus[] buildStimuli(Entity self,

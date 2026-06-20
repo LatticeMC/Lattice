@@ -7,7 +7,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.wolf.Wolf;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
+import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
@@ -45,7 +47,16 @@ public abstract class RabbitMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
+        LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
+        if (threat == null) {
+            threat = HerbivoreAiSupport.findNearestThreat(
+                    mob,
+                    level,
+                    10.0,
+                    entity -> entity instanceof Wolf
+                            || entity instanceof Monster
+                            || entity instanceof Player);
+        }
         final Player temptingPlayer = level.getNearestPlayer(
                 this.getX(), this.getY(), this.getZ(), 9.0,
                 entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));

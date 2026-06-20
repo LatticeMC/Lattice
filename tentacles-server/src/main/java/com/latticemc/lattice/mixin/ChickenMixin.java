@@ -9,6 +9,8 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.animal.chicken.Chicken;
+import net.minecraft.world.entity.animal.feline.Ocelot;
+import net.minecraft.world.entity.animal.fox.Fox;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -27,7 +29,14 @@ public abstract class ChickenMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = chicken;
-        final LivingEntity threat = HerbivoreAiSupport.selectThreat(chicken.getLastHurtByMob(), chicken.getTarget());
+        LivingEntity threat = HerbivoreAiSupport.selectThreat(chicken.getLastHurtByMob(), chicken.getTarget());
+        if (threat == null) {
+            threat = HerbivoreAiSupport.findNearestThreat(
+                    mob,
+                    level,
+                    8.0,
+                    entity -> entity instanceof Ocelot || entity instanceof Fox);
+        }
         final Player temptingPlayer = level.getNearestPlayer(
                 chicken.getX(), chicken.getY(), chicken.getZ(), 8.0,
                 entity -> entity instanceof Player player && chicken.isFood(player.getMainHandItem()));

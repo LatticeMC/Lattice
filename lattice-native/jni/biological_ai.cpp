@@ -15,6 +15,7 @@ namespace {
 constexpr jint kVisibleFlag = 1;
 constexpr jint kReachableFlag = 2;
 constexpr jint kProfileFieldCount = 10;
+constexpr jint kBiologicalAiAbiVersion = 2;
 
 [[nodiscard]] inline ba::BiologicalSpecies decode_species(jint raw_species) noexcept {
     switch (raw_species) {
@@ -63,6 +64,12 @@ constexpr jint kProfileFieldCount = 10;
 } // namespace
 
 extern "C" {
+
+JNIEXPORT jint JNICALL
+Java_com_latticemc_lattice_nativelib_NativeBiologicalAi_nativeAbiVersion(
+        JNIEnv* /*env*/, jclass /*cls*/) {
+    return kBiologicalAiAbiVersion;
+}
 
 JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeBiologicalAi_nativeDecide(
