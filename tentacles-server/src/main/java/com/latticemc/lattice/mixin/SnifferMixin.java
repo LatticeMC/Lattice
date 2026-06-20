@@ -24,13 +24,12 @@ public abstract class SnifferMixin {
     @Shadow public abstract boolean isOnFire();
     @Shadow public abstract boolean isPassenger();
     @Shadow public abstract boolean isVehicle();
-    @Shadow public abstract boolean isInWaterOrRain();
     @Shadow public abstract boolean isInWater();
     @Shadow public abstract boolean isBaby();
     @Shadow public abstract boolean isFood(ItemStack stack);
-    @Shadow public abstract boolean isSearching();
     @Shadow public abstract boolean isTempted();
     @Shadow public abstract boolean canSniff();
+    @Shadow public abstract Sniffer.State getState();
     @Shadow public abstract @Nullable LivingEntity getTarget();
     @Shadow public abstract BlockPos blockPosition();
     @Shadow public abstract double getX();
@@ -40,33 +39,52 @@ public abstract class SnifferMixin {
     @Inject(method = "customServerAiStep", at = @At("TAIL"))
     private void lattice$runBiologicalAi(ServerLevel level, CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
-        if (this.isPassenger() || this.isVehicle() || this.isInWaterOrRain()) return;
+        if (this.isPassenger() || this.isVehicle()) return;
 
         final float maxHealth = this.getMaxHealth();
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final LivingEntity threat = this.getTarget() != null && this.isOnFire() ? this.getTarget() : null;
-        final Player temptingPlayer = level.getNearestPlayer(
-                this.getX(), this.getY(), this.getZ(), 12.0,
-                entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()));
+        final Sniffer.State state = this.getState();
+        final boolean digging = state == Sniffer.State.DIGGING || state == Sniffer.State.RISING;
+        final boolean sniffing = state == Sniffer.State.SCENTING || state == Sniffer.State.SNIFFING || state == Sniffer.State.SEARCHING;
+        final boolean happy = state == Sniffer.State.FEELING_HAPPY;
+        final boolean inWater = this.isInWater();
+        final LivingEntity target = this.getTarget();
+        final LivingEntity threat = this.isOnFire() && target != null && target.isAlive() ? target : null;
+        final boolean busy = digging || happy || sniffing;
+        final Player temptingPlayer = !busy && !inWater
+                ? level.getNearestPlayer(
+                        this.getX(), this.getY(), this.getZ(), 12.0,
+                        entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
+                : null;
+        final float energyRatio = snifferEnergyRatio(state, this.isTempted(), inWater, this.isBaby());
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
                 NativeBiologicalAi.Species.SNIFFER,
                 this.getHealth() / maxHealth,
-                this.isSearching() ? 0.90F : (this.isTempted() ? 0.80F : (this.isBaby() ? 0.60F : 0.65F)),
+                energyRatio,
                 0.10F,
                 1.0F,
                 this.isOnFire(),
                 false,
-                true,
-                threat != null ? 1.0F : 0.0F,
-                !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && !this.isSearching(),
+                temptingPlayer != null,
+                this.isOnFire() ? 1.0F : (inWater ? 0.45F : 0.0F),
+                !level.canSeeSky(this.blockPosition()) && !inWater,
+                threat == null && !this.isOnFire() && !sniffing,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.canSniff() ? 0.85F : 0.65F),
                 BiologicalAiProfiles.SNIFFER);
 
         HerbivoreAiSupport.applyDecision(mob, decision, threat, temptingPlayer, 0.75);
+    }
+
+    private static float snifferEnergyRatio(Sniffer.State state, boolean tempted, boolean inWater, boolean baby) {
+        return switch (state) {
+            case DIGGING, RISING -> 0.10F;
+            case FEELING_HAPPY -> 0.20F;
+            case SCENTING, SNIFFING, SEARCHING -> 0.90F;
+            default -> inWater ? 0.35F : (tempted ? 0.80F : (baby ? 0.60F : 0.65F));
+        };
     }
 }

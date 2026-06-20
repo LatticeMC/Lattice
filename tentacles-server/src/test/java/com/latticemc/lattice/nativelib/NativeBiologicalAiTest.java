@@ -263,6 +263,21 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void snifferDiggingStateRestsInsteadOfSeekingFood() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision sniffer = decide(0.9F, 0.10F, 0.0F, 1.0F,
+                false, false, false,
+                0.0F, true, true, false,
+                stimuli, BiologicalAiProfiles.SNIFFER);
+
+        assertEquals(NativeBiologicalAi.Action.REST, sniffer.action());
+        assertEquals(-1, sniffer.stimulusIndex());
+    }
+
+    @Test
     void armadilloProfileFleesEarlierThanCowProfile() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 5.0F, 1.0F, true, true)
