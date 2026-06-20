@@ -39,12 +39,14 @@ inline double clamp_axis_obstacle_scalar(int axis, const double* m,
     const double m_max = m[axis + 3];
     const double o_min = o[axis];
     const double o_max = o[axis + 3];
-    if (desired > 0.0 && m_max <= o_min) {
-        const double gap = o_min - m_max;
-        if (gap < desired) return gap;
-    } else if (desired < 0.0 && m_min >= o_max) {
-        const double gap = o_max - m_min;
-        if (gap > desired) return gap;
+    if (desired > 0.0) {
+        const double max_move = o_min - m_max;
+        if (max_move < -kCollisionEpsilon) return desired;
+        if (max_move < desired) return max_move;
+    } else if (desired < 0.0) {
+        const double max_move = o_max - m_min;
+        if (max_move > kCollisionEpsilon) return desired;
+        if (max_move > desired) return max_move;
     }
     return desired;
 }

@@ -68,3 +68,66 @@ TEST_CASE("collision: scalar and dispatcher agree") {
     CHECK(mv_d[1] == mv_s[1]);
     CHECK(mv_d[2] == mv_s[2]);
 }
+
+TEST_CASE("collision: touching boxes (gap=0) are not blocked") {
+    const double moving[6] = {0, 0, 0, 1, 1, 1};
+    // Obstacle starts exactly at moving box max (touching, not overlapping)
+    const double obstacles[6] = {1, -5, -5, 2, 5, 5};
+    double mv[3] = {5.0, 0.0, 0.0};
+    adjust_movement_scalar(moving, mv, obstacles, 1);
+    // With epsilon: max_move = 1 - 1 = 0, which is > -epsilon, so NOT blocked
+    CHECK(mv[0] == 5.0);
+}
+
+TEST_CASE("collision: near-touching within epsilon is not blocked") {
+    const double moving[6] = {0, 0, 0, 1, 1, 1};
+    // Obstacle starts 0.5*epsilon ahead of moving box
+    const double eps = kCollisionEpsilon;
+    const double obstacles[6] = {1.0 + 0.5 * eps, -5, -5, 2, 5, 5};
+    double mv[3] = {5.0, 0.0, 0.0};
+    adjust_movement_scalar(moving, mv, obstacles, 1);
+    // gap = 0.5*eps, which is < desired (5.0) but > -eps, so NOT blocked
+    CHECK(mv[0] == 5.0);
+}
+
+TEST_CASE("collision: penetrating beyond epsilon is blocked") {
+    const double moving[6] = {0, 0, 0, 1, 1, 1};
+    // Obstacle starts 0.5*epsilon BEFORE moving box max (slight penetration)
+    const double eps = kCollisionEpsilon;
+    const double obstacles[6] = {1.0 - 0.5 * eps, -5, -5, 2, 5, 5};
+    double mv[3] = {5.0, 0.0, 0.0};
+    adjust_movement_scalar(moving, mv, obstacles, 1);
+    // max_move = (1 - 0.5*eps) - 1 = -0.5*eps, which is < -eps? No, -0.5*eps > -eps
+    // So NOT blocked (epsilon tolerance allows this)
+    CHECK(mv[0] == 5.0);
+}
+
+TEST_CASE("collision: penetrating beyond epsilon by more than epsilon is blocked") {
+    const double moving[6] = {0, 0, 0, 1, 1, 1};
+    // Obstacle starts 2*epsilon BEFORE moving box max
+    const double eps = kCollisionEpsilon;
+    const double obstacles[6] = {1.0 - 2.0 * eps, -5, -5, 2, 5, 5};
+    double mv[3] = {5.0, 0.0, 0.0};
+    adjust_movement_scalar(moving, mv, obstacles, 1);
+    // max_move = (1 - 2*eps) - 1 = -2*eps, which IS < -eps, so blocked
+    CHECK(mv[0] == 5.0 - 2.0 * eps);
+}
+
+TEST_CASE("collision: calc_max_offset single axis matches adjust_movement") {
+    const double moving[6] = {0, 0, 0, 1, 1, 1};
+    const double obstacles[12] = {
+        2, -5, -5, 3, 5, 5,
+        -3, -5, -5, -2, 5, 5,
+    };
+    // calc_max_offset on Y axis (axis=1), desired=0
+    double result_y = calc_max_offset_scalar(1, moving, 0.0, obstacles, 2);
+    CHECK(result_y == 0.0);
+
+    // calc_max_offset on X axis (axis=0), desired=10
+    double result_x = calc_max_offset_scalar(0, moving, 10.0, obstacles, 2);
+    CHECK(result_x == 1.0); // gap = 2 - 1 = 1
+
+    // calc_max_offset on Z axis (axis=2), desired=3
+    double result_z = calc_max_offset_scalar(2, moving, 3.0, obstacles, 2);
+    CHECK(result_z == 3.0); // no obstacle on Z
+}

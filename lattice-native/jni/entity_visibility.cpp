@@ -282,6 +282,75 @@ Java_com_latticemc_lattice_nativelib_NativeCollisionSweep_nativeAdjustMovement(
 }
 
 // ---------------------------------------------------------------------------
+// NativeCollisionSweep.calcMaxOffset  (single-axis)
+// ---------------------------------------------------------------------------
+
+/*
+ * Method:    nativeCalcMaxOffset
+ * Signature: (I[D[D[DI)D
+ *
+ * Single-axis swept-AABB clamp. Returns the clamped displacement on the
+ * specified axis.
+ */
+JNIEXPORT jdouble JNICALL
+Java_com_latticemc_lattice_nativelib_NativeCollisionSweep_nativeCalcMaxOffset(
+        JNIEnv* env, jclass /*cls*/,
+        jint       axis,
+        jdoubleArray jMoving,
+        jdouble    desired,
+        jdoubleArray jObstacles,
+        jint       obstacleCount) {
+    if (!jMoving) {
+        lattice::jni::throw_illegal_arg(env, "lattice calcMaxOffset: null moving");
+        return desired;
+    }
+    if (axis < 0 || axis > 2) {
+        lattice::jni::throw_illegal_arg(env, "lattice calcMaxOffset: invalid axis");
+        return desired;
+    }
+    if (obstacleCount < 0) {
+        lattice::jni::throw_illegal_arg(env, "lattice calcMaxOffset: negative count");
+        return desired;
+    }
+    if (env->GetArrayLength(jMoving) < static_cast<jsize>(ve::kCollisionAabbStride)) {
+        lattice::jni::throw_illegal_arg(env, "lattice calcMaxOffset: moving too short");
+        return desired;
+    }
+    if (obstacleCount > 0) {
+        if (!jObstacles ||
+            env->GetArrayLength(jObstacles) <
+                static_cast<jsize>(obstacleCount * ve::kCollisionAabbStride)) {
+            lattice::jni::throw_illegal_arg(env, "lattice calcMaxOffset: obstacles too short");
+            return desired;
+        }
+    }
+
+    void* mv_p = env->GetPrimitiveArrayCritical(jMoving, nullptr);
+    if (!mv_p) {
+        lattice::jni::throw_oom(env, "lattice calcMaxOffset: pin moving");
+        return desired;
+    }
+    void* ob_p = obstacleCount > 0
+        ? env->GetPrimitiveArrayCritical(jObstacles, nullptr) : nullptr;
+    if (obstacleCount > 0 && !ob_p) {
+        env->ReleasePrimitiveArrayCritical(jMoving, mv_p, JNI_ABORT);
+        lattice::jni::throw_oom(env, "lattice calcMaxOffset: pin obstacles");
+        return desired;
+    }
+
+    const double result = ve::calc_max_offset(
+        static_cast<int>(axis),
+        static_cast<const double*>(mv_p),
+        static_cast<double>(desired),
+        static_cast<const double*>(ob_p),
+        static_cast<std::size_t>(obstacleCount));
+
+    if (ob_p) env->ReleasePrimitiveArrayCritical(jObstacles, ob_p, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(jMoving, mv_p, JNI_ABORT);
+    return static_cast<jdouble>(result);
+}
+
+// ---------------------------------------------------------------------------
 // NativeSpawnFilter.filterCandidates
 // ---------------------------------------------------------------------------
 //

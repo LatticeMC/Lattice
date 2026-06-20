@@ -15,7 +15,7 @@ namespace {
 constexpr jint kVisibleFlag = 1;
 constexpr jint kReachableFlag = 2;
 constexpr jint kProfileFieldCount = 10;
-constexpr jint kBiologicalAiAbiVersion = 3;
+constexpr jint kBiologicalAiAbiVersion = 4;
 
 [[nodiscard]] inline ba::BiologicalSpecies decode_species(jint raw_species) noexcept {
     switch (raw_species) {
@@ -36,6 +36,7 @@ constexpr jint kBiologicalAiAbiVersion = 3;
     case 15: return ba::BiologicalSpecies::panda;
     case 16: return ba::BiologicalSpecies::ocelot;
     case 17: return ba::BiologicalSpecies::wolf;
+    case 18: return ba::BiologicalSpecies::cat;
     default: return ba::BiologicalSpecies::generic;
     }
 }

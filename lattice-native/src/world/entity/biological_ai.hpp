@@ -50,6 +50,7 @@ enum class BiologicalSpecies {
     panda,
     ocelot,
     wolf,
+    cat,
 };
 
 struct BiologicalEntityState {

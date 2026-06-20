@@ -11,6 +11,7 @@
     "PackedIntegerArrayMixin",
     "EntitySectionMixin",
     "EntityCollisionMixin",
+    "CollisionUtilMixin",
     "TrackedEntityVisibilityMixin",
     "BeardifierAccessor",
     "BeardifierMixin",
@@ -47,6 +48,7 @@
     "PandaMixin",
     "OcelotMixin",
     "WolfMixin",
+    "CatMixin",
     "LightEngineMixin",
     "NaturalSpawnerMixin"
   ],

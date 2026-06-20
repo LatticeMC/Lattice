@@ -19,9 +19,8 @@ inline double clamp_axis_obstacle(int axis,
     const int a1 = (axis + 1) % 3;
     const int a2 = (axis + 2) % 3;
 
-    // Overlap on cross axes: m[a1] open interval (min, max) vs o[a1] (min, max).
-    // Vanilla uses strict less-than on the touching face to allow sliding
-    // along it. We mirror that exactly.
+    // Overlap on cross axes: strict less-than on the touching face
+    // to allow sliding along it. Vanilla exact mirror.
     const double m_min_a1 = m[a1];
     const double m_max_a1 = m[a1 + 3];
     const double o_min_a1 = o[a1];
@@ -40,13 +39,14 @@ inline double clamp_axis_obstacle(int axis,
     const double o_min = o[axis];
     const double o_max = o[axis + 3];
 
-    if (desired > 0.0 && m_max <= o_min) {
-        // Moving in +axis, obstacle is on that side.
-        const double gap = o_min - m_max;
-        if (gap < desired) return gap;
-    } else if (desired < 0.0 && m_min >= o_max) {
-        const double gap = o_max - m_min;
-        if (gap > desired) return gap;
+    if (desired > 0.0) {
+        const double max_move = o_min - m_max;
+        if (max_move < -kCollisionEpsilon) return desired;
+        if (max_move < desired) return max_move;
+    } else if (desired < 0.0) {
+        const double max_move = o_max - m_min;
+        if (max_move > kCollisionEpsilon) return desired;
+        if (max_move > desired) return max_move;
     }
     return desired;
 }
@@ -102,8 +102,10 @@ void adjust_movement_scalar(const double* moving,
 namespace {
 
 using AdjustFn = void (*)(const double*, double*, const double*, std::size_t) noexcept;
+using CalcFn = double (*)(int, const double*, double, const double*, std::size_t) noexcept;
 
 std::atomic<AdjustFn> g_adjust{&adjust_movement_scalar};
+std::atomic<CalcFn>   g_calc{&calc_max_offset_scalar};
 std::atomic<bool>     g_initialised{false};
 
 } // namespace
@@ -111,16 +113,18 @@ std::atomic<bool>     g_initialised{false};
 void init_collision_dispatch() noexcept {
     if (g_initialised.load(std::memory_order_acquire)) return;
     AdjustFn fn = &adjust_movement_scalar;
+    CalcFn cfn = &calc_max_offset_scalar;
     const auto& f = lattice::cpu::features();
     (void)f;
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    if (f.avx2) fn = &adjust_movement_avx2;
+    if (f.avx2) { fn = &adjust_movement_avx2; cfn = &calc_max_offset_avx2; }
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    if (f.neon) fn = &adjust_movement_neon;
+    if (f.neon) { fn = &adjust_movement_neon; cfn = &calc_max_offset_neon; }
 #endif
 
     g_adjust.store(fn, std::memory_order_release);
+    g_calc.store(cfn, std::memory_order_release);
     g_initialised.store(true, std::memory_order_release);
 }
 
@@ -133,6 +137,19 @@ void adjust_movement(const double* moving,
     }
     g_adjust.load(std::memory_order_acquire)(
         moving, out_movement, obstacles, obstacle_count);
+}
+
+// ---- Runtime-dispatched single-axis entry -----------------------------------
+
+double calc_max_offset(int axis, const double* moving,
+                       double desired,
+                       const double* obstacles,
+                       std::size_t obstacle_count) noexcept {
+    if (!g_initialised.load(std::memory_order_acquire)) {
+        init_collision_dispatch();
+    }
+    return g_calc.load(std::memory_order_acquire)(
+        axis, moving, desired, obstacles, obstacle_count);
 }
 
 } // namespace lattice::world::entity

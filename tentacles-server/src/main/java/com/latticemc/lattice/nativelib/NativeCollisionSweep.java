@@ -51,7 +51,15 @@ public final class NativeCollisionSweep {
                                         int obstacleCount) {
         if (desired == 0.0D) return 0.0D;
         if (obstacleCount == 0) return desired;
-        validate(moving, new double[]{desired}, obstacles, obstacleCount);
+        if (moving == null || moving.length < AABB_STRIDE) {
+            throw new IllegalArgumentException("moving array too short");
+        }
+        if (obstacleCount < 0) {
+            throw new IllegalArgumentException("negative count");
+        }
+        if (obstacleCount > 0 && (obstacles == null || obstacles.length < obstacleCount * AABB_STRIDE)) {
+            throw new IllegalArgumentException("obstacles array too short");
+        }
 
         if (LatticeNative.isLoaded()) {
             if (LatticeNative.VERIFY) {

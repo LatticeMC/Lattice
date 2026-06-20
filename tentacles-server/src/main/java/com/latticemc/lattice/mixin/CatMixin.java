@@ -8,10 +8,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.animal.fox.Fox;
+import net.minecraft.world.entity.animal.feline.Cat;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
-import net.minecraft.world.entity.animal.sheep.Sheep;
-import net.minecraft.world.entity.animal.wolf.Wolf;
+import net.minecraft.world.entity.animal.turtle.Turtle;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
@@ -22,10 +21,10 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(Wolf.class)
-public abstract class WolfMixin {
+@Mixin(Cat.class)
+public abstract class CatMixin {
     @Unique private static final int lattice$PREY_SCAN_INTERVAL = 8;
-    @Unique private static final double lattice$PREY_SCAN_RANGE = 12.0;
+    @Unique private static final double lattice$PREY_SCAN_RANGE = 10.0;
 
     @Unique private @Nullable LivingEntity lattice$cachedPrey;
 
@@ -34,12 +33,10 @@ public abstract class WolfMixin {
     @Shadow public abstract boolean isOnFire();
     @Shadow public abstract boolean isPassenger();
     @Shadow public abstract boolean isVehicle();
-    @Shadow public abstract boolean isBaby();
     @Shadow public abstract boolean isTame();
-    @Shadow public abstract boolean isAngry();
-    @Shadow public abstract boolean isInLove();
+    @Shadow public abstract boolean isLying();
+    @Shadow public abstract boolean isRelaxStateOne();
     @Shadow public abstract boolean isFood(ItemStack stack);
-    @Shadow public abstract @Nullable LivingEntity getLastHurtByMob();
     @Shadow public abstract @Nullable LivingEntity getTarget();
     @Shadow public abstract BlockPos blockPosition();
     @Shadow public abstract double getX();
@@ -55,22 +52,20 @@ public abstract class WolfMixin {
         if (maxHealth <= 0.0F) return;
 
         final Mob mob = (Mob) (Object) this;
-        final boolean inLove = this.isInLove();
-        final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Sheep
-                || entity instanceof Rabbit
-                || entity instanceof Fox;
+        final boolean busy = this.isLying() || this.isRelaxStateOne();
+        final Predicate<LivingEntity> preyPredicate = entity -> entity instanceof Rabbit
+                || entity instanceof Turtle turtle && turtle.isBaby() && !turtle.isInWater();
         final LivingEntity target = this.getTarget();
-        if (target != null && target.isAlive() && !preyPredicate.test(target)) return;
         LivingEntity prey = target != null && target.isAlive() && preyPredicate.test(target) ? target : null;
-        if (prey == null && !inLove) {
+        if (prey == null && !busy) {
             prey = PredatoryAnimalAiSupport.cachedPrey(mob, this.lattice$cachedPrey, lattice$PREY_SCAN_RANGE, preyPredicate);
             if (PredatoryAnimalAiSupport.shouldRefreshPreyScan(mob, lattice$PREY_SCAN_INTERVAL)) {
                 this.lattice$cachedPrey = PredatoryAnimalAiSupport.findNearestPrey(mob, level, lattice$PREY_SCAN_RANGE, preyPredicate);
                 prey = this.lattice$cachedPrey;
             }
         }
-        final LivingEntity threat = prey == null ? HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), target) : null;
-        final Player temptingPlayer = !inLove
+        final LivingEntity threat = target != null && target.isAlive() && prey == null ? target : null;
+        final Player temptingPlayer = !busy
                 ? level.getNearestPlayer(
                         this.getX(), this.getY(), this.getZ(), 10.0,
                         entity -> entity instanceof Player player && this.isFood(player.getMainHandItem()))
@@ -99,7 +94,7 @@ public abstract class WolfMixin {
             stimuli[index++] = new NativeBiologicalAi.Stimulus(
                     NativeBiologicalAi.StimulusKind.PREY,
                     (float) Math.sqrt(mob.distanceToSqr(prey)),
-                    this.isAngry() ? 1.0F : 0.85F,
+                    0.8F,
                     true,
                     true);
         }
@@ -114,20 +109,20 @@ public abstract class WolfMixin {
         }
 
         final NativeBiologicalAi.Decision decision = NativeBiologicalAi.decide(
-                NativeBiologicalAi.Species.WOLF,
+                NativeBiologicalAi.Species.CAT,
                 this.getHealth() / maxHealth,
-                inLove ? 0.35F : (this.isBaby() ? 0.55F : 0.80F),
-                prey != null ? (this.isAngry() ? 0.85F : 0.60F) : (this.isAngry() ? 0.70F : 0.20F),
-                1.6F,
+                busy ? 0.20F : 0.65F,
+                prey != null ? 0.55F : 0.15F,
+                1.2F,
                 this.isOnFire(),
-                prey != null && !this.isBaby(),
+                prey != null,
                 temptingPlayer != null,
                 threat != null ? 1.0F : 0.0F,
                 !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire() && prey == null && !inLove,
+                threat == null && !this.isOnFire() && prey == null && !busy,
                 temptingPlayer != null,
                 stimuli,
-                BiologicalAiProfiles.WOLF);
+                BiologicalAiProfiles.CAT);
 
         PredatoryAnimalAiSupport.applyDecision(mob, decision, threat, prey, temptingPlayer, threatIndex, preyIndex, foodIndex, 1.0, 0.8);
     }

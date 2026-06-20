@@ -46,6 +46,10 @@ namespace lattice::world::entity {
 /// Stride of the AABB encoding in a flat `double[]`. Same as aabb_query.hpp.
 inline constexpr std::size_t kCollisionAabbStride = 6;
 
+/// Collision epsilon matching Paper's COLLISION_EPSILON (1.0E-7).
+/// Used for near-touch tolerance in the overlap and clamp tests.
+inline constexpr double kCollisionEpsilon = 1.0e-7;
+
 /// Apply swept-AABB collision on the **single** axis indicated by `axis`
 /// (0 = X, 1 = Y, 2 = Z). Returns the clamped distance.
 ///
@@ -101,6 +105,12 @@ void adjust_movement(const double* moving,
                      double* out_movement,
                      const double* obstacles,
                      std::size_t obstacle_count) noexcept;
+
+/// Runtime-dispatched single-axis entry. Selects the fastest variant.
+[[nodiscard]] double calc_max_offset(int axis, const double* moving,
+                                     double desired,
+                                     const double* obstacles,
+                                     std::size_t obstacle_count) noexcept;
 
 void init_collision_dispatch() noexcept;
 
