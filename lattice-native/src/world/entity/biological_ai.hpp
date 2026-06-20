@@ -48,6 +48,7 @@ enum class BiologicalSpecies {
     sniffer,
     llama,
     panda,
+    ocelot,
 };
 
 struct BiologicalEntityState {
@@ -85,6 +86,7 @@ struct BiologicalAiInputs {
 struct BiologicalAiProfile {
     float flee_health_threshold        = 0.35F;
     float flee_danger_threshold        = 0.65F;
+    float flee_threat_strength         = 0.75F;
     float attack_health_threshold      = 0.55F;
     float attack_energy_threshold      = 0.35F;
     float seek_food_energy_threshold   = 0.60F;

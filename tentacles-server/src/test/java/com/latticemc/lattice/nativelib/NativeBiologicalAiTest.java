@@ -89,6 +89,36 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void javaFallbackCanPursuePrey() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.PREY, 3.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision decision = decide(0.9F, 0.7F, 0.8F, 1.75F,
+                false, true, true,
+                0.0F, true, true, true,
+                stimuli, BiologicalAiProfiles.OCELOT);
+
+        assertEquals(NativeBiologicalAi.Action.PURSUE, decision.action());
+        assertEquals(0, decision.stimulusIndex());
+    }
+
+    @Test
+    void javaFallbackCanInvestigateCuriosity() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.CURIOSITY, 4.0F, 0.7F, true, true)
+        };
+
+        NativeBiologicalAi.Decision decision = decide(0.8F, 0.9F, 0.0F, 1.5F,
+                false, false, true,
+                0.0F, true, true, true,
+                stimuli, NativeBiologicalAi.DEFAULT_PROFILE);
+
+        assertEquals(NativeBiologicalAi.Action.INVESTIGATE, decision.action());
+        assertEquals(0, decision.stimulusIndex());
+    }
+
+    @Test
     void rabbitProfileSeeksFoodAtLowEnergy() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 1.0F, true, true)
@@ -128,6 +158,40 @@ class NativeBiologicalAiTest {
                 stimuli, BiologicalAiProfiles.GOAT);
 
         assertEquals(NativeBiologicalAi.Action.WANDER, goat.action());
+    }
+
+    @Test
+    void timidProfilesFleeStrongNearbyThreatsWhileHealthy() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 4.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision rabbit = decide(0.95F, 0.8F, 0.0F, 1.0F,
+                false, false, true,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.RABBIT);
+
+        NativeBiologicalAi.Decision goat = decide(0.95F, 0.8F, 0.0F, 1.0F,
+                false, false, true,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.GOAT);
+
+        assertEquals(NativeBiologicalAi.Action.FLEE, rabbit.action());
+        assertEquals(NativeBiologicalAi.Action.WANDER, goat.action());
+    }
+
+    @Test
+    void weakNearbyThreatsDoNotForcePanic() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.THREAT, 3.0F, 0.2F, true, true)
+        };
+
+        NativeBiologicalAi.Decision rabbit = decide(0.95F, 0.8F, 0.0F, 1.0F,
+                false, false, true,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.RABBIT);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, rabbit.action());
     }
 
     @Test
@@ -249,6 +313,23 @@ class NativeBiologicalAiTest {
                 stimuli, BiologicalAiProfiles.CHICKEN);
 
         assertEquals(NativeBiologicalAi.Action.FLEE, chicken.action());
+    }
+
+    @Test
+    void speciesRoutingUsesBuiltInSpeciesProfileWhenFallbackMissing() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.PREY, 4.0F, 0.85F, true, true),
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 3.0F, 0.70F, true, true)
+        };
+
+        NativeBiologicalAi.Decision ocelot = decideSpecies(NativeBiologicalAi.Species.OCELOT,
+                0.9F, 0.9F, 0.55F, 1.33F,
+                false, true, true,
+                0.0F, true, true, true,
+                stimuli, null);
+
+        assertEquals(NativeBiologicalAi.Action.PURSUE, ocelot.action());
+        assertEquals(0, ocelot.stimulusIndex());
     }
 
     @Test

@@ -52,10 +52,11 @@ public final class NativeBiologicalAi {
                            float desiredRange) {}
 
     public record Profile(float fleeHealthThreshold,
-                          float fleeDangerThreshold,
-                          float attackHealthThreshold,
-                          float attackEnergyThreshold,
-                          float seekFoodEnergyThreshold,
+                           float fleeDangerThreshold,
+                           float fleeThreatStrength,
+                           float attackHealthThreshold,
+                           float attackEnergyThreshold,
+                           float seekFoodEnergyThreshold,
                           float restEnergyThreshold,
                           float curiosityStrengthThreshold,
                           float closeThreatDistance,
@@ -63,7 +64,7 @@ public final class NativeBiologicalAi {
 
     private static final int VISIBLE_FLAG = 1;
     private static final int REACHABLE_FLAG = 2;
-    public static final Profile DEFAULT_PROFILE = new Profile(0.35F, 0.65F, 0.55F, 0.35F, 0.60F, 0.20F, 0.40F, 4.0F, 2.5F);
+    public static final Profile DEFAULT_PROFILE = new Profile(0.35F, 0.65F, 0.75F, 0.55F, 0.35F, 0.60F, 0.20F, 0.40F, 4.0F, 2.5F);
 
     private NativeBiologicalAi() {}
 
@@ -116,7 +117,7 @@ public final class NativeBiologicalAi {
                                   Profile fallbackProfile) {
         final Species safeSpecies = species != null ? species : Species.GENERIC;
         final Stimulus[] safeStimuli = stimuli != null ? stimuli : new Stimulus[0];
-        final Profile safeProfile = fallbackProfile != null ? fallbackProfile : DEFAULT_PROFILE;
+        final Profile safeProfile = resolveProfile(safeSpecies, fallbackProfile);
         LatticeNative.ensureLoaded();
         if (LatticeNative.isLoaded()) {
             return nativeDecideForSpeciesWrapper(safeSpecies,
@@ -150,17 +151,21 @@ public final class NativeBiologicalAi {
         final float attackRangeValue = clampNonNegative(attackRange, 1.5F);
         final float ambientDangerValue = clampUnit(ambientDanger, 0.0F);
         final Profile safeProfile = profile != null ? profile : DEFAULT_PROFILE;
+        final Stimulus[] safeStimuli = stimuli != null ? stimuli : new Stimulus[0];
 
         int threatIndex = -1;
-        Stimulus threat = selectBestStimulus(stimuli, StimulusKind.THREAT, true, false);
+        Stimulus threat = selectBestStimulus(safeStimuli, StimulusKind.THREAT, true, false);
         if (threat != null) {
-            threatIndex = indexOf(stimuli, threat);
+            threatIndex = indexOf(safeStimuli, threat);
         }
 
         final boolean underImmediateThreat =
                 threat != null && clampNonNegative(threat.distance(), 0.0F) <= safeProfile.closeThreatDistance();
+        final boolean underStrongThreat = underImmediateThreat
+                && clampNonNegative(threat.strength(), 0.0F) >= safeProfile.fleeThreatStrength();
         final boolean shouldFlee = isOnFire
                 || (threat != null && (health <= safeProfile.fleeHealthThreshold() || ambientDangerValue >= safeProfile.fleeDangerThreshold()))
+                || underStrongThreat
                 || (underImmediateThreat && health < 0.5F);
         if (shouldFlee) {
             final float urgency = Math.max(ambientDangerValue, 1.0F - health);
@@ -171,15 +176,34 @@ public final class NativeBiologicalAi {
                     hasShelter ? 1.2F : 1.0F, desiredRange);
         }
 
+        if (canAttack
+                && health >= safeProfile.attackHealthThreshold()
+                && energy >= safeProfile.attackEnergyThreshold()
+                && aggressionValue >= 0.5F) {
+            Stimulus prey = selectBestStimulus(safeStimuli, StimulusKind.PREY, true, true);
+            if (prey != null) {
+                final float distance = clampNonNegative(prey.distance(), 0.0F);
+                final float urgency = clampUnit(
+                        aggressionValue * 0.6F + clampNonNegative(prey.strength(), 0.0F) * 0.4F,
+                        0.0F);
+                return new Decision(
+                        Action.PURSUE,
+                        indexOf(safeStimuli, prey),
+                        urgency,
+                        distance <= attackRangeValue ? 0.8F : 1.0F,
+                        attackRangeValue);
+            }
+        }
+
         if (canConsumeFood && energy <= safeProfile.seekFoodEnergyThreshold() && canPathToFood) {
-            Stimulus food = selectBestStimulus(stimuli, StimulusKind.FOOD, true, true);
+            Stimulus food = selectBestStimulus(safeStimuli, StimulusKind.FOOD, true, true);
             if (food != null) {
                 final float distance = clampNonNegative(food.distance(), 0.0F);
                 final float urgency = clampUnit(1.0F - energy, 0.0F);
                 if (distance <= safeProfile.closeFoodDistance()) {
-                    return new Decision(Action.EAT, indexOf(stimuli, food), urgency, 0.2F, 0.0F);
+                    return new Decision(Action.EAT, indexOf(safeStimuli, food), urgency, 0.2F, 0.0F);
                 }
-                return new Decision(Action.PURSUE, indexOf(stimuli, food), urgency, 0.8F, 0.5F);
+                return new Decision(Action.PURSUE, indexOf(safeStimuli, food), urgency, 0.8F, 0.5F);
             }
         }
 
@@ -187,7 +211,21 @@ public final class NativeBiologicalAi {
             return new Decision(Action.REST, -1, 1.0F - energy, 0.0F, 0.0F);
         }
 
-        if (!canIdleSafely || stimuli.length > 0) {
+        Stimulus curiosity = selectBestStimulus(safeStimuli, StimulusKind.CURIOSITY, true, true);
+        if (curiosity != null
+                && clampNonNegative(curiosity.strength(), 0.0F) >= safeProfile.curiosityStrengthThreshold()) {
+            return new Decision(Action.INVESTIGATE,
+                    indexOf(safeStimuli, curiosity),
+                    clampNonNegative(curiosity.strength(), 0.0F),
+                    0.6F,
+                    1.0F);
+        }
+
+        if (canIdleSafely && energy < 0.4F) {
+            return new Decision(Action.REST, -1, 0.4F - energy, 0.0F, 0.0F);
+        }
+
+        if (!canIdleSafely || safeStimuli.length > 0) {
             return new Decision(Action.WANDER, -1, 0.25F, 0.5F, 0.0F);
         }
 
@@ -214,6 +252,7 @@ public final class NativeBiologicalAi {
         final float[] profileValues = new float[] {
                 profile.fleeHealthThreshold(),
                 profile.fleeDangerThreshold(),
+                profile.fleeThreatStrength(),
                 profile.attackHealthThreshold(),
                 profile.attackEnergyThreshold(),
                 profile.seekFoodEnergyThreshold(),
@@ -309,6 +348,29 @@ public final class NativeBiologicalAi {
             if (stimuli[i] == target) return i;
         }
         return -1;
+    }
+
+    private static Profile resolveProfile(Species species, Profile fallbackProfile) {
+        if (fallbackProfile != null) return fallbackProfile;
+        return switch (species) {
+            case SHEEP -> BiologicalAiProfiles.SHEEP;
+            case PIG -> BiologicalAiProfiles.PIG;
+            case COW -> BiologicalAiProfiles.COW;
+            case CHICKEN -> BiologicalAiProfiles.CHICKEN;
+            case RABBIT -> BiologicalAiProfiles.RABBIT;
+            case BEE -> BiologicalAiProfiles.BEE;
+            case GOAT -> BiologicalAiProfiles.GOAT;
+            case ARMADILLO -> BiologicalAiProfiles.ARMADILLO;
+            case CAMEL -> BiologicalAiProfiles.CAMEL;
+            case FROG -> BiologicalAiProfiles.FROG;
+            case TURTLE -> BiologicalAiProfiles.TURTLE;
+            case AXOLOTL -> BiologicalAiProfiles.AXOLOTL;
+            case SNIFFER -> BiologicalAiProfiles.SNIFFER;
+            case LLAMA -> BiologicalAiProfiles.LLAMA;
+            case PANDA -> BiologicalAiProfiles.PANDA;
+            case OCELOT -> BiologicalAiProfiles.OCELOT;
+            case GENERIC -> DEFAULT_PROFILE;
+        };
     }
 
     private static float clampUnit(float value, float fallback) {

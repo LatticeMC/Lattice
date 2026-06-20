@@ -14,7 +14,7 @@ namespace {
 
 constexpr jint kVisibleFlag = 1;
 constexpr jint kReachableFlag = 2;
-constexpr jint kProfileFieldCount = 9;
+constexpr jint kProfileFieldCount = 10;
 
 [[nodiscard]] inline ba::BiologicalSpecies decode_species(jint raw_species) noexcept {
     switch (raw_species) {
@@ -33,6 +33,7 @@ constexpr jint kProfileFieldCount = 9;
     case 13: return ba::BiologicalSpecies::sniffer;
     case 14: return ba::BiologicalSpecies::llama;
     case 15: return ba::BiologicalSpecies::panda;
+    case 16: return ba::BiologicalSpecies::ocelot;
     default: return ba::BiologicalSpecies::generic;
     }
 }
@@ -150,13 +151,14 @@ Java_com_latticemc_lattice_nativelib_NativeBiologicalAi_nativeDecide(
     ba::BiologicalAiProfile profile{};
     profile.flee_health_threshold = profile_values.data()[0];
     profile.flee_danger_threshold = profile_values.data()[1];
-    profile.attack_health_threshold = profile_values.data()[2];
-    profile.attack_energy_threshold = profile_values.data()[3];
-    profile.seek_food_energy_threshold = profile_values.data()[4];
-    profile.rest_energy_threshold = profile_values.data()[5];
-    profile.curiosity_strength_threshold = profile_values.data()[6];
-    profile.close_threat_distance = profile_values.data()[7];
-    profile.close_food_distance = profile_values.data()[8];
+    profile.flee_threat_strength = profile_values.data()[2];
+    profile.attack_health_threshold = profile_values.data()[3];
+    profile.attack_energy_threshold = profile_values.data()[4];
+    profile.seek_food_energy_threshold = profile_values.data()[5];
+    profile.rest_energy_threshold = profile_values.data()[6];
+    profile.curiosity_strength_threshold = profile_values.data()[7];
+    profile.close_threat_distance = profile_values.data()[8];
+    profile.close_food_distance = profile_values.data()[9];
 
     ba::BiologicalStimulus* stimuli = nullptr;
     if (stimulusCount > 0) {
