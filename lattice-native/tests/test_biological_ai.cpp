@@ -509,6 +509,66 @@ TEST_CASE("biological_ai: travelling turtle ignores food stimulus") {
     CHECK(decision.stimulus_index == -1);
 }
 
+TEST_CASE("biological_ai: busy sniffer ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.20F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::sniffer, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: busy panda ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.20F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::panda, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
+TEST_CASE("biological_ai: playing-dead axolotl ignores food stimulus") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.05F;
+    inputs.entity.can_attack = false;
+    inputs.entity.can_consume_food = false;
+    inputs.environment.can_idle_safely = false;
+    inputs.environment.can_path_to_food = false;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::axolotl, inputs);
+    CHECK(decision.action == BiologicalAction::wander);
+    CHECK(decision.stimulus_index == -1);
+}
+
 TEST_CASE("biological_ai: in-love cow ignores food stimulus") {
     const BiologicalStimulus stimuli[] = {
         {BiologicalStimulusKind::food, 2.0F, 0.8F, true, true},
@@ -709,6 +769,26 @@ TEST_CASE("biological_ai: ocelot profile can pursue prey") {
     inputs.stimulus_count = 2;
 
     const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::ocelot, inputs);
+    CHECK(decision.action == BiologicalAction::pursue);
+    CHECK(decision.stimulus_index == 0);
+}
+
+TEST_CASE("biological_ai: wolf profile can pursue prey") {
+    const BiologicalStimulus stimuli[] = {
+        {BiologicalStimulusKind::prey, 3.5F, 0.9F, true, true},
+    };
+
+    BiologicalAiInputs inputs{};
+    inputs.entity.health_ratio = 0.9F;
+    inputs.entity.energy_ratio = 0.80F;
+    inputs.entity.aggression = 0.70F;
+    inputs.entity.attack_range = 1.6F;
+    inputs.entity.can_attack = true;
+    inputs.environment.can_idle_safely = true;
+    inputs.stimuli = stimuli;
+    inputs.stimulus_count = 1;
+
+    const BiologicalDecision decision = decide_biological_action(BiologicalSpecies::wolf, inputs);
     CHECK(decision.action == BiologicalAction::pursue);
     CHECK(decision.stimulus_index == 0);
 }

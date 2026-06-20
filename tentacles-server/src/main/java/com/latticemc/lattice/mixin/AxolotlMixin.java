@@ -79,7 +79,7 @@ public abstract class AxolotlMixin {
                 temptingPlayer != null,
                 this.isOnFire() ? 1.0F : (!hydrated ? 0.65F : 0.0F),
                 hydrated || !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire(),
+                threat == null && !this.isOnFire() && !playingDead,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, 0.75F),
                 BiologicalAiProfiles.AXOLOTL);

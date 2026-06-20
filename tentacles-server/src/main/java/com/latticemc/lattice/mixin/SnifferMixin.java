@@ -71,7 +71,7 @@ public abstract class SnifferMixin {
                 temptingPlayer != null,
                 this.isOnFire() ? 1.0F : (inWater ? 0.45F : 0.0F),
                 !level.canSeeSky(this.blockPosition()) && !inWater,
-                threat == null && !this.isOnFire() && !sniffing,
+                threat == null && !this.isOnFire() && !busy,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.canSniff() ? 0.85F : 0.65F),
                 BiologicalAiProfiles.SNIFFER);

@@ -1,10 +1,13 @@
 package com.latticemc.lattice.nativelib;
 
 import java.util.Arrays;
+import java.util.List;
+import net.minecraft.world.phys.AABB;
 
 public final class NativeCollisionSweep {
     public static final int AABB_STRIDE = 6;
     public static final int MOVEMENT_STRIDE = 3;
+    public static final double COLLISION_EPSILON = 1.0E-7;
     private static final int[] AXIS_ORDER_YXZ = {1, 0, 2};
     private static final int[] AXIS_ORDER_YZX = {1, 2, 0};
 
@@ -39,6 +42,93 @@ public final class NativeCollisionSweep {
 
         LatticeNative.logFallbackOnce("collision_sweep", "native collision sweep unavailable");
         javaAdjustMovementVanilla(moving, movement, obstacles, obstacleCount);
+    }
+
+    public static double calcMaxOffset(int axis,
+                                        double[] moving,
+                                        double desired,
+                                        double[] obstacles,
+                                        int obstacleCount) {
+        if (desired == 0.0D) return 0.0D;
+        if (obstacleCount == 0) return desired;
+        validate(moving, new double[]{desired}, obstacles, obstacleCount);
+
+        if (LatticeNative.isLoaded()) {
+            if (LatticeNative.VERIFY) {
+                double shadow = javaCalcMaxOffset(axis, moving, desired, obstacles, obstacleCount);
+                double nativeResult = nativeCalcMaxOffset(axis, moving, desired, obstacles, obstacleCount);
+                if (Double.compare(shadow, nativeResult) != 0) {
+                    throw new AssertionError(
+                            "lattice.verify: calcMaxOffset mismatch axis=" + axis
+                                    + " jvm=" + shadow + " native=" + nativeResult);
+                }
+                return shadow;
+            }
+            return nativeCalcMaxOffset(axis, moving, desired, obstacles, obstacleCount);
+        }
+
+        LatticeNative.logFallbackOnce("collision_sweep", "native calcMaxOffset unavailable");
+        return javaCalcMaxOffset(axis, moving, desired, obstacles, obstacleCount);
+    }
+
+    public static double javaCalcMaxOffset(int axis,
+                                           double[] moving,
+                                           double desired,
+                                           double[] obstacles,
+                                           int obstacleCount) {
+        if (desired == 0.0D) return 0.0D;
+        if (obstacleCount == 0) return desired;
+
+        for (int i = 0; i < obstacleCount; ++i) {
+            desired = clampAxisEpsilon(axis, moving, desired, obstacles, i * AABB_STRIDE);
+            if (desired == 0.0D) break;
+        }
+        return desired;
+    }
+
+    public static double[] flattenAabbs(List<AABB> aabbs) {
+        double[] result = new double[aabbs.size() * AABB_STRIDE];
+        for (int i = 0; i < aabbs.size(); ++i) {
+            AABB box = aabbs.get(i);
+            int base = i * AABB_STRIDE;
+            result[base] = box.minX;
+            result[base + 1] = box.minY;
+            result[base + 2] = box.minZ;
+            result[base + 3] = box.maxX;
+            result[base + 4] = box.maxY;
+            result[base + 5] = box.maxZ;
+        }
+        return result;
+    }
+
+    private static double clampAxisEpsilon(int axis,
+                                           double[] moving,
+                                           double desired,
+                                           double[] obstacles,
+                                           int obstacleBase) {
+        if (desired == 0.0D) return 0.0D;
+
+        int axis1 = (axis + 1) % 3;
+        int axis2 = (axis + 2) % 3;
+        if (moving[axis1 + 3] <= obstacles[obstacleBase + axis1]
+                || moving[axis1] >= obstacles[obstacleBase + axis1 + 3]) {
+            return desired;
+        }
+        if (moving[axis2 + 3] <= obstacles[obstacleBase + axis2]
+                || moving[axis2] >= obstacles[obstacleBase + axis2 + 3]) {
+            return desired;
+        }
+
+        if (desired > 0.0D) {
+            double maxMove = obstacles[obstacleBase + axis] - moving[axis + 3];
+            if (maxMove < -COLLISION_EPSILON) return desired;
+            if (maxMove < desired) return maxMove;
+        } else {
+            double maxMove = obstacles[obstacleBase + axis + 3] - moving[axis];
+            if (maxMove > COLLISION_EPSILON) return desired;
+            if (maxMove > desired) return maxMove;
+        }
+        return desired;
     }
 
     private static void nativeAdjustMovementVanilla(double[] moving,
@@ -170,6 +260,13 @@ public final class NativeCollisionSweep {
     private static native void nativeAdjustMovement(
             double[] moving,
             double[] movement,
+            double[] obstacles,
+            int obstacleCount);
+
+    private static native double nativeCalcMaxOffset(
+            int axis,
+            double[] moving,
+            double desired,
             double[] obstacles,
             int obstacleCount);
 }

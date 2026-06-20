@@ -1,7 +1,7 @@
 package com.latticemc.lattice.nativelib;
 
 public final class NativeBiologicalAi {
-    private static final int EXPECTED_NATIVE_ABI = 2;
+    private static final int EXPECTED_NATIVE_ABI = 3;
     private static volatile boolean nativeChecked;
     private static volatile boolean nativeCompatible;
     private static volatile boolean nativeDisabled;
@@ -24,6 +24,7 @@ public final class NativeBiologicalAi {
         LLAMA,
         PANDA,
         OCELOT,
+        WOLF,
     }
 
     public enum StimulusKind {
@@ -381,6 +382,7 @@ public final class NativeBiologicalAi {
             case LLAMA -> BiologicalAiProfiles.LLAMA;
             case PANDA -> BiologicalAiProfiles.PANDA;
             case OCELOT -> BiologicalAiProfiles.OCELOT;
+            case WOLF -> BiologicalAiProfiles.WOLF;
             case GENERIC -> DEFAULT_PROFILE;
         };
     }

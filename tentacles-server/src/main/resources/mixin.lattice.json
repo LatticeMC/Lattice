@@ -46,6 +46,7 @@
     "LlamaMixin",
     "PandaMixin",
     "OcelotMixin",
+    "WolfMixin",
     "LightEngineMixin",
     "NaturalSpawnerMixin"
   ],

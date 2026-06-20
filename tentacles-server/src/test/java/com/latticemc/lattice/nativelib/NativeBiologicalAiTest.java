@@ -428,6 +428,51 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void busySnifferIgnoresFoodStimulus() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision sniffer = decide(0.9F, 0.20F, 0.0F, 1.0F,
+                false, false, false,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.SNIFFER);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, sniffer.action());
+        assertEquals(-1, sniffer.stimulusIndex());
+    }
+
+    @Test
+    void busyPandaIgnoresFoodStimulus() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision panda = decide(0.9F, 0.20F, 0.0F, 1.2F,
+                false, false, false,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.PANDA);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, panda.action());
+        assertEquals(-1, panda.stimulusIndex());
+    }
+
+    @Test
+    void playingDeadAxolotlIgnoresFoodStimulus() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
+        };
+
+        NativeBiologicalAi.Decision axolotl = decide(0.9F, 0.05F, 0.0F, 1.0F,
+                false, false, false,
+                0.0F, true, false, false,
+                stimuli, BiologicalAiProfiles.AXOLOTL);
+
+        assertEquals(NativeBiologicalAi.Action.WANDER, axolotl.action());
+        assertEquals(-1, axolotl.stimulusIndex());
+    }
+
+    @Test
     void inLoveCowIgnoresFoodStimulus() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
@@ -686,6 +731,22 @@ class NativeBiologicalAiTest {
     }
 
     @Test
+    void speciesRoutingUsesBuiltInWolfProfileWhenFallbackMissing() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.PREY, 3.5F, 0.9F, true, true)
+        };
+
+        NativeBiologicalAi.Decision wolf = decideSpecies(NativeBiologicalAi.Species.WOLF,
+                0.9F, 0.80F, 0.70F, 1.6F,
+                false, true, true,
+                0.0F, true, true, true,
+                stimuli, null);
+
+        assertEquals(NativeBiologicalAi.Action.PURSUE, wolf.action());
+        assertEquals(0, wolf.stimulusIndex());
+    }
+
+    @Test
     void pandaProfileRestsWhenSittingAndFoodIsNearby() {
         NativeBiologicalAi.Stimulus[] stimuli = {
                 new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.FOOD, 2.0F, 0.8F, true, true)
@@ -752,6 +813,21 @@ class NativeBiologicalAiTest {
 
         assertEquals(NativeBiologicalAi.Action.PURSUE, ocelot.action());
         assertEquals(0, ocelot.stimulusIndex());
+    }
+
+    @Test
+    void wolfProfileCanPursuePrey() {
+        NativeBiologicalAi.Stimulus[] stimuli = {
+                new NativeBiologicalAi.Stimulus(NativeBiologicalAi.StimulusKind.PREY, 3.5F, 0.9F, true, true)
+        };
+
+        NativeBiologicalAi.Decision wolf = decide(0.9F, 0.80F, 0.70F, 1.6F,
+                false, true, true,
+                0.0F, true, true, true,
+                stimuli, BiologicalAiProfiles.WOLF);
+
+        assertEquals(NativeBiologicalAi.Action.PURSUE, wolf.action());
+        assertEquals(0, wolf.stimulusIndex());
     }
 
     @Test

@@ -88,7 +88,7 @@ public abstract class PandaMixin {
                 temptingPlayer != null,
                 this.isOnFire() ? 1.0F : (threat != null ? 0.8F : (scared ? 0.75F : 0.0F)),
                 sitting || !level.canSeeSky(this.blockPosition()),
-                threat == null && !this.isOnFire(),
+                threat == null && !this.isOnFire() && !busy,
                 temptingPlayer != null,
                 HerbivoreAiSupport.buildStimuli(mob, threat, temptingPlayer, this.isWorried() ? 0.65F : 0.85F),
                 BiologicalAiProfiles.PANDA);
