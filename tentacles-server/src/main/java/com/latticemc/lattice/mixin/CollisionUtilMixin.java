@@ -1,5 +1,6 @@
 package com.latticemc.lattice.mixin;
 
+import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeCollisionSweep;
 import java.util.List;
 import net.minecraft.world.phys.AABB;
@@ -24,13 +25,17 @@ public abstract class CollisionUtilMixin {
             return;
         }
 
-        double[] moving = {
-                currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
-                currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ,
-        };
-        double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
-        double result = NativeCollisionSweep.calcMaxOffset(0, moving, value, obstacles, potentialCollisions.size());
-        cir.setReturnValue(result);
+        try {
+            double[] moving = {
+                    currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
+                    currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ,
+            };
+            double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
+            double result = NativeCollisionSweep.calcMaxOffset(0, moving, value, obstacles, potentialCollisions.size());
+            cir.setReturnValue(result);
+        } catch (Exception e) {
+            LatticeNative.logFallbackOnce("collision_sweep_x", e.getMessage());
+        }
     }
 
     @Inject(method = "performAABBCollisionsY", at = @At("HEAD"), cancellable = true)
@@ -44,13 +49,17 @@ public abstract class CollisionUtilMixin {
             return;
         }
 
-        double[] moving = {
-                currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
-                currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ,
-        };
-        double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
-        double result = NativeCollisionSweep.calcMaxOffset(1, moving, value, obstacles, potentialCollisions.size());
-        cir.setReturnValue(result);
+        try {
+            double[] moving = {
+                    currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
+                    currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ,
+            };
+            double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
+            double result = NativeCollisionSweep.calcMaxOffset(1, moving, value, obstacles, potentialCollisions.size());
+            cir.setReturnValue(result);
+        } catch (Exception e) {
+            LatticeNative.logFallbackOnce("collision_sweep_y", e.getMessage());
+        }
     }
 
     @Inject(method = "performAABBCollisionsZ", at = @At("HEAD"), cancellable = true)
@@ -64,12 +73,16 @@ public abstract class CollisionUtilMixin {
             return;
         }
 
-        double[] moving = {
-                currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
-                currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ,
-        };
-        double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
-        double result = NativeCollisionSweep.calcMaxOffset(2, moving, value, obstacles, potentialCollisions.size());
-        cir.setReturnValue(result);
+        try {
+            double[] moving = {
+                    currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
+                    currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ,
+            };
+            double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
+            double result = NativeCollisionSweep.calcMaxOffset(2, moving, value, obstacles, potentialCollisions.size());
+            cir.setReturnValue(result);
+        } catch (Exception e) {
+            LatticeNative.logFallbackOnce("collision_sweep_z", e.getMessage());
+        }
     }
 }

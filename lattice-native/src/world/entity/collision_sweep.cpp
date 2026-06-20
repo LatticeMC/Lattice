@@ -19,19 +19,24 @@ inline double clamp_axis_obstacle(int axis,
     const int a1 = (axis + 1) % 3;
     const int a2 = (axis + 2) % 3;
 
-    // Overlap on cross axes: strict less-than on the touching face
-    // to allow sliding along it. Vanilla exact mirror.
+    // Overlap on cross axes with epsilon tolerance, matching Paper's
+    // CollisionUtil.collideX/Y/Z semantics:
+    //   overlap iff  m_min < o_max - epsilon  &&  m_max > o_min + epsilon
+    // Negated skip condition:
+    //   skip iff  m_min >= o_max - epsilon  ||  m_max <= o_min + epsilon
     const double m_min_a1 = m[a1];
     const double m_max_a1 = m[a1 + 3];
     const double o_min_a1 = o[a1];
     const double o_max_a1 = o[a1 + 3];
-    if (m_max_a1 <= o_min_a1 || m_min_a1 >= o_max_a1) return desired;
+    if (m_min_a1 - o_max_a1 >= -kCollisionEpsilon
+            || m_max_a1 - o_min_a1 <= kCollisionEpsilon) return desired;
 
     const double m_min_a2 = m[a2];
     const double m_max_a2 = m[a2 + 3];
     const double o_min_a2 = o[a2];
     const double o_max_a2 = o[a2 + 3];
-    if (m_max_a2 <= o_min_a2 || m_min_a2 >= o_max_a2) return desired;
+    if (m_min_a2 - o_max_a2 >= -kCollisionEpsilon
+            || m_max_a2 - o_min_a2 <= kCollisionEpsilon) return desired;
 
     // Now resolve the clamp on `axis`.
     const double m_min = m[axis];

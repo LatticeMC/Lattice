@@ -56,28 +56,35 @@ public abstract class TrackedEntityVisibilityMixin {
 
         if (playerCount >= 16) {
             if (NativeEntityVisibility.isAvailable()) {
-                final double[] entityXyz = { this.entity.getX(), 0.0, this.entity.getZ() };
-                final double effectiveRange = this.getEffectiveRange();
-                final double[] entityRangeSq = { effectiveRange * effectiveRange };
-                final double[] playerXyz = new double[playerCount * 3];
-                for (int i = 0; i < playerCount; ++i) {
-                    final ServerPlayer player = playersRaw[i];
-                    final int base = i * 3;
-                    playerXyz[base] = player.getX();
-                    playerXyz[base + 1] = 0.0;
-                    playerXyz[base + 2] = player.getZ();
-                }
+                try {
+                    final double[] entityXyz = { this.entity.getX(), 0.0, this.entity.getZ() };
+                    final double effectiveRange = this.getEffectiveRange();
+                    final double[] entityRangeSq = { effectiveRange * effectiveRange };
+                    final double[] playerXyz = new double[playerCount * 3];
+                    for (int i = 0; i < playerCount; ++i) {
+                        final ServerPlayer player = playersRaw[i];
+                        final int base = i * 3;
+                        playerXyz[base] = player.getX();
+                        playerXyz[base + 1] = 0.0;
+                        playerXyz[base + 2] = player.getZ();
+                    }
 
-                final long[] visibility = new long[NativeEntityVisibility.rowLongs(playerCount)];
-                NativeEntityVisibility.scan(entityXyz, entityRangeSq, 1, playerXyz, playerCount, visibility);
+                    final long[] visibility = new long[NativeEntityVisibility.rowLongs(playerCount)];
+                    NativeEntityVisibility.scan(entityXyz, entityRangeSq, 1, playerXyz, playerCount, visibility);
 
-                for (int i = 0; i < playerCount; ++i) {
-                    final ServerPlayer player = playersRaw[i];
-                    final boolean inCoarseRange = ((visibility[i >>> 6] >>> (i & 63)) & 1L) != 0L;
-                    if (inCoarseRange) {
-                        this.updatePlayer(player);
-                    } else if (this.seenBy.contains(player.connection)) {
-                        this.removePlayer(player);
+                    for (int i = 0; i < playerCount; ++i) {
+                        final ServerPlayer player = playersRaw[i];
+                        final boolean inCoarseRange = ((visibility[i >>> 6] >>> (i & 63)) & 1L) != 0L;
+                        if (inCoarseRange) {
+                            this.updatePlayer(player);
+                        } else if (this.seenBy.contains(player.connection)) {
+                            this.removePlayer(player);
+                        }
+                    }
+                } catch (Exception e) {
+                    LatticeNative.logFallbackOnce("entity_visibility", e.getMessage());
+                    for (int i = 0; i < playerCount; ++i) {
+                        this.updatePlayer(playersRaw[i]);
                     }
                 }
             } else {

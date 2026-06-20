@@ -16,7 +16,7 @@ package com.latticemc.lattice.nativelib;
  * </ul>
  */
 public class NativeLightEngine {
-    private long nativeHandle;
+    private volatile long nativeHandle;
     private final int levelCount;
 
     public NativeLightEngine(int levelCount, int expectedLevelSize, int expectedTotalSize) {

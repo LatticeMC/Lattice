@@ -14,14 +14,12 @@ import net.minecraft.world.level.levelgen.synth.NormalNoise;
 public final class CompiledSurfaceRules implements AutoCloseable {
     private final NativeMaterialRules rules;
     private final List<Map.Entry<String, NormalNoise>> namedNoises;
-    private final int[] ints = new int[10];
-    private final byte[] bools = new byte[2];
-    private double[] doubles;
+    private final int namedNoiseCount;
 
     public CompiledSurfaceRules(NativeMaterialRules rules, List<Map.Entry<String, NormalNoise>> namedNoises) {
         this.rules = rules;
         this.namedNoises = namedNoises;
-        this.doubles = new double[3 + namedNoises.size()];
+        this.namedNoiseCount = namedNoises.size();
     }
 
     public BlockState tryApply(SurfaceSystemAccess system,
@@ -37,6 +35,10 @@ public final class CompiledSurfaceRules implements AutoCloseable {
                                int minSurfaceLevel,
                                boolean hole,
                                boolean steepSlope) {
+        int[] ints = new int[10];
+        double[] doubles = new double[3 + namedNoiseCount];
+        byte[] bools = new byte[2];
+
         ints[0] = x;
         ints[1] = y;
         ints[2] = z;
@@ -51,7 +53,7 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         doubles[0] = biome.value().coldEnoughToSnow(new BlockPos(x, y, z), system.seaLevel()) ? 0.0 : 1.0;
         doubles[1] = system.surfaceNoiseValue(x, z);
         doubles[2] = system.surfaceSecondaryValue(x, z);
-        for (int i = 0; i < namedNoises.size(); ++i) {
+        for (int i = 0; i < namedNoiseCount; ++i) {
             doubles[3 + i] = namedNoises.get(i).getValue().getValue(x, 0.0, z);
         }
 

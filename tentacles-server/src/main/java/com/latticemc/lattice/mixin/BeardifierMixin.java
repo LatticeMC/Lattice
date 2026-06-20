@@ -32,7 +32,7 @@ public abstract class BeardifierMixin {
             }
 
             cir.setReturnValue(NativeBeardifier.compute(self.lattice$pieces(), self.lattice$junctions(), x, y, z));
-        } catch (Throwable ignored) {
+        } catch (Exception ignored) {
             // Fall back to vanilla Beardifier.compute.
         }
     }

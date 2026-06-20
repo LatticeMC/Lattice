@@ -22,13 +22,17 @@ namespace {
 
 // Lane-wise mask for the overlap test on a single cross axis.
 // Returns a __m256d with -1 in lanes where the moving box overlaps the
-// obstacle's interval, 0 otherwise. Strict-less-than as in vanilla.
+// obstacle's interval (with epsilon tolerance), 0 otherwise.
+// Paper semantics: overlap iff m_max > o_min + eps && m_min < o_max - eps
 inline __m256d overlap_mask(__m256d m_min, __m256d m_max,
                             __m256d o_min, __m256d o_max) noexcept {
-    // Overlap iff !(m_max <= o_min) && !(m_min >= o_max)
-    // i.e. m_max > o_min  &&  m_min < o_max
-    const __m256d cmp1 = _mm256_cmp_pd(m_max, o_min, _CMP_GT_OQ);
-    const __m256d cmp2 = _mm256_cmp_pd(m_min, o_max, _CMP_LT_OQ);
+    const __m256d eps = _mm256_set1_pd(kCollisionEpsilon);
+    // m_max - o_min > epsilon
+    const __m256d gap1 = _mm256_sub_pd(m_max, o_min);
+    const __m256d cmp1 = _mm256_cmp_pd(gap1, eps, _CMP_GT_OQ);
+    // o_max - m_min > epsilon
+    const __m256d gap2 = _mm256_sub_pd(o_max, m_min);
+    const __m256d cmp2 = _mm256_cmp_pd(gap2, eps, _CMP_GT_OQ);
     return _mm256_and_pd(cmp1, cmp2);
 }
 
@@ -45,8 +49,8 @@ inline double clamp_axis_obstacle_scalar(int axis, const double* m,
                                          double desired, const double* o) noexcept {
     const int a1 = (axis + 1) % 3;
     const int a2 = (axis + 2) % 3;
-    if (m[a1 + 3] <= o[a1] || m[a1] >= o[a1 + 3]) return desired;
-    if (m[a2 + 3] <= o[a2] || m[a2] >= o[a2 + 3]) return desired;
+    if (m[a1] - o[a1 + 3] >= -kCollisionEpsilon || m[a1 + 3] - o[a1] <= kCollisionEpsilon) return desired;
+    if (m[a2] - o[a2 + 3] >= -kCollisionEpsilon || m[a2 + 3] - o[a2] <= kCollisionEpsilon) return desired;
     const double m_min = m[axis];
     const double m_max = m[axis + 3];
     const double o_min = o[axis];
@@ -102,17 +106,20 @@ double calc_max_offset_avx2(int axis, const double* moving,
 
         if (moving_positive) {
             // Candidate clamp = o_min_a - m_max_a, but only valid when
-            // m_max_a <= o_min_a (obstacle ahead of us) AND ovAll.
-            const __m256d gap   = _mm256_sub_pd(o_min_a, m_max_a);
-            const __m256d valid = _mm256_and_pd(ovAll,
-                _mm256_cmp_pd(m_max_a, o_min_a, _CMP_LE_OQ));
+            // gap >= -epsilon (obstacle not too far penetrated) AND ovAll.
+            const __m256d gap    = _mm256_sub_pd(o_min_a, m_max_a);
+            const __m256d negeps = _mm256_set1_pd(-kCollisionEpsilon);
+            const __m256d valid  = _mm256_and_pd(ovAll,
+                _mm256_cmp_pd(gap, negeps, _CMP_GE_OQ));
             // For invalid lanes, replace with `desired` so the min is unchanged.
             const __m256d candidate = _mm256_blendv_pd(_mm256_set1_pd(desired), gap, valid);
             acc = _mm256_min_pd(acc, candidate);
         } else {
-            const __m256d gap   = _mm256_sub_pd(o_max_a, m_min_a);
+            // gap = o_max_a - m_min_a; valid when gap <= epsilon.
+            const __m256d gap  = _mm256_sub_pd(o_max_a, m_min_a);
+            const __m256d eps  = _mm256_set1_pd(kCollisionEpsilon);
             const __m256d valid = _mm256_and_pd(ovAll,
-                _mm256_cmp_pd(m_min_a, o_max_a, _CMP_GE_OQ));
+                _mm256_cmp_pd(gap, eps, _CMP_LE_OQ));
             // For negative direction we want max, since gap is negative.
             const __m256d candidate = _mm256_blendv_pd(_mm256_set1_pd(desired), gap, valid);
             acc = _mm256_max_pd(acc, candidate);

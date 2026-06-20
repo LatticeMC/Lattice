@@ -30,7 +30,7 @@ public abstract class ChickenMixin {
     private void lattice$runChickenBiologicalAi(ServerLevel level, CallbackInfo ci) {
         if (!((Object) this instanceof Chicken chicken)) return;
         if (!LatticeNative.isLoaded()) return;
-        if (chicken.isPassenger() || chicken.isVehicle() || chicken.isInWaterOrRain() || chicken.isChickenJockey()) return;
+        if (chicken.isPassenger() || chicken.isVehicle() || chicken.isChickenJockey()) return;
 
         final float maxHealth = chicken.getMaxHealth();
         if (maxHealth <= 0.0F) return;

@@ -51,6 +51,8 @@
     "CatMixin",
     "FoxMixin",
     "MushroomCowMixin",
+    "AbstractHorseMixin",
+    "PolarBearMixin",
     "LightEngineMixin",
     "NaturalSpawnerMixin"
   ],

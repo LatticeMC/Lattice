@@ -60,3 +60,17 @@ paper-api
 paper-server
 *.jar
 test-plugin.settings.gradle.kts
+
+# Native libraries
+*.so
+*.dylib
+*.dll
+
+# Java metadata
+META-INF/
+
+# Replay logs
+replay_pid*.log
+
+# Compiled classes
+io/

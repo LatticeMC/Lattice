@@ -1,5 +1,6 @@
 package com.latticemc.lattice.mixin;
 
+import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeCollisionSweep;
 import java.util.List;
 import net.minecraft.world.entity.Entity;
@@ -26,7 +27,11 @@ public abstract class EntityCollisionMixin {
 
         int obstacleCount = 0;
         for (VoxelShape shape : shapes) {
-            obstacleCount += shape.toAabbs().size();
+            List<AABB> aabbs = shape.toAabbs();
+            if (aabbs.size() != 1) {
+                return;
+            }
+            obstacleCount++;
         }
         if (obstacleCount < MIN_NATIVE_OBSTACLES) {
             return;
@@ -35,15 +40,14 @@ public abstract class EntityCollisionMixin {
         double[] obstacles = new double[obstacleCount * NativeCollisionSweep.AABB_STRIDE];
         int index = 0;
         for (VoxelShape shape : shapes) {
-            for (AABB box : shape.toAabbs()) {
-                int base = index++ * NativeCollisionSweep.AABB_STRIDE;
-                obstacles[base] = box.minX;
-                obstacles[base + 1] = box.minY;
-                obstacles[base + 2] = box.minZ;
-                obstacles[base + 3] = box.maxX;
-                obstacles[base + 4] = box.maxY;
-                obstacles[base + 5] = box.maxZ;
-            }
+            AABB box = shape.toAabbs().get(0);
+            int base = index++ * NativeCollisionSweep.AABB_STRIDE;
+            obstacles[base] = box.minX;
+            obstacles[base + 1] = box.minY;
+            obstacles[base + 2] = box.minZ;
+            obstacles[base + 3] = box.maxX;
+            obstacles[base + 4] = box.maxY;
+            obstacles[base + 5] = box.maxZ;
         }
 
         double[] moving = {
@@ -51,7 +55,11 @@ public abstract class EntityCollisionMixin {
                 entityBB.maxX, entityBB.maxY, entityBB.maxZ,
         };
         double[] adjusted = {deltaMovement.x, deltaMovement.y, deltaMovement.z};
-        NativeCollisionSweep.adjustMovement(moving, adjusted, obstacles, obstacleCount);
-        cir.setReturnValue(new Vec3(adjusted[0], adjusted[1], adjusted[2]));
+        try {
+            NativeCollisionSweep.adjustMovement(moving, adjusted, obstacles, obstacleCount);
+            cir.setReturnValue(new Vec3(adjusted[0], adjusted[1], adjusted[2]));
+        } catch (Exception e) {
+            LatticeNative.logFallbackOnce("entity_collision", e.getMessage());
+        }
     }
 }

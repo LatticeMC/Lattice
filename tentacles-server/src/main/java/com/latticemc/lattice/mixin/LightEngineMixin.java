@@ -32,7 +32,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *   <li>{@code getLevel} / {@code setLevel} — committed storage read/write</li>
  *   <li>{@code computeLevelFromNeighbor} — per-edge attenuation</li>
  * </ul>
+ *
+ * @deprecated This mixin targets the vanilla {@code DynamicGraphMinFixedPoint} light engine
+ * which is fully replaced by Moonrise/Starlight in Paper. Starlight uses a fundamentally
+ * different propagation algorithm (outward BFS vs inward recalculation) and does not
+ * use {@code DynamicGraphMinFixedPoint} at all. This mixin is effectively a no-op on
+ * Paper servers and is retained only for potential non-Paper deployment. The native
+ * BFS contract (increase/decrease FIFO queues) does not match Starlight's architecture.
  */
+@Deprecated
+@SuppressWarnings("removal")
 @Mixin(DynamicGraphMinFixedPoint.class)
 public abstract class LightEngineMixin implements LightEngineCallbacks {
 

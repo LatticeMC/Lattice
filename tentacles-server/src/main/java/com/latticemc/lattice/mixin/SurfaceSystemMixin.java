@@ -4,9 +4,9 @@ import com.latticemc.lattice.nativelib.CompiledSurfaceRules;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeMaterialRules;
 import com.latticemc.lattice.nativelib.SurfaceRuleCompiler;
-import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -36,7 +36,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(SurfaceSystem.class)
 public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
-    private final Map<SurfaceRules.RuleSource, CompiledSurfaceRules> lattice$compiled = new IdentityHashMap<>();
+    private final Map<SurfaceRules.RuleSource, CompiledSurfaceRules> lattice$compiled = new ConcurrentHashMap<>();
 
     @Shadow protected abstract BlockState getBand(int x, int y, int z);
     @Shadow protected abstract int getSurfaceDepth(int x, int z);
@@ -190,7 +190,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                 NativeMaterialRules rules = new NativeMaterialRules();
                 return new SurfaceRuleCompiler(rules, randomState, biomes, context).compile(key);
             });
-        } catch (Throwable ignored) {
+        } catch (Exception ignored) {
             return null;
         }
     }

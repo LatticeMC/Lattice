@@ -55,8 +55,13 @@ public abstract class NaturalSpawnerMixin {
      * chunk spawn attempt early.
      *
      * <p>The full batched pre-filter (palette + entity clearance + distance) is
-     * applied when the server accumulates multiple candidate positions per tick
-     * through the Paper per-player mob spawning path.
+     * not yet wired here because the vanilla spawn loop uses random walks rather
+     * than a fixed candidate set, making it incompatible with the batched filter
+     * API. The palette check is also omitted in this pre-filter path; the vanilla
+     * loop performs its own position validation before actual entity creation.
+     *
+     * <p>Fallback: if native is unavailable or the call throws, the mixin returns
+     * without cancelling, letting vanilla handle everything.
      */
     @Inject(
         method = "spawnCategoryForChunk(Lnet/minecraft/world/entity/MobCategory;Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/level/chunk/LevelChunk;Lnet/minecraft/world/level/NaturalSpawner$SpawnPredicate;Lnet/minecraft/world/level/NaturalSpawner$AfterSpawnCallback;ILjava/util/function/Consumer;)V",
@@ -101,18 +106,23 @@ public abstract class NaturalSpawnerMixin {
         // Single-candidate quick check: is the chunk centre within distance of any player?
         double[] candidateXyz = new double[] { cx, cy, cz };
         long[] acceptable = new long[1];
-        int accepted = NativeSpawnFilter.filterCandidates(
-                candidateXyz, 1,
-                null, // default dims
-                null, null, null, 0, 0, // no palette check for pre-filter
-                null, 0, // no entity clearance for pre-filter
-                playerXyz, players.size(),
-                maxDistSq,
-                acceptable);
+        try {
+            int accepted = NativeSpawnFilter.filterCandidates(
+                    candidateXyz, 1,
+                    null, // default dims
+                    null, null, null, 0, 0, // no palette check for pre-filter
+                    null, 0, // no entity clearance for pre-filter
+                    playerXyz, players.size(),
+                    maxDistSq,
+                    acceptable);
 
-        if (accepted == 0) {
-            // No player close enough to this chunk — skip spawn attempt entirely.
-            ci.cancel();
+            if (accepted == 0) {
+                // No player close enough to this chunk — skip spawn attempt entirely.
+                ci.cancel();
+            }
+        } catch (Exception e) {
+            LatticeNative.logFallbackOnce("spawn_filter", e.getMessage());
+            // Fall through to vanilla logic
         }
         // Otherwise, fall through to vanilla logic which does the full spawn attempt.
     }

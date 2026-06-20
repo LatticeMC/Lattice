@@ -118,12 +118,12 @@ public final class NativeCollisionSweep {
 
         int axis1 = (axis + 1) % 3;
         int axis2 = (axis + 2) % 3;
-        if (moving[axis1 + 3] <= obstacles[obstacleBase + axis1]
-                || moving[axis1] >= obstacles[obstacleBase + axis1 + 3]) {
+        if (moving[axis1] - obstacles[obstacleBase + axis1 + 3] >= -COLLISION_EPSILON
+                || moving[axis1 + 3] - obstacles[obstacleBase + axis1] <= COLLISION_EPSILON) {
             return desired;
         }
-        if (moving[axis2 + 3] <= obstacles[obstacleBase + axis2]
-                || moving[axis2] >= obstacles[obstacleBase + axis2 + 3]) {
+        if (moving[axis2] - obstacles[obstacleBase + axis2 + 3] >= -COLLISION_EPSILON
+                || moving[axis2 + 3] - obstacles[obstacleBase + axis2] <= COLLISION_EPSILON) {
             return desired;
         }
 
@@ -207,21 +207,23 @@ public final class NativeCollisionSweep {
 
         int axis1 = (axis + 1) % 3;
         int axis2 = (axis + 2) % 3;
-        if (moving[axis1 + 3] <= obstacles[obstacleBase + axis1]
-                || moving[axis1] >= obstacles[obstacleBase + axis1 + 3]) {
+        if (moving[axis1] - obstacles[obstacleBase + axis1 + 3] >= -COLLISION_EPSILON
+                || moving[axis1 + 3] - obstacles[obstacleBase + axis1] <= COLLISION_EPSILON) {
             return desired;
         }
-        if (moving[axis2 + 3] <= obstacles[obstacleBase + axis2]
-                || moving[axis2] >= obstacles[obstacleBase + axis2 + 3]) {
+        if (moving[axis2] - obstacles[obstacleBase + axis2 + 3] >= -COLLISION_EPSILON
+                || moving[axis2 + 3] - obstacles[obstacleBase + axis2] <= COLLISION_EPSILON) {
             return desired;
         }
 
-        if (desired > 0.0D && moving[axis + 3] <= obstacles[obstacleBase + axis]) {
-            double gap = obstacles[obstacleBase + axis] - moving[axis + 3];
-            if (gap < desired) return gap;
-        } else if (desired < 0.0D && moving[axis] >= obstacles[obstacleBase + axis + 3]) {
-            double gap = obstacles[obstacleBase + axis + 3] - moving[axis];
-            if (gap > desired) return gap;
+        if (desired > 0.0D) {
+            double maxMove = obstacles[obstacleBase + axis] - moving[axis + 3];
+            if (maxMove < -COLLISION_EPSILON) return desired;
+            if (maxMove < desired) return maxMove;
+        } else {
+            double maxMove = obstacles[obstacleBase + axis + 3] - moving[axis];
+            if (maxMove > COLLISION_EPSILON) return desired;
+            if (maxMove > desired) return maxMove;
         }
         return desired;
     }

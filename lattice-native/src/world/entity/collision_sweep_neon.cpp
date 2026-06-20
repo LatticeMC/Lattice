@@ -22,10 +22,14 @@ inline float64x2_t gather2(const double* obstacles, std::size_t base,
     return v;
 }
 
+// Overlap with epsilon tolerance: overlap iff m_max - o_min > eps && o_max - m_min > eps
 inline uint64x2_t overlap_mask(float64x2_t m_min, float64x2_t m_max,
                                float64x2_t o_min, float64x2_t o_max) noexcept {
-    const uint64x2_t cmp1 = vcgtq_f64(m_max, o_min);
-    const uint64x2_t cmp2 = vcltq_f64(m_min, o_max);
+    const float64x2_t eps = vdupq_n_f64(kCollisionEpsilon);
+    const float64x2_t gap1 = vsubq_f64(m_max, o_min);
+    const float64x2_t gap2 = vsubq_f64(o_max, m_min);
+    const uint64x2_t cmp1 = vcgtq_f64(gap1, eps);
+    const uint64x2_t cmp2 = vcgtq_f64(gap2, eps);
     return vandq_u64(cmp1, cmp2);
 }
 
@@ -33,8 +37,8 @@ inline double clamp_axis_obstacle_scalar(int axis, const double* m,
                                          double desired, const double* o) noexcept {
     const int a1 = (axis + 1) % 3;
     const int a2 = (axis + 2) % 3;
-    if (m[a1 + 3] <= o[a1] || m[a1] >= o[a1 + 3]) return desired;
-    if (m[a2 + 3] <= o[a2] || m[a2] >= o[a2 + 3]) return desired;
+    if (m[a1] - o[a1 + 3] >= -kCollisionEpsilon || m[a1 + 3] - o[a1] <= kCollisionEpsilon) return desired;
+    if (m[a2] - o[a2 + 3] >= -kCollisionEpsilon || m[a2 + 3] - o[a2] <= kCollisionEpsilon) return desired;
     const double m_min = m[axis];
     const double m_max = m[axis + 3];
     const double o_min = o[axis];
@@ -89,14 +93,16 @@ double calc_max_offset_neon(int axis, const double* moving,
         const uint64x2_t ovAll = vandq_u64(ov1, ov2);
 
         if (moving_positive) {
-            const float64x2_t gap   = vsubq_f64(o_min_a, m_max_a);
-            const uint64x2_t  valid = vandq_u64(ovAll, vcleq_f64(m_max_a, o_min_a));
+            const float64x2_t gap    = vsubq_f64(o_min_a, m_max_a);
+            const float64x2_t neg_eps = vdupq_n_f64(-kCollisionEpsilon);
+            const uint64x2_t  valid  = vandq_u64(ovAll, vcgeq_f64(gap, neg_eps));
             // bslq with the lane bitmask: where valid, use gap; else desired.
             const float64x2_t cand  = vbslq_f64(valid, gap, desired_v);
             acc = vminq_f64(acc, cand);
         } else {
-            const float64x2_t gap   = vsubq_f64(o_max_a, m_min_a);
-            const uint64x2_t  valid = vandq_u64(ovAll, vcgeq_f64(m_min_a, o_max_a));
+            const float64x2_t gap  = vsubq_f64(o_max_a, m_min_a);
+            const float64x2_t eps  = vdupq_n_f64(kCollisionEpsilon);
+            const uint64x2_t  valid = vandq_u64(ovAll, vcleq_f64(gap, eps));
             const float64x2_t cand  = vbslq_f64(valid, gap, desired_v);
             acc = vmaxq_f64(acc, cand);
         }
