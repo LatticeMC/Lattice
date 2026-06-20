@@ -61,24 +61,27 @@ endfunction()
 # must include the matching SIMD source.
 set(_palette_simd_srcs "")
 set(_entity_simd_srcs "")
+set(_pathfinder_simd_srcs "")
 if(LATTICE_ARCH_X86)
     list(APPEND _palette_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage_bmi2.cpp)
     list(APPEND _entity_simd_srcs
         ${CMAKE_SOURCE_DIR}/src/world/entity/visibility_scan_avx2.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query_avx2.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep_avx2.cpp)
+    list(APPEND _pathfinder_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder_avx2.cpp)
 elseif(LATTICE_ARCH_ARM64)
     list(APPEND _palette_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage_neon.cpp)
     list(APPEND _entity_simd_srcs
         ${CMAKE_SOURCE_DIR}/src/world/entity/visibility_scan_neon.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query_neon.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep_neon.cpp)
+    list(APPEND _pathfinder_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder_neon.cpp)
 endif()
 
 # We compile the SIMD TUs into the test binary at the same per-source
 # flag level that the main library uses. CMake's source-file properties
 # carry the flag.
-foreach(s IN LISTS _palette_simd_srcs _entity_simd_srcs)
+foreach(s IN LISTS _palette_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs)
     if(MSVC)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     elseif(LATTICE_ARCH_X86)
@@ -110,6 +113,10 @@ lattice_add_test(entity_visibility
              ${_entity_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
+lattice_add_test(los
+    SOURCES  test_los.cpp
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/los.cpp)
+
 lattice_add_test(aabb_query
     SOURCES  test_aabb_query.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query.cpp
@@ -120,6 +127,12 @@ lattice_add_test(collision_sweep
     SOURCES  test_collision_sweep.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep.cpp
              ${_entity_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+
+lattice_add_test(pathfinder
+    SOURCES  test_pathfinder.cpp
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder.cpp
+             ${_pathfinder_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
 lattice_add_test(spawn_filter

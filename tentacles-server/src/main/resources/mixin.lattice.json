@@ -12,6 +12,8 @@
     "EntitySectionMixin",
     "EntityCollisionMixin",
     "CollisionUtilMixin",
+    "SensingMixin",
+    "PathFinderMixin",
     "TrackedEntityVisibilityMixin",
     "BeardifierAccessor",
     "BeardifierMixin",

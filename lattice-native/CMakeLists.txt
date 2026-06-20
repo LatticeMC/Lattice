@@ -363,6 +363,8 @@ target_sources(lattice PRIVATE
     src/world/entity/visibility_scan.cpp
     src/world/entity/aabb_query.cpp
     src/world/entity/collision_sweep.cpp
+    src/world/entity/los.cpp
+    src/world/entity/pathfinder.cpp
     src/world/entity/biological_ai.cpp
     src/world/entity/flee_target_sampler.cpp
     src/world/entity/home_target_sampler.cpp
@@ -370,6 +372,8 @@ target_sources(lattice PRIVATE
     src/world/entity/spawn_filter.cpp
     jni/biological_ai.cpp
     jni/entity_visibility.cpp
+    jni/los.cpp
+    jni/pathfinder.cpp
 )
 
 # AVX2 specialisations (x86). Each TU compiled with -mavx2 / /arch:AVX2.
@@ -385,6 +389,9 @@ if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
         lattice_add_simd_object(lattice_entity_collision_avx2
             SOURCES src/world/entity/collision_sweep_avx2.cpp
             FLAGS   /arch:AVX2)
+        lattice_add_simd_object(lattice_entity_pathfinder_avx2
+            SOURCES src/world/entity/pathfinder_avx2.cpp
+            FLAGS   /arch:AVX2)
     else()
         lattice_add_simd_object(lattice_entity_vis_avx2
             SOURCES src/world/entity/visibility_scan_avx2.cpp
@@ -394,6 +401,9 @@ if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
             FLAGS   -mavx2)
         lattice_add_simd_object(lattice_entity_collision_avx2
             SOURCES src/world/entity/collision_sweep_avx2.cpp
+            FLAGS   -mavx2)
+        lattice_add_simd_object(lattice_entity_pathfinder_avx2
+            SOURCES src/world/entity/pathfinder_avx2.cpp
             FLAGS   -mavx2)
     endif()
 endif()
@@ -407,6 +417,8 @@ if(LATTICE_ARCH_ARM64 AND LATTICE_ENABLE_SIMD)
             SOURCES src/world/entity/aabb_query_neon.cpp)
         lattice_add_simd_object(lattice_entity_collision_neon
             SOURCES src/world/entity/collision_sweep_neon.cpp)
+        lattice_add_simd_object(lattice_entity_pathfinder_neon
+            SOURCES src/world/entity/pathfinder_neon.cpp)
     else()
         lattice_add_simd_object(lattice_entity_vis_neon
             SOURCES src/world/entity/visibility_scan_neon.cpp
@@ -416,6 +428,9 @@ if(LATTICE_ARCH_ARM64 AND LATTICE_ENABLE_SIMD)
             FLAGS   -O3)
         lattice_add_simd_object(lattice_entity_collision_neon
             SOURCES src/world/entity/collision_sweep_neon.cpp
+            FLAGS   -O3)
+        lattice_add_simd_object(lattice_entity_pathfinder_neon
+            SOURCES src/world/entity/pathfinder_neon.cpp
             FLAGS   -O3)
     endif()
 endif()

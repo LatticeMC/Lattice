@@ -120,6 +120,7 @@ private:
 } // namespace detail
 
 using CriticalByteArray = detail::CriticalGuard<jbyteArray,  jbyte>;
+using CriticalBooleanArray = detail::CriticalGuard<jbooleanArray, jboolean>;
 using CriticalIntArray  = detail::CriticalGuard<jintArray,   jint>;
 using CriticalLongArray = detail::CriticalGuard<jlongArray,  jlong>;
 using CriticalFloatArray = detail::CriticalGuard<jfloatArray, jfloat>;

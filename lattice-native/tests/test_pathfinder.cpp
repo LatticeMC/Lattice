@@ -1,0 +1,164 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <vector>
+
+#include "world/entity/pathfinder.hpp"
+
+using namespace lattice::world::entity;
+
+namespace {
+
+constexpr std::int8_t BLOCKED = 0;
+constexpr std::int8_t OPEN = 1;
+constexpr std::int8_t WALKABLE = 2;
+
+struct Grid {
+    int sx;
+    int sy;
+    int sz;
+    std::vector<std::int8_t> cells;
+    std::vector<float> malus;
+
+    Grid(int x, int y, int z) : sx(x), sy(y), sz(z), cells(x * y * z, BLOCKED), malus(3, -1.0F) {
+        malus[OPEN] = 0.0F;
+        malus[WALKABLE] = 0.0F;
+    }
+
+    std::int8_t& at(int x, int y, int z) {
+        return cells[(y * sz + z) * sx + x];
+    }
+};
+
+PathfinderResult run(Grid& grid, int startX, int startY, int startZ,
+                     int targetX, int targetY, int targetZ) {
+    PathfinderInputs inputs{};
+    inputs.path_types = grid.cells.data();
+    inputs.region_size_x = grid.sx;
+    inputs.region_size_y = grid.sy;
+    inputs.region_size_z = grid.sz;
+    inputs.start_x = startX;
+    inputs.start_y = startY;
+    inputs.start_z = startZ;
+    inputs.target_x = &targetX;
+    inputs.target_y = &targetY;
+    inputs.target_z = &targetZ;
+    inputs.target_count = 1;
+    inputs.config.max_range = 64.0F;
+    inputs.config.max_visited_nodes = grid.sx * grid.sy * grid.sz;
+    inputs.config.reach_range = 0;
+    inputs.config.fudge = 1.5F;
+    inputs.max_up_step = 1.0F;
+    inputs.max_fall_distance = 3;
+    inputs.pathfinding_malus = grid.malus.data();
+    inputs.pathfinding_malus_count = static_cast<int>(grid.malus.size());
+    return find_path(inputs);
+}
+
+void fill_floor(Grid& grid, int y) {
+    for (int z = 0; z < grid.sz; ++z) {
+        for (int x = 0; x < grid.sx; ++x) {
+            grid.at(x, y, z) = WALKABLE;
+        }
+    }
+}
+
+} // namespace
+
+TEST_CASE("pathfinder: straight path") {
+    Grid grid(8, 2, 3);
+    fill_floor(grid, 0);
+    PathfinderResult result = run(grid, 0, 0, 1, 7, 0, 1);
+    REQUIRE(result.reached_target);
+    REQUIRE(result.path.size() >= 2);
+    CHECK(result.path.front().x == 0);
+    CHECK(result.path.back().x == 7);
+}
+
+TEST_CASE("pathfinder: L shaped path around obstacle") {
+    Grid grid(7, 2, 5);
+    fill_floor(grid, 0);
+    for (int z = 0; z < 5; ++z) {
+        if (z != 4) grid.at(3, 0, z) = BLOCKED;
+    }
+    PathfinderResult result = run(grid, 0, 0, 2, 6, 0, 2);
+    REQUIRE(result.reached_target);
+    bool usedGap = false;
+    for (const auto& node : result.path) {
+        if (node.x == 3 && node.z == 4) usedGap = true;
+    }
+    CHECK(usedGap);
+}
+
+TEST_CASE("pathfinder: unreachable target returns partial path") {
+    Grid grid(5, 2, 5);
+    fill_floor(grid, 0);
+    for (int z = 0; z < 5; ++z) grid.at(2, 0, z) = BLOCKED;
+    PathfinderResult result = run(grid, 0, 0, 2, 4, 0, 2);
+    CHECK_FALSE(result.reached_target);
+    CHECK_FALSE(result.path.empty());
+    CHECK(result.path.back().x < 2);
+}
+
+TEST_CASE("pathfinder: one block jump") {
+    Grid grid(5, 3, 3);
+    fill_floor(grid, 0);
+    grid.at(2, 0, 1) = BLOCKED;
+    grid.at(2, 1, 1) = WALKABLE;
+    PathfinderResult result = run(grid, 0, 0, 1, 4, 0, 1);
+    REQUIRE(result.reached_target);
+    bool jumped = false;
+    for (const auto& node : result.path) {
+        if (node.x == 2 && node.y == 1) jumped = true;
+    }
+    CHECK(jumped);
+}
+
+TEST_CASE("pathfinder: drops to lower floor") {
+    Grid grid(6, 4, 3);
+    fill_floor(grid, 2);
+    for (int x = 3; x < 6; ++x) grid.at(x, 0, 1) = WALKABLE;
+    for (int x = 3; x < 6; ++x) grid.at(x, 2, 1) = OPEN;
+    PathfinderResult result = run(grid, 0, 2, 1, 5, 0, 1);
+    REQUIRE(result.reached_target);
+    CHECK(result.path.back().y == 0);
+}
+
+TEST_CASE("pathfinder masks: scalar classifies passable and standing") {
+    const std::int8_t types[] = {BLOCKED, OPEN, WALKABLE, 3};
+    const float malus[] = {-1.0F, 0.0F, 0.0F, -1.0F};
+    std::uint8_t passable[4] = {};
+    std::uint8_t standing[4] = {};
+    build_pathfinder_masks_scalar(types, 4, malus, 4, PathfinderMasks{passable, standing});
+
+    CHECK(passable[0] == 0);
+    CHECK(passable[1] == 1);
+    CHECK(passable[2] == 1);
+    CHECK(passable[3] == 0);
+    CHECK(standing[0] == 0);
+    CHECK(standing[1] == 0);
+    CHECK(standing[2] == 1);
+    CHECK(standing[3] == 0);
+}
+
+TEST_CASE("pathfinder masks: dispatcher matches scalar") {
+    std::vector<std::int8_t> types(257, BLOCKED);
+    for (std::size_t i = 0; i < types.size(); ++i) {
+        types[i] = static_cast<std::int8_t>(i % 3);
+    }
+    const float malus[] = {-1.0F, 0.0F, 0.0F};
+    std::vector<std::uint8_t> passableScalar(types.size());
+    std::vector<std::uint8_t> standingScalar(types.size());
+    std::vector<std::uint8_t> passableDispatch(types.size());
+    std::vector<std::uint8_t> standingDispatch(types.size());
+
+    build_pathfinder_masks_scalar(types.data(), types.size(), malus, 3,
+            PathfinderMasks{passableScalar.data(), standingScalar.data()});
+    build_pathfinder_masks(types.data(), types.size(), malus, 3,
+            PathfinderMasks{passableDispatch.data(), standingDispatch.data()});
+
+    CHECK(passableDispatch == passableScalar);
+    CHECK(standingDispatch == standingScalar);
+}

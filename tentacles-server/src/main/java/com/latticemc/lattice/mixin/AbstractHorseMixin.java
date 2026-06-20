@@ -49,8 +49,8 @@ public abstract class AbstractHorseMixin {
         final float maxHealth = this.getMaxHealth();
         if (maxHealth <= 0.0F) return;
 
-        final boolean skeletonTrap = this instanceof SkeletonHorse skeletonHorse && skeletonHorse.isTrap();
-        final boolean chested = this instanceof AbstractChestedHorse abstractChestedHorse && abstractChestedHorse.hasChest();
+        final boolean skeletonTrap = mob instanceof SkeletonHorse skeletonHorse && skeletonHorse.isTrap();
+        final boolean chested = mob instanceof AbstractChestedHorse abstractChestedHorse && abstractChestedHorse.hasChest();
         final boolean busy = this.isEating() || this.isStanding() || this.isInLove() || skeletonTrap;
         final LivingEntity threat = HerbivoreAiSupport.selectThreat(this.getLastHurtByMob(), this.getTarget());
         final Player temptingPlayer = !busy
