@@ -15,7 +15,8 @@ constexpr std::int8_t BLOCKED = 0;
 constexpr std::int8_t OPEN = 1;
 constexpr std::int8_t WALKABLE = 2;
 constexpr std::int8_t WALKABLE_DOOR = 3;
-constexpr std::int8_t COCOA = 24;
+constexpr std::int8_t WATER = 9;
+constexpr std::int8_t COCOA = 26;
 
 struct Grid {
     int sx;
@@ -148,6 +149,19 @@ TEST_CASE("pathfinder: supports safe extra standing path types") {
     }
     CHECK(usedDoor);
     CHECK(usedCocoa);
+}
+
+TEST_CASE("pathfinder: supports water when caller marks it passable") {
+    Grid grid(5, 2, 3);
+    fill_floor(grid, 0);
+    grid.at(2, 0, 1) = WATER;
+    PathfinderResult result = run(grid, 0, 0, 1, 4, 0, 1);
+    REQUIRE(result.reached_target);
+    bool usedWater = false;
+    for (const auto& node : result.path) {
+        if (node.x == 2 && node.z == 1) usedWater = true;
+    }
+    CHECK(usedWater);
 }
 
 TEST_CASE("pathfinder: walkable door blocks diagonal shortcut") {

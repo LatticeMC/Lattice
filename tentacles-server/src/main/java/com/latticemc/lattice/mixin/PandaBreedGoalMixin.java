@@ -49,7 +49,9 @@ public abstract class PandaBreedGoalMixin extends BreedGoal {
                         this.panda.getX(),
                         this.panda.getY(),
                         this.panda.getZ());
-                this.panda.lookAtPlayerGoal.setTarget(nearestPlayer);
+                if (nearestPlayer != null) {
+                    this.panda.lookAt(nearestPlayer, 90.0F, 90.0F);
+                }
             }
         }
 
