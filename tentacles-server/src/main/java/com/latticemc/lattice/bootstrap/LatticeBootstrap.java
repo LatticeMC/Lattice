@@ -8,18 +8,9 @@ public final class LatticeBootstrap {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
 
-    private static volatile boolean premainLogged = false;
     private static volatile boolean startupLogged = false;
 
     private LatticeBootstrap() {}
-
-    public static synchronized void onPremainComplete() {
-        if (premainLogged) return;
-        premainLogged = true;
-        LOGGER.info("Lattice premain complete - native loaded={}, verify={}",
-                LatticeNative.isLoaded(),
-                LatticeNative.VERIFY);
-    }
 
     public static synchronized void onServerStart() {
         if (startupLogged) return;

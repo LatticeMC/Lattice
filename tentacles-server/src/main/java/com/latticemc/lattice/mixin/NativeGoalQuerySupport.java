@@ -30,6 +30,17 @@ final class NativeGoalQuerySupport {
                                                                   double x,
                                                                   double y,
                                                                   double z) {
+        return findNearestEntityNullableSource(source, level, candidates, targetingConditions, area, x, y, z);
+    }
+
+    static <T extends LivingEntity> @Nullable T findNearestEntityNullableSource(@Nullable LivingEntity source,
+                                                                                ServerLevel level,
+                                                                                List<? extends T> candidates,
+                                                                                TargetingConditions targetingConditions,
+                                                                                AABB area,
+                                                                                double x,
+                                                                                double y,
+                                                                                double z) {
         if (!NativeEntityQuery.isAvailable() || candidates.size() < MIN_NATIVE_CANDIDATES) {
             return lattice$findNearestEntityFallback(level, source, candidates, targetingConditions, x, y, z);
         }
@@ -56,8 +67,8 @@ final class NativeGoalQuerySupport {
                 area.maxX, area.maxY, area.maxZ,
                 snapshotCount == snapshots.length ? snapshots : Arrays.copyOf(snapshots, snapshotCount),
                 null,
-                NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC,
-                source.getId(),
+                source != null ? NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC : NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SPEC,
+                source != null ? source.getId() : -1,
                 true,
                 snapshotCount,
                 x, y, z);
@@ -169,7 +180,7 @@ final class NativeGoalQuerySupport {
     }
 
     private static <T extends LivingEntity> @Nullable T lattice$findNearestEntityFallback(ServerLevel level,
-                                                                                           LivingEntity source,
+                                                                                           @Nullable LivingEntity source,
                                                                                            List<? extends T> candidates,
                                                                                            TargetingConditions targetingConditions,
                                                                                            double x,

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <limits>
+#include <cstdint>
 #include <utility>
 
 #include "lattice/dispatch.hpp"
@@ -13,6 +14,7 @@ namespace {
 
 constexpr std::int8_t kBlocked = 0;
 constexpr std::int8_t kOpen = 1;
+constexpr std::size_t kMaskWordBits = 64;
 
 constexpr std::int8_t kClosedFlag = 1;
 constexpr std::int8_t kOpenFlag = 2;
@@ -59,26 +61,27 @@ constexpr std::int8_t kOpenFlag = 2;
 }
 
 [[nodiscard]] bool passable_at(const PathfinderInputs& in,
-                               const std::vector<std::uint8_t>& passable,
+                               const std::vector<std::uint64_t>& passable,
                                int x, int y, int z) noexcept {
     if (!in_region(in, x, y, z)) return false;
-    return passable[static_cast<std::size_t>(grid_index(in, x, y, z))] != 0;
+    const std::size_t index = static_cast<std::size_t>(grid_index(in, x, y, z));
+    return ((passable[index >> 6] >> (index & 63)) & 1ULL) != 0ULL;
 }
 
 [[nodiscard]] bool standing_node(const PathfinderInputs& in, int x, int y, int z,
-                                 const std::vector<std::uint8_t>& standing,
+                                 const std::vector<std::uint64_t>& standing,
                                  std::int8_t& out_type, float& out_malus) noexcept {
     if (!in_region(in, x, y, z)) return false;
-    const int index = grid_index(in, x, y, z);
-    if (standing[static_cast<std::size_t>(index)] == 0) return false;
+    const std::size_t index = static_cast<std::size_t>(grid_index(in, x, y, z));
+    if (((standing[index >> 6] >> (index & 63)) & 1ULL) == 0ULL) return false;
     out_type = path_type_at(in, x, y, z);
     out_malus = malus_for(in, out_type);
     return true;
 }
 
 [[nodiscard]] bool resolve_standing_node(const PathfinderInputs& in, int x, int y, int z,
-                                         const std::vector<std::uint8_t>& passable,
-                                         const std::vector<std::uint8_t>& standing,
+                                         const std::vector<std::uint64_t>& passable,
+                                         const std::vector<std::uint64_t>& standing,
                                          int& out_y, std::int8_t& out_type,
                                          float& out_malus) noexcept {
     if (standing_node(in, x, y, z, standing, out_type, out_malus)) {
@@ -136,6 +139,7 @@ constexpr std::int8_t kOpenFlag = 2;
 }
 
 struct MinHeap {
+    static constexpr int kArity = 4;
     std::vector<int>* entries = nullptr;
     std::vector<int>* heap_index = nullptr;
     std::vector<PathfinderNode>* nodes = nullptr;
@@ -150,7 +154,7 @@ struct MinHeap {
 
     void up(int index) noexcept {
         while (index > 0) {
-            const int parent = (index - 1) >> 1;
+            const int parent = (index - 1) / kArity;
             if (!((*nodes)[(*entries)[index]].f < (*nodes)[(*entries)[parent]].f)) break;
             swap_entries(index, parent);
             index = parent;
@@ -159,13 +163,15 @@ struct MinHeap {
 
     void down(int index) noexcept {
         while (true) {
-            const int left = (index << 1) + 1;
-            const int right = left + 1;
-            if (left >= static_cast<int>(entries->size())) break;
-            int best = left;
-            if (right < static_cast<int>(entries->size())
-                && (*nodes)[(*entries)[right]].f < (*nodes)[(*entries)[left]].f) {
-                best = right;
+            const int first_child = index * kArity + 1;
+            if (first_child >= static_cast<int>(entries->size())) break;
+            int best = first_child;
+            const int child_limit = std::min(first_child + kArity,
+                                             static_cast<int>(entries->size()));
+            for (int child = first_child + 1; child < child_limit; ++child) {
+                if ((*nodes)[(*entries)[child]].f < (*nodes)[(*entries)[best]].f) {
+                    best = child;
+                }
             }
             if (!((*nodes)[(*entries)[best]].f < (*nodes)[(*entries)[index]].f)) break;
             swap_entries(index, best);
@@ -228,6 +234,24 @@ struct SearchResult {
     return SearchResult{};
 }
 
+[[nodiscard]] std::size_t mask_words(std::size_t count) noexcept {
+    return (count + (kMaskWordBits - 1)) / kMaskWordBits;
+}
+
+void mask_clear(std::vector<std::uint64_t>& mask, std::size_t count) {
+    mask.assign(mask_words(count), 0ULL);
+}
+
+void mask_set(std::uint64_t* mask, std::size_t index, bool value) noexcept {
+    const std::size_t word = index >> 6;
+    const std::uint64_t bit = std::uint64_t{1} << (index & 63);
+    if (value) {
+        mask[word] |= bit;
+    } else {
+        mask[word] &= ~bit;
+    }
+}
+
 } // namespace
 
 void build_pathfinder_masks_scalar(const std::int8_t* path_types,
@@ -236,14 +260,17 @@ void build_pathfinder_masks_scalar(const std::int8_t* path_types,
                                    int pathfinding_malus_count,
                                    PathfinderMasks masks) noexcept {
     if (!path_types || !pathfinding_malus || !masks.passable || !masks.standing) return;
+    const std::size_t words = mask_words(count);
+    std::fill(masks.passable, masks.passable + words, 0ULL);
+    std::fill(masks.standing, masks.standing + words, 0ULL);
     for (std::size_t i = 0; i < count; ++i) {
         const int type = static_cast<int>(path_types[i]);
         const bool is_passable = type != kBlocked
             && type >= 0
             && type < pathfinding_malus_count
             && pathfinding_malus[type] >= 0.0F;
-        masks.passable[i] = is_passable ? 1 : 0;
-        masks.standing[i] = is_passable && type != kOpen ? 1 : 0;
+        mask_set(masks.passable, i, is_passable);
+        mask_set(masks.standing, i, is_passable && type != kOpen);
     }
 }
 
@@ -292,8 +319,8 @@ namespace {
     const int grid_volume = volume(in);
     if (grid_volume <= 0) return empty_search();
 
-    scratch.passable.assign(static_cast<std::size_t>(grid_volume), 0);
-    scratch.standing.assign(static_cast<std::size_t>(grid_volume), 0);
+    mask_clear(scratch.passable, static_cast<std::size_t>(grid_volume));
+    mask_clear(scratch.standing, static_cast<std::size_t>(grid_volume));
     build_pathfinder_masks(in.path_types, static_cast<std::size_t>(grid_volume),
                            in.pathfinding_malus, in.pathfinding_malus_count,
                            PathfinderMasks{scratch.passable.data(), scratch.standing.data()});
@@ -307,7 +334,15 @@ namespace {
     }
 
     const int max_nodes = std::min(in.config.max_visited_nodes, grid_volume);
-    scratch.grid_to_node.assign(static_cast<std::size_t>(grid_volume), -1);
+    const std::size_t grid_volume_sz = static_cast<std::size_t>(grid_volume);
+    if (scratch.grid_to_node.size() < grid_volume_sz) {
+        scratch.grid_to_node.resize(grid_volume_sz, -1);
+        scratch.grid_stamp.resize(grid_volume_sz, 0);
+    }
+    if (++scratch.current_stamp == 0) {
+        std::fill(scratch.grid_stamp.begin(), scratch.grid_stamp.end(), 0);
+        scratch.current_stamp = 1;
+    }
     scratch.heap_index.clear();
     scratch.nodes.clear();
     scratch.heap_entries.clear();
@@ -317,11 +352,14 @@ namespace {
 
     auto get_node = [&](int x, int y, int z, std::int8_t type, float malus) noexcept -> int {
         const int gi = grid_index(in, x, y, z);
-        int index = scratch.grid_to_node[static_cast<std::size_t>(gi)];
-        if (index >= 0) return index;
+        const std::size_t gsi = static_cast<std::size_t>(gi);
+        if (scratch.grid_stamp[gsi] == scratch.current_stamp) {
+            return scratch.grid_to_node[gsi];
+        }
         if (static_cast<int>(scratch.nodes.size()) >= max_nodes) return -1;
-        index = static_cast<int>(scratch.nodes.size());
-        scratch.grid_to_node[static_cast<std::size_t>(gi)] = index;
+        const int index = static_cast<int>(scratch.nodes.size());
+        scratch.grid_to_node[gsi] = index;
+        scratch.grid_stamp[gsi] = scratch.current_stamp;
         PathfinderNode node{};
         node.x = x;
         node.y = y;

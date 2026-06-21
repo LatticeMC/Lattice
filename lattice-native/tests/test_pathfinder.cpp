@@ -65,6 +65,10 @@ void fill_floor(Grid& grid, int y) {
     }
 }
 
+bool mask_get(const std::uint64_t* mask, std::size_t index) {
+    return ((mask[index >> 6] >> (index & 63)) & 1ULL) != 0ULL;
+}
+
 } // namespace
 
 TEST_CASE("pathfinder: straight path") {
@@ -129,18 +133,18 @@ TEST_CASE("pathfinder: drops to lower floor") {
 TEST_CASE("pathfinder masks: scalar classifies passable and standing") {
     const std::int8_t types[] = {BLOCKED, OPEN, WALKABLE, 3};
     const float malus[] = {-1.0F, 0.0F, 0.0F, -1.0F};
-    std::uint8_t passable[4] = {};
-    std::uint8_t standing[4] = {};
+    std::uint64_t passable[1] = {};
+    std::uint64_t standing[1] = {};
     build_pathfinder_masks_scalar(types, 4, malus, 4, PathfinderMasks{passable, standing});
 
-    CHECK(passable[0] == 0);
-    CHECK(passable[1] == 1);
-    CHECK(passable[2] == 1);
-    CHECK(passable[3] == 0);
-    CHECK(standing[0] == 0);
-    CHECK(standing[1] == 0);
-    CHECK(standing[2] == 1);
-    CHECK(standing[3] == 0);
+    CHECK_FALSE(mask_get(passable, 0));
+    CHECK(mask_get(passable, 1));
+    CHECK(mask_get(passable, 2));
+    CHECK_FALSE(mask_get(passable, 3));
+    CHECK_FALSE(mask_get(standing, 0));
+    CHECK_FALSE(mask_get(standing, 1));
+    CHECK(mask_get(standing, 2));
+    CHECK_FALSE(mask_get(standing, 3));
 }
 
 TEST_CASE("pathfinder masks: dispatcher matches scalar") {
@@ -149,10 +153,11 @@ TEST_CASE("pathfinder masks: dispatcher matches scalar") {
         types[i] = static_cast<std::int8_t>(i % 3);
     }
     const float malus[] = {-1.0F, 0.0F, 0.0F};
-    std::vector<std::uint8_t> passableScalar(types.size());
-    std::vector<std::uint8_t> standingScalar(types.size());
-    std::vector<std::uint8_t> passableDispatch(types.size());
-    std::vector<std::uint8_t> standingDispatch(types.size());
+    const std::size_t words = (types.size() + 63) / 64;
+    std::vector<std::uint64_t> passableScalar(words);
+    std::vector<std::uint64_t> standingScalar(words);
+    std::vector<std::uint64_t> passableDispatch(words);
+    std::vector<std::uint64_t> standingDispatch(words);
 
     build_pathfinder_masks_scalar(types.data(), types.size(), malus, 3,
             PathfinderMasks{passableScalar.data(), standingScalar.data()});

@@ -70,17 +70,19 @@ struct PathfinderOutput {
 };
 
 struct PathfinderScratch {
-    std::vector<std::uint8_t> passable{};
-    std::vector<std::uint8_t> standing{};
+    std::vector<std::uint64_t> passable{};
+    std::vector<std::uint64_t> standing{};
     std::vector<int> grid_to_node{};
+    std::vector<std::uint32_t> grid_stamp{};
+    std::uint32_t current_stamp = 1;
     std::vector<int> heap_index{};
     std::vector<int> heap_entries{};
     std::vector<PathfinderNode> nodes{};
 };
 
 struct PathfinderMasks {
-    std::uint8_t* passable = nullptr;
-    std::uint8_t* standing = nullptr;
+    std::uint64_t* passable = nullptr;
+    std::uint64_t* standing = nullptr;
 };
 
 void build_pathfinder_masks_scalar(const std::int8_t* path_types,

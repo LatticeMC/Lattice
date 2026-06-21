@@ -10,6 +10,8 @@ namespace lattice::world::entity {
 
 namespace {
 
+constexpr std::size_t kMaskWordBits = 64;
+
 [[nodiscard]] bool can_use_simple_mask(const std::int8_t* path_types,
                                        std::size_t count,
                                        const float* pathfinding_malus,
@@ -41,6 +43,12 @@ void build_pathfinder_masks_avx2(const std::int8_t* path_types,
     const __m256i one = _mm256_set1_epi8(1);
     const __m256i ones = _mm256_set1_epi8(static_cast<char>(0xFF));
 
+    const std::size_t words = (count + (kMaskWordBits - 1)) / kMaskWordBits;
+    for (std::size_t w = 0; w < words; ++w) {
+        masks.passable[w] = 0;
+        masks.standing[w] = 0;
+    }
+
     std::size_t i = 0;
     for (; i + 32 <= count; i += 32) {
         const __m256i types = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(path_types + i));
@@ -48,16 +56,20 @@ void build_pathfinder_masks_avx2(const std::int8_t* path_types,
         const __m256i is_open = _mm256_cmpeq_epi8(types, one);
         const __m256i passable_bits = _mm256_andnot_si256(is_blocked, ones);
         const __m256i standing_bits = _mm256_andnot_si256(is_open, passable_bits);
-        const __m256i passable = _mm256_and_si256(passable_bits, one);
-        const __m256i standing = _mm256_and_si256(standing_bits, one);
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(masks.passable + i), passable);
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(masks.standing + i), standing);
+        const std::uint32_t passable_mask = static_cast<std::uint32_t>(_mm256_movemask_epi8(passable_bits));
+        const std::uint32_t standing_mask = static_cast<std::uint32_t>(_mm256_movemask_epi8(standing_bits));
+        masks.passable[i >> 6] |= static_cast<std::uint64_t>(passable_mask) << (i & 63);
+        masks.standing[i >> 6] |= static_cast<std::uint64_t>(standing_mask) << (i & 63);
     }
 
     for (; i < count; ++i) {
         const bool passable = path_types[i] != 0;
-        masks.passable[i] = passable ? 1 : 0;
-        masks.standing[i] = passable && path_types[i] != 1 ? 1 : 0;
+        if (passable) {
+            masks.passable[i >> 6] |= std::uint64_t{1} << (i & 63);
+        }
+        if (passable && path_types[i] != 1) {
+            masks.standing[i >> 6] |= std::uint64_t{1} << (i & 63);
+        }
     }
 }
 
