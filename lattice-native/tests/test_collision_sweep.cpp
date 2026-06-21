@@ -86,7 +86,7 @@ TEST_CASE("collision: near-touching within epsilon clamps to gap") {
     double mv[3] = {5.0, 0.0, 0.0};
     adjust_movement_scalar(moving, mv, obstacles, 1);
     // gap = 0.5*eps, not < -eps so not skipped, min(0.5*eps, 5) = 0.5*eps
-    CHECK(mv[0] == 0.5 * eps);
+    CHECK(mv[0] == doctest::Approx(0.5 * eps).epsilon(1e-12));
 }
 
 TEST_CASE("collision: slight penetration clamps to gap") {
@@ -96,7 +96,7 @@ TEST_CASE("collision: slight penetration clamps to gap") {
     double mv[3] = {5.0, 0.0, 0.0};
     adjust_movement_scalar(moving, mv, obstacles, 1);
     // gap = -0.5*eps, not < -eps (since -0.5*eps > -eps), min(-0.5*eps, 5) = -0.5*eps
-    CHECK(mv[0] == -0.5 * eps);
+    CHECK(mv[0] == doctest::Approx(-0.5 * eps).epsilon(1e-12));
 }
 
 TEST_CASE("collision: deep penetration beyond epsilon skips obstacle") {

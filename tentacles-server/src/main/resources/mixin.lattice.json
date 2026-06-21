@@ -33,7 +33,6 @@
     "DragonSittingScanningPhaseMixin",
     "EnderDragonMixin",
     "ExperienceOrbMixin",
-    "MobDespawnMixin",
     "TrackedEntityVisibilityMixin",
     "BeardifierAccessor",
     "BeardifierMixin",

@@ -16,7 +16,7 @@ constexpr std::int8_t OPEN = 1;
 constexpr std::int8_t WALKABLE = 2;
 constexpr std::int8_t WALKABLE_DOOR = 3;
 constexpr std::int8_t WATER = 9;
-constexpr std::int8_t COCOA = 26;
+constexpr std::int8_t COCOA = 23;
 
 struct Grid {
     int sx;
@@ -112,7 +112,7 @@ TEST_CASE("pathfinder: unreachable target returns partial path") {
 
 TEST_CASE("pathfinder: one block jump") {
     Grid grid(5, 3, 3);
-    fill_floor(grid, 0);
+    for (int x = 0; x < 5; ++x) grid.at(x, 0, 1) = WALKABLE;
     grid.at(2, 0, 1) = BLOCKED;
     grid.at(2, 1, 1) = WALKABLE;
     PathfinderResult result = run(grid, 0, 0, 1, 4, 0, 1);
@@ -128,6 +128,7 @@ TEST_CASE("pathfinder: drops to lower floor") {
     Grid grid(6, 4, 3);
     fill_floor(grid, 2);
     for (int x = 3; x < 6; ++x) grid.at(x, 0, 1) = WALKABLE;
+    for (int x = 3; x < 6; ++x) grid.at(x, 1, 1) = OPEN;
     for (int x = 3; x < 6; ++x) grid.at(x, 2, 1) = OPEN;
     PathfinderResult result = run(grid, 0, 2, 1, 5, 0, 1);
     REQUIRE(result.reached_target);
@@ -136,7 +137,7 @@ TEST_CASE("pathfinder: drops to lower floor") {
 
 TEST_CASE("pathfinder: supports safe extra standing path types") {
     Grid grid(5, 2, 3);
-    fill_floor(grid, 0);
+    for (int x = 0; x < 5; ++x) grid.at(x, 0, 1) = WALKABLE;
     grid.at(2, 0, 1) = WALKABLE_DOOR;
     grid.at(3, 0, 1) = COCOA;
     PathfinderResult result = run(grid, 0, 0, 1, 4, 0, 1);
@@ -153,7 +154,7 @@ TEST_CASE("pathfinder: supports safe extra standing path types") {
 
 TEST_CASE("pathfinder: supports water when caller marks it passable") {
     Grid grid(5, 2, 3);
-    fill_floor(grid, 0);
+    for (int x = 0; x < 5; ++x) grid.at(x, 0, 1) = WALKABLE;
     grid.at(2, 0, 1) = WATER;
     PathfinderResult result = run(grid, 0, 0, 1, 4, 0, 1);
     REQUIRE(result.reached_target);
