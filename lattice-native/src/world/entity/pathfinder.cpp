@@ -14,6 +14,7 @@ namespace {
 
 constexpr std::int8_t kBlocked = 0;
 constexpr std::int8_t kOpen = 1;
+constexpr std::int8_t kWalkableDoor = 3;
 constexpr std::size_t kMaskWordBits = 64;
 
 constexpr std::int8_t kClosedFlag = 1;
@@ -124,6 +125,11 @@ constexpr std::int8_t kOpenFlag = 2;
 
 [[nodiscard]] float best_h(const PathfinderInputs& in, const PathfinderNode& node,
                            int* best_target) noexcept {
+    if (in.target_count == 1) {
+        if (best_target) *best_target = 0;
+        return distance(node.x, node.y, node.z,
+                        in.target_x[0], in.target_y[0], in.target_z[0]);
+    }
     float result = std::numeric_limits<float>::max();
     int target_index = -1;
     for (int i = 0; i < in.target_count; ++i) {
@@ -396,15 +402,27 @@ namespace {
         PathfinderNode& current = scratch.nodes[static_cast<std::size_t>(current_index)];
         current.flags |= kClosedFlag;
 
-        for (int i = 0; i < in.target_count; ++i) {
+        if (in.target_count == 1) {
             if (manhattan(current.x, current.y, current.z,
-                          in.target_x[i], in.target_y[i], in.target_z[i]) <= in.config.reach_range) {
+                          in.target_x[0], in.target_y[0], in.target_z[0]) <= in.config.reach_range) {
                 SearchResult result{};
                 result.scratch = &scratch;
                 result.end_index = current_index;
-                result.target_index = i;
+                result.target_index = 0;
                 result.reached_target = true;
                 return result;
+            }
+        } else {
+            for (int i = 0; i < in.target_count; ++i) {
+                if (manhattan(current.x, current.y, current.z,
+                              in.target_x[i], in.target_y[i], in.target_z[i]) <= in.config.reach_range) {
+                    SearchResult result{};
+                    result.scratch = &scratch;
+                    result.end_index = current_index;
+                    result.target_index = i;
+                    result.reached_target = true;
+                    return result;
+                }
             }
         }
 
@@ -438,6 +456,7 @@ namespace {
             const int b = cardinal[(d + 1) & 3];
             if (a < 0 || b < 0) continue;
             if (scratch.nodes[a].y > current.y || scratch.nodes[b].y > current.y) continue;
+            if (scratch.nodes[a].type == kWalkableDoor || scratch.nodes[b].type == kWalkableDoor) continue;
             int ny = current.y;
             std::int8_t type = kBlocked;
             float malus = -1.0F;
@@ -449,7 +468,7 @@ namespace {
             const int ni = get_node(current.x + dir_x[d] + dir_x[(d + 1) & 3],
                                     ny, current.z + dir_z[d] + dir_z[(d + 1) & 3],
                                     type, malus);
-            if (ni >= 0) neighbors[neighbor_count++] = ni;
+            if (ni >= 0 && scratch.nodes[ni].type != kWalkableDoor) neighbors[neighbor_count++] = ni;
         }
 
         for (int i = 0; i < neighbor_count; ++i) {

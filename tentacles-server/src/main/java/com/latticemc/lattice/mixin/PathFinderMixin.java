@@ -135,7 +135,7 @@ public abstract class PathFinderMixin {
             for (int z = minZ; z <= maxZ; ++z) {
                 for (int x = minX; x <= maxX; ++x) {
                     PathType type = evaluator.getPathTypeOfMob(context, x, y, z, mob);
-                    if (type != PathType.BLOCKED && type != PathType.OPEN && type != PathType.WALKABLE) {
+                    if (!this.lattice$isNativePathTypeSupported(type)) {
                         NativePathfinder.recordPrecomputeNanos(System.nanoTime() - precomputeStart);
                         return null;
                     }
@@ -182,6 +182,15 @@ public abstract class PathFinderMixin {
             malus[i] = mob.getPathfindingMalus(PATH_TYPES[i]);
         }
         return malus;
+    }
+
+    private boolean lattice$isNativePathTypeSupported(PathType type) {
+        return type == PathType.BLOCKED
+                || type == PathType.OPEN
+                || type == PathType.WALKABLE
+                || type == PathType.DOOR_OPEN
+                || type == PathType.WALKABLE_DOOR
+                || type == PathType.COCOA;
     }
 
     private boolean lattice$matchesVanilla(PathNavigationRegion region,

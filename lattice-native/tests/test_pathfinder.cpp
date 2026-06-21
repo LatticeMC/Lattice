@@ -14,6 +14,8 @@ namespace {
 constexpr std::int8_t BLOCKED = 0;
 constexpr std::int8_t OPEN = 1;
 constexpr std::int8_t WALKABLE = 2;
+constexpr std::int8_t WALKABLE_DOOR = 3;
+constexpr std::int8_t COCOA = 24;
 
 struct Grid {
     int sx;
@@ -25,6 +27,7 @@ struct Grid {
     Grid(int x, int y, int z) : sx(x), sy(y), sz(z), cells(x * y * z, BLOCKED), malus(3, -1.0F) {
         malus[OPEN] = 0.0F;
         malus[WALKABLE] = 0.0F;
+        malus.resize(25, 0.0F);
     }
 
     std::int8_t& at(int x, int y, int z) {
@@ -128,6 +131,34 @@ TEST_CASE("pathfinder: drops to lower floor") {
     PathfinderResult result = run(grid, 0, 2, 1, 5, 0, 1);
     REQUIRE(result.reached_target);
     CHECK(result.path.back().y == 0);
+}
+
+TEST_CASE("pathfinder: supports safe extra standing path types") {
+    Grid grid(5, 2, 3);
+    fill_floor(grid, 0);
+    grid.at(2, 0, 1) = WALKABLE_DOOR;
+    grid.at(3, 0, 1) = COCOA;
+    PathfinderResult result = run(grid, 0, 0, 1, 4, 0, 1);
+    REQUIRE(result.reached_target);
+    bool usedDoor = false;
+    bool usedCocoa = false;
+    for (const auto& node : result.path) {
+        if (node.x == 2 && node.z == 1) usedDoor = true;
+        if (node.x == 3 && node.z == 1) usedCocoa = true;
+    }
+    CHECK(usedDoor);
+    CHECK(usedCocoa);
+}
+
+TEST_CASE("pathfinder: walkable door blocks diagonal shortcut") {
+    Grid grid(3, 2, 3);
+    fill_floor(grid, 0);
+    grid.at(1, 0, 0) = WALKABLE_DOOR;
+    grid.at(0, 0, 1) = WALKABLE;
+    grid.at(1, 0, 1) = WALKABLE;
+    PathfinderResult result = run(grid, 0, 0, 0, 2, 0, 2);
+    REQUIRE(result.reached_target);
+    CHECK(result.path.size() > 3);
 }
 
 TEST_CASE("pathfinder masks: scalar classifies passable and standing") {
