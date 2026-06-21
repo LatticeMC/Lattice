@@ -115,6 +115,7 @@ TEST_CASE("pathfinder: one block jump") {
     for (int x = 0; x < 5; ++x) grid.at(x, 0, 1) = WALKABLE;
     grid.at(2, 0, 1) = BLOCKED;
     grid.at(2, 1, 1) = WALKABLE;
+    grid.at(3, 1, 1) = OPEN;
     PathfinderResult result = run(grid, 0, 0, 1, 4, 0, 1);
     REQUIRE(result.reached_target);
     bool jumped = false;
