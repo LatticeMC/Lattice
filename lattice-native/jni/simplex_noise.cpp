@@ -23,8 +23,8 @@ Java_com_latticemc_lattice_nativelib_NativeSimplexNoise_nativeCreate(
         lattice::jni::throw_illegal_arg(env, "lattice simplex: null permutation");
         return 0;
     }
-    if (env->GetArrayLength(jPermutation) != 256) {
-        lattice::jni::throw_illegal_arg(env, "lattice simplex: permutation must be 256 ints");
+    if (env->GetArrayLength(jPermutation) < 256) {
+        lattice::jni::throw_illegal_arg(env, "lattice simplex: permutation must contain at least 256 ints");
         return 0;
     }
     auto* s = new (std::nothrow) png::SimplexNoiseSampler{};
