@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace lattice::world::gen::densityfunction::beardifier {
 
@@ -27,6 +28,11 @@ struct Junction {
     int source_x;
     int source_ground_y;
     int source_z;
+};
+
+struct BeardifierData {
+    std::vector<RigidPiece> pieces;
+    std::vector<Junction> junctions;
 };
 
 [[nodiscard]] double compute(const RigidPiece* pieces, int piece_count,

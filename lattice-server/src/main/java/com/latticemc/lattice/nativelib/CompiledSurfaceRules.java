@@ -22,6 +22,12 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         this.namedNoiseCount = namedNoises.size();
     }
 
+    public int getDoublesLength() { return 3 + namedNoiseCount; }
+
+    public double getNamedNoiseValue(int index, int x, int z) {
+        return namedNoises.get(index).getValue().getValue(x, 0.0, z);
+    }
+
     public BlockState tryApply(SurfaceSystemAccess system,
                                ChunkAccess chunk,
                                Holder<Biome> biome,
@@ -34,11 +40,12 @@ public final class CompiledSurfaceRules implements AutoCloseable {
                                int surfaceDepth,
                                int minSurfaceLevel,
                                boolean hole,
-                               boolean steepSlope) {
-        int[] ints = new int[10];
-        double[] doubles = new double[3 + namedNoiseCount];
-        byte[] bools = new byte[2];
-
+                               boolean steepSlope,
+                               int[] ints,
+                               double surfaceNoise,
+                               double surfaceSecondaryNoise,
+                               double[] namedNoiseValues,
+                               byte[] bools) {
         ints[0] = x;
         ints[1] = y;
         ints[2] = z;
@@ -50,17 +57,12 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         ints[8] = surfaceDepth;
         ints[9] = minSurfaceLevel;
 
-        doubles[0] = biome.value().coldEnoughToSnow(new BlockPos(x, y, z), system.seaLevel()) ? 0.0 : 1.0;
-        doubles[1] = system.surfaceNoiseValue(x, z);
-        doubles[2] = system.surfaceSecondaryValue(x, z);
-        for (int i = 0; i < namedNoiseCount; ++i) {
-            doubles[3 + i] = namedNoises.get(i).getValue().getValue(x, 0.0, z);
-        }
+        double temperature = biome.value().coldEnoughToSnow(new BlockPos(x, y, z), system.seaLevel()) ? 0.0 : 1.0;
 
         bools[0] = (byte) (hole ? 1 : 0);
         bools[1] = (byte) (steepSlope ? 1 : 0);
 
-        int id = rules.evaluate(ints, doubles, bools);
+        int id = rules.evaluate(ints, temperature, surfaceNoise, surfaceSecondaryNoise, namedNoiseValues, bools);
         if (id == NativeMaterialRules.NO_MATCH) return null;
         if (id == NativeMaterialRules.BANDLANDS_SENTINEL) return system.bandlands(x, y, z);
         return Block.stateById(id);

@@ -286,12 +286,14 @@ Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeAddRuleBandlands(
 // ---- Sample ---------------------------------------------------------------
 
 /*
- * nativeEvaluate(handle, ctxIntArr, ctxDoubleArr, ctxBoolArr) → int
+ * nativeEvaluate(handle, ctxIntArr, temperature, surfaceNoise, surfaceSecondaryNoise, namedNoiseArr, ctxBoolArr) → int
  *   ctxIntArr (length 10): x, y, z, surface_y, fluid_height,
  *                          stone_depth_floor, stone_depth_ceiling,
  *                          biome_id, surface_depth, min_surface_level
- *   ctxDoubleArr (length >= 3): temperature, surface_noise,
- *                               surface_secondary_noise, then optional named-noise slots
+ *   temperature: temperature value (0.0 for frozen, 1.0 otherwise)
+ *   surfaceNoise: surface noise value
+ *   surfaceSecondaryNoise: surface secondary noise value
+ *   namedNoiseArr: named noise values (may be null or empty)
  *   ctxBoolArr (length 2)  : hole_at_position, steep_slope (encoded as bytes)
  *
  * Returns matched block index or -1.
@@ -300,23 +302,29 @@ JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluate(
         JNIEnv* env, jclass /*cls*/,
         jlong handle,
-        jintArray jCtxInts, jdoubleArray jCtxDoubles, jbyteArray jCtxBools) {
+        jintArray jCtxInts, jdouble temperature, jdouble surfaceNoise, jdouble surfaceSecondaryNoise,
+        jdoubleArray jNamedNoiseArr, jbyteArray jCtxBools) {
     auto* a = arena_from(handle);
     if (!a) return -1;
-    if (!jCtxInts || !jCtxDoubles || !jCtxBools) return -1;
-    if (env->GetArrayLength(jCtxInts) < 10
-        || env->GetArrayLength(jCtxDoubles) < 3
-        || env->GetArrayLength(jCtxBools) < 2) {
+    if (!jCtxInts || !jCtxBools) return -1;
+    if (env->GetArrayLength(jCtxInts) < 10 || env->GetArrayLength(jCtxBools) < 2) {
         return -1;
     }
 
     jint*    ints    = env->GetIntArrayElements(jCtxInts, nullptr);
-    jdouble* doubles = env->GetDoubleArrayElements(jCtxDoubles, nullptr);
     jbyte*   bools   = env->GetByteArrayElements(jCtxBools, nullptr);
-    if (!ints || !doubles || !bools) {
-        if (bools)   env->ReleaseByteArrayElements(jCtxBools, bools, JNI_ABORT);
-        if (doubles) env->ReleaseDoubleArrayElements(jCtxDoubles, doubles, JNI_ABORT);
-        if (ints)    env->ReleaseIntArrayElements(jCtxInts, ints, JNI_ABORT);
+    jdouble* namedNoise = nullptr;
+    jsize namedNoiseLen = 0;
+    if (jNamedNoiseArr) {
+        namedNoiseLen = env->GetArrayLength(jNamedNoiseArr);
+        if (namedNoiseLen > 0) {
+            namedNoise = env->GetDoubleArrayElements(jNamedNoiseArr, nullptr);
+        }
+    }
+    if (!ints || !bools) {
+        if (namedNoise) env->ReleaseDoubleArrayElements(jNamedNoiseArr, namedNoise, JNI_ABORT);
+        if (bools)      env->ReleaseByteArrayElements(jCtxBools, bools, JNI_ABORT);
+        if (ints)       env->ReleaseIntArrayElements(jCtxInts, ints, JNI_ABORT);
         return -1;
     }
 
@@ -331,21 +339,20 @@ Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluate(
     ctx.biome_id                = ints[7];
     ctx.surface_depth           = ints[8];
     ctx.min_surface_level       = ints[9];
-    ctx.temperature             = doubles[0];
-    ctx.surface_noise           = doubles[1];
-    ctx.surface_secondary_noise = doubles[2];
-    const jsize doubles_len = env->GetArrayLength(jCtxDoubles);
-    if (doubles_len > 3) {
-        ctx.noise_values = doubles + 3;
-        ctx.noise_value_count = static_cast<int>(doubles_len - 3);
+    ctx.temperature             = temperature;
+    ctx.surface_noise           = surfaceNoise;
+    ctx.surface_secondary_noise = surfaceSecondaryNoise;
+    if (namedNoise && namedNoiseLen > 0) {
+        ctx.noise_values = namedNoise;
+        ctx.noise_value_count = static_cast<int>(namedNoiseLen);
     }
     ctx.hole_at_position        = (bools[0] != 0);
     ctx.steep_slope             = (bools[1] != 0);
 
     const int result = mr::evaluate(*a, ctx);
 
+    if (namedNoise) env->ReleaseDoubleArrayElements(jNamedNoiseArr, namedNoise, JNI_ABORT);
     env->ReleaseByteArrayElements(jCtxBools, bools, JNI_ABORT);
-    env->ReleaseDoubleArrayElements(jCtxDoubles, doubles, JNI_ABORT);
     env->ReleaseIntArrayElements(jCtxInts, ints, JNI_ABORT);
     return result;
 }

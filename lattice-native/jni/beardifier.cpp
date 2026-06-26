@@ -9,26 +9,24 @@ namespace bf = lattice::world::gen::densityfunction::beardifier;
 
 extern "C" {
 
-JNIEXPORT jdouble JNICALL
-Java_com_latticemc_lattice_nativelib_NativeBeardifier_nativeCompute(
+JNIEXPORT jlong JNICALL
+Java_com_latticemc_lattice_nativelib_NativeBeardifier_nativeCreate(
         JNIEnv* env, jclass /*cls*/,
         jintArray pieceInts,
-        jintArray junctionInts,
-        jint blockX, jint blockY, jint blockZ) {
-    std::vector<bf::RigidPiece> pieces;
-    std::vector<bf::Junction> junctions;
+        jintArray junctionInts) {
+    auto* store = new bf::BeardifierData{};
 
     if (pieceInts) {
         const jsize n = env->GetArrayLength(pieceInts);
-        if (n % 8 != 0) return 0.0;
+        if (n % 8 != 0) { delete store; return 0; }
         lattice::jni::CriticalIntArray ints{env, pieceInts};
-        if (!ints) return 0.0;
+        if (!ints) { delete store; return 0; }
         auto* p = reinterpret_cast<const jint*>(ints.data());
         const int count = static_cast<int>(n / 8);
-        pieces.reserve(static_cast<std::size_t>(count));
+        store->pieces.reserve(static_cast<std::size_t>(count));
         for (int i = 0; i < count; ++i) {
             const int off = i * 8;
-            pieces.push_back(bf::RigidPiece{
+            store->pieces.push_back(bf::RigidPiece{
                 static_cast<int>(p[off + 0]),
                 static_cast<int>(p[off + 1]),
                 static_cast<int>(p[off + 2]),
@@ -43,15 +41,15 @@ Java_com_latticemc_lattice_nativelib_NativeBeardifier_nativeCompute(
 
     if (junctionInts) {
         const jsize n = env->GetArrayLength(junctionInts);
-        if (n % 3 != 0) return 0.0;
+        if (n % 3 != 0) { delete store; return 0; }
         lattice::jni::CriticalIntArray ints{env, junctionInts};
-        if (!ints) return 0.0;
+        if (!ints) { delete store; return 0; }
         auto* p = reinterpret_cast<const jint*>(ints.data());
         const int count = static_cast<int>(n / 3);
-        junctions.reserve(static_cast<std::size_t>(count));
+        store->junctions.reserve(static_cast<std::size_t>(count));
         for (int i = 0; i < count; ++i) {
             const int off = i * 3;
-            junctions.push_back(bf::Junction{
+            store->junctions.push_back(bf::Junction{
                 static_cast<int>(p[off + 0]),
                 static_cast<int>(p[off + 1]),
                 static_cast<int>(p[off + 2]),
@@ -59,8 +57,24 @@ Java_com_latticemc_lattice_nativelib_NativeBeardifier_nativeCompute(
         }
     }
 
-    return static_cast<jdouble>(bf::compute(pieces.data(), static_cast<int>(pieces.size()),
-                                            junctions.data(), static_cast<int>(junctions.size()),
+    return reinterpret_cast<jlong>(store);
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeBeardifier_nativeDestroy(
+        JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
+    delete reinterpret_cast<bf::BeardifierData*>(handle);
+}
+
+JNIEXPORT jdouble JNICALL
+Java_com_latticemc_lattice_nativelib_NativeBeardifier_nativeCompute(
+        JNIEnv* /*env*/, jclass /*cls*/,
+        jlong handle,
+        jint blockX, jint blockY, jint blockZ) {
+    auto* data = reinterpret_cast<bf::BeardifierData*>(handle);
+    if (!data) return 0.0;
+    return static_cast<jdouble>(bf::compute(data->pieces.data(), static_cast<int>(data->pieces.size()),
+                                            data->junctions.data(), static_cast<int>(data->junctions.size()),
                                             static_cast<int>(blockX),
                                             static_cast<int>(blockY),
                                             static_cast<int>(blockZ)));

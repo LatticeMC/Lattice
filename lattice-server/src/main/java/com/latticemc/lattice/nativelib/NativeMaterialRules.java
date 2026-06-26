@@ -12,6 +12,7 @@ public final class NativeMaterialRules implements AutoCloseable {
 
     public static final int NO_MATCH = -1;
     public static final int BANDLANDS_SENTINEL = -2;
+    private static final double[] EMPTY_DOUBLES = new double[0];
 
     private final long handle;
     private final Map<String, Integer> noiseSlots = new HashMap<>();
@@ -38,11 +39,12 @@ public final class NativeMaterialRules implements AutoCloseable {
         nativeSetRootRule(handle, ruleRef);
     }
 
-    public int evaluate(int[] ctxInts, double[] ctxDoubles, byte[] ctxBools) {
+    public int evaluate(int[] ctxInts, double temperature, double surfaceNoise, double surfaceSecondaryNoise, double[] namedNoiseValues, byte[] ctxBools) {
         checkOpen();
-        if (ctxInts == null || ctxDoubles == null || ctxBools == null) throw new IllegalArgumentException("null context array");
-        if (ctxInts.length < 10 || ctxDoubles.length < 3 || ctxBools.length < 2) throw new IllegalArgumentException("context array too short");
-        return nativeEvaluate(handle, ctxInts, ctxDoubles, ctxBools);
+        if (ctxInts == null || ctxBools == null) throw new IllegalArgumentException("null context array");
+        if (ctxInts.length < 10 || ctxBools.length < 2) throw new IllegalArgumentException("context array too short");
+        if (namedNoiseValues == null) namedNoiseValues = EMPTY_DOUBLES;
+        return nativeEvaluate(handle, ctxInts, temperature, surfaceNoise, surfaceSecondaryNoise, namedNoiseValues, ctxBools);
     }
 
     public int addCondHole() { checkOpen(); return nativeAddCondHole(handle); }
@@ -123,7 +125,7 @@ public final class NativeMaterialRules implements AutoCloseable {
     private static native long nativeCreate();
     private static native void nativeDestroy(long handle);
     private static native void nativeSetRootRule(long handle, int ruleRef);
-    private static native int nativeEvaluate(long handle, int[] ctxInts, double[] ctxDoubles, byte[] ctxBools);
+    private static native int nativeEvaluate(long handle, int[] ctxInts, double temperature, double surfaceNoise, double surfaceSecondaryNoise, double[] namedNoiseValues, byte[] ctxBools);
     private static native int nativeAddCondAboveYWithSurface(long h, int minY, int adjust);
     private static native int nativeAddCondAboveYWithStoneDepth(long h, int minY, int surfaceDepthMultiplier);
     private static native int nativeAddCondStoneDepth(long h, int offset, boolean adjustSurfaceDepth, int secondaryRange, boolean ceiling);

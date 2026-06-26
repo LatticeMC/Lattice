@@ -76,6 +76,12 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         final BlockColumn blockColumn = new ChunkBlockColumn(chunk, mutableBlockPos);
         final BlockPos.MutableBlockPos topPos = new BlockPos.MutableBlockPos();
 
+        final SurfaceSystemAccessImpl systemAccess = new SurfaceSystemAccessImpl(this, biomes);
+        final int[] ints = new int[10];
+        final byte[] bools = new byte[2];
+        final int namedNoiseCount = compiled.getDoublesLength() - 3;
+        final double[] namedNoiseValues = new double[namedNoiseCount];
+
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
                 int x = minBlockX + lx;
@@ -94,6 +100,12 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                 int minY = chunk.getMinY();
                 int minSurfaceLevel = lattice$minSurfaceLevel(noiseChunk, x, z, surfaceDepth);
                 boolean steep = lattice$isSteep(chunk, lx, lz);
+
+                final double surfaceNoise = systemAccess.surfaceNoiseValue(x, z);
+                final double surfaceSecondaryNoise = systemAccess.surfaceSecondaryValue(x, z);
+                for (int i = 0; i < namedNoiseCount; ++i) {
+                    namedNoiseValues[i] = compiled.getNamedNoiseValue(i, x, z);
+                }
 
                 for (int y = surfaceTop; y >= minY; y--) {
                     BlockState block = blockColumn.getBlock(y);
@@ -117,7 +129,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                         int stoneDepthBelow = y - stoneBase + 1;
                         if (block == this.defaultBlock) {
                             BlockState out = compiled.tryApply(
-                                    new SurfaceSystemAccessImpl(this, biomes),
+                                    systemAccess,
                                     chunk,
                                     biome,
                                     x,
@@ -129,7 +141,12 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                                     surfaceDepth,
                                     minSurfaceLevel,
                                     surfaceDepth <= 0,
-                                    steep);
+                                    steep,
+                                    ints,
+                                    surfaceNoise,
+                                    surfaceSecondaryNoise,
+                                    namedNoiseValues,
+                                    bools);
                             if (out != null) blockColumn.setBlock(y, out);
                         }
                     }
@@ -164,8 +181,15 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         int z = pos.getZ();
         int surfaceDepth = this.getSurfaceDepth(x, z);
         int minSurfaceLevel = lattice$minSurfaceLevel(noiseChunk, x, z, surfaceDepth);
+        int[] ints = new int[10];
+        byte[] bools = new byte[2];
+        double[] namedNoiseValues = new double[compiled.getDoublesLength() - 3];
+        SurfaceSystemAccessImpl sa = new SurfaceSystemAccessImpl(this, biomes);
+        for (int i = 0; i < namedNoiseValues.length; ++i) {
+            namedNoiseValues[i] = compiled.getNamedNoiseValue(i, x, z);
+        }
         BlockState out = compiled.tryApply(
-                new SurfaceSystemAccessImpl(this, biomes),
+                sa,
                 chunk,
                 biome,
                 x,
@@ -177,7 +201,12 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                 surfaceDepth,
                 minSurfaceLevel,
                 surfaceDepth <= 0,
-                lattice$isSteep(chunk, x & 15, z & 15));
+                lattice$isSteep(chunk, x & 15, z & 15),
+                ints,
+                sa.surfaceNoiseValue(x, z),
+                sa.surfaceSecondaryValue(x, z),
+                namedNoiseValues,
+                bools);
         cir.setReturnValue(Optional.ofNullable(out));
     }
 
