@@ -3,7 +3,7 @@ package com.latticemc.lattice.mixin;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
 
-final class PathfinderBuffers {
+public final class PathfinderBuffers {
     private byte[] pathTypes = new byte[0];
     private BlockPos[] targets = new BlockPos[0];
     private int[] targetX = new int[0];
