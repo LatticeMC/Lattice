@@ -13,7 +13,7 @@ index bc7e4e5560708fea89c584b1d8b471f4966f311a..cd548a2a63ad99c0d91eeb7bb4600efd
      protected LineReader buildReader(LineReaderBuilder builder) {
          builder
 -                .appName("Purpur") // Purpur - Rebrand
-+                .appName("Tentacles") // Purpur - Rebrand // Tentacles
++                .appName("Lattice") // Purpur - Rebrand // Lattice
                  .variable(LineReader.HISTORY_FILE, java.nio.file.Paths.get(".console_history"))
                  .completer(new ConsoleCommandCompleter(this.server))
                  .option(LineReader.Option.COMPLETE_IN_WORD, true);
@@ -25,7 +25,7 @@ index 1b0ee48e28aaa68ddb1f28c23d3c5f5f40505c98..45a3f2576fd0cca58dfdeb75a2217674
  
      private static final String BRAND_PAPER_NAME = "Paper";
      private static final String BRAND_PURPUR_NAME = "Purpur"; // Purpur - Rebrand
-+    private static final String BRAND_TENTACLES_NAME = "Tentacles"; // Tentacles
++    private static final String BRAND_LATTICE_NAME = "Lattice"; // Lattice
  
      private static final String BUILD_DEV = "DEV";
  
@@ -34,10 +34,10 @@ index 1b0ee48e28aaa68ddb1f28c23d3c5f5f40505c98..45a3f2576fd0cca58dfdeb75a2217674
              getManifestAttribute(manifest, ATTRIBUTE_BRAND_ID)
                  .map(Key::key)
 -                .orElse(BRAND_PURPUR_ID), // Purpur - Rebrand
-+                .orElse(BRAND_TENTACLES_ID), // Purpur - Rebrand // Tentacles
++                .orElse(BRAND_LATTICE_ID), // Purpur - Rebrand // Lattice
              getManifestAttribute(manifest, ATTRIBUTE_BRAND_NAME)
 -                .orElse(BRAND_PURPUR_NAME), // Purpur - Rebrand
-+                .orElse(BRAND_TENTACLES_NAME), // Purpur - Rebrand
++                .orElse(BRAND_LATTICE_NAME), // Purpur - Rebrand
              SharedConstants.getCurrentVersion().id(),
              SharedConstants.getCurrentVersion().name(),
              getManifestAttribute(manifest, ATTRIBUTE_BUILD_NUMBER)
@@ -46,7 +46,7 @@ index 1b0ee48e28aaa68ddb1f28c23d3c5f5f40505c98..45a3f2576fd0cca58dfdeb75a2217674
      @Override
      public boolean isBrandCompatible(final @NotNull Key brandId) {
 -        return brandId.equals(this.brandId) || brandId.equals(BRAND_PAPER_ID); // Purpur - Fix pufferfish issues // Purpur - Rebrand
-+        return brandId.equals(this.brandId) || brandId.equals(BRAND_PAPER_ID) || brandId.equals(BRAND_PURPUR_ID); // Purpur - Fix pufferfish issues // Purpur - Rebrand // Tentacles
++        return brandId.equals(this.brandId) || brandId.equals(BRAND_PAPER_ID) || brandId.equals(BRAND_PURPUR_ID); // Purpur - Fix pufferfish issues // Purpur - Rebrand // Lattice
      }
  
      @Override
@@ -59,7 +59,7 @@ index 554fc2c53b5028c8f89a0ae69a75e075ba4f4435..72e6801b6d9a16d94cb2ecbc7dd0f22c
              } else {
                  // this.debugTail = this.debugTail.setNext(new CraftAsyncDebugger(this.currentTick + CraftScheduler.RECENT_TICKS, task.getOwner(), task.getTaskClass())); // Paper
 -                task.getOwner().getLogger().log(Level.SEVERE, "Unexpected Async Task in the Sync Scheduler. Report this to Purpur"); // Paper // Purpur - Rebrand
-+                task.getOwner().getLogger().log(Level.SEVERE, "Unexpected Async Task in the Sync Scheduler. Report this to Tentacles"); // Paper // Purpur - Rebrand // Tentacles
++                task.getOwner().getLogger().log(Level.SEVERE, "Unexpected Async Task in the Sync Scheduler. Report this to Lattice"); // Paper // Purpur - Rebrand // Lattice
                  // We don't need to parse pending
                  // (async tasks must live with race-conditions if they attempt to cancel between these few lines of code)
              }
@@ -72,16 +72,16 @@ index bf0cda94d87e46149a21505fc67ddb9ad9af0838..f34ce2ede86d01cabdde616e6f71c339
                  if (isLongTimeout) {
                      logger.log(Level.SEVERE, "------------------------------");
 -                    logger.log(Level.SEVERE, "The server has stopped responding! This is (probably) not a Purpur bug."); // Paper // Purpur - Rebrand
-+                    logger.log(Level.SEVERE, "The server has stopped responding! This is (probably) not a Tentacles bug."); // Paper // Purpur - Rebrand // Tentacles
++                    logger.log(Level.SEVERE, "The server has stopped responding! This is (probably) not a Lattice bug."); // Paper // Purpur - Rebrand // Lattice
                      logger.log(Level.SEVERE, "If you see a plugin in the Server thread dump below, then please report it to that author");
                      logger.log(Level.SEVERE, "\t *Especially* if it looks like HTTP or MySQL operations are occurring");
                      logger.log(Level.SEVERE, "If you see a world save or edit, then it means you did far more than your server can handle at once");
                      logger.log(Level.SEVERE, "\t If this is the case, consider increasing timeout-time in spigot.yml but note that this will replace the crash with LARGE lag spikes");
 -                    logger.log(Level.SEVERE, "If you are unsure or still think this is a Purpur bug, please report this to https://github.com/PurpurMC/Purpur/issues"); // Purpur - Rebrand
-+                    logger.log(Level.SEVERE, "If you are unsure or still think this is a Tentacles bug, please report this to https://github.com/PurpurMC/Tentacles/issues"); // Purpur - Rebrand // Tentacles
++                    logger.log(Level.SEVERE, "If you are unsure or still think this is a Lattice bug, please report this to https://github.com/LatticeMC/Lattice/issues"); // Purpur - Rebrand // Lattice
                      logger.log(Level.SEVERE, "Be sure to include ALL relevant console errors and Minecraft crash reports");
 -                    logger.log(Level.SEVERE, "Purpur version: " + Bukkit.getServer().getVersion()); // Purpur - Rebrand
-+                    logger.log(Level.SEVERE, "Tentacles version: " + Bukkit.getServer().getVersion()); // Purpur - Rebrand // Tentacles
++                    logger.log(Level.SEVERE, "Lattice version: " + Bukkit.getServer().getVersion()); // Purpur - Rebrand // Lattice
  
                      if (net.minecraft.world.level.Level.lastPhysicsProblem != null) {
                          logger.log(Level.SEVERE, "------------------------------");
@@ -90,7 +90,7 @@ index bf0cda94d87e46149a21505fc67ddb9ad9af0838..f34ce2ede86d01cabdde616e6f71c339
                      // Paper end
                  } else {
 -                    logger.log(Level.SEVERE, "--- DO NOT REPORT THIS TO PURPUR - THIS IS NOT A BUG OR A CRASH  - " + Bukkit.getServer().getVersion() + " ---"); // Purpur - Rebrand
-+                    logger.log(Level.SEVERE, "--- DO NOT REPORT THIS TO TENTACLES - THIS IS NOT A BUG OR A CRASH  - " + Bukkit.getServer().getVersion() + " ---"); // Purpur - Rebrand // Tentacles
++                    logger.log(Level.SEVERE, "--- DO NOT REPORT THIS TO LATTICE - THIS IS NOT A BUG OR A CRASH  - " + Bukkit.getServer().getVersion() + " ---"); // Purpur - Rebrand // Lattice
                      logger.log(Level.SEVERE, "The server has not responded for " + (currentTime - lastTick) / 1000 + " seconds! Creating thread dump");
                  }
                  // Paper end - Different message for short timeout
@@ -99,7 +99,7 @@ index bf0cda94d87e46149a21505fc67ddb9ad9af0838..f34ce2ede86d01cabdde616e6f71c339
                      }
                  } else {
 -                    logger.log(Level.SEVERE, "--- DO NOT REPORT THIS TO PURPUR - THIS IS NOT A BUG OR A CRASH ---"); // Purpur - Rebrand
-+                    logger.log(Level.SEVERE, "--- DO NOT REPORT THIS TO TENTACLES - THIS IS NOT A BUG OR A CRASH ---"); // Purpur - Rebrand // Tentacles
++                    logger.log(Level.SEVERE, "--- DO NOT REPORT THIS TO LATTICE - THIS IS NOT A BUG OR A CRASH ---"); // Purpur - Rebrand // Lattice
                  }
  
                  logger.log(Level.SEVERE, "------------------------------");

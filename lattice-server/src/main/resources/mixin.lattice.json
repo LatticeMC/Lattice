@@ -3,7 +3,7 @@
   "minVersion": "0.8",
   "compatibilityLevel": "JAVA_21",
   "package": "com.latticemc.lattice.mixin",
-  "refmap": "tentacles.refmap.json",
+  "refmap": "lattice.refmap.json",
   "verbose": true,
   "mixins": [],
   "server": [
