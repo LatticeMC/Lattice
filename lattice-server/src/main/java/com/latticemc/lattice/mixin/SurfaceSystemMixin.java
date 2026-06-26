@@ -7,6 +7,7 @@ import com.latticemc.lattice.nativelib.SurfaceRuleCompiler;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -27,8 +28,11 @@ import net.minecraft.world.level.levelgen.SurfaceRules;
 import net.minecraft.world.level.levelgen.SurfaceSystem;
 import net.minecraft.world.level.levelgen.WorldGenerationContext;
 import net.minecraft.world.level.levelgen.carver.CarvingContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -36,6 +40,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(SurfaceSystem.class)
 public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
+    @Unique private static final Logger lattice$logger = LoggerFactory.getLogger("Lattice");
+    @Unique private static final AtomicBoolean lattice$compileLogged = new AtomicBoolean(false);
+    @Unique private static final AtomicBoolean lattice$nokLogged = new AtomicBoolean(false);
     private final Map<SurfaceRules.RuleSource, CompiledSurfaceRules> lattice$compiled = new ConcurrentHashMap<>();
 
     @Shadow protected abstract BlockState getBand(int x, int y, int z);
@@ -67,7 +74,12 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                                       CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
         CompiledSurfaceRules compiled = lattice$compile(ruleSource, randomState, biomes, context);
-        if (compiled == null) return;
+        if (compiled == null) {
+            if (lattice$nokLogged.compareAndSet(false, true)) {
+                lattice$logger.warn("[Lattice] SurfaceSystem native path DISABLED — compile returned null, falling back to vanilla");
+            }
+            return;
+        }
 
         final BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
         final ChunkPos pos = chunk.getPos();
@@ -219,7 +231,10 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                 NativeMaterialRules rules = new NativeMaterialRules();
                 return new SurfaceRuleCompiler(rules, randomState, biomes, context).compile(key);
             });
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            if (lattice$compileLogged.compareAndSet(false, true)) {
+                lattice$logger.error("[Lattice] SurfaceSystem compile FAILED — falling back to vanilla", e);
+            }
             return null;
         }
     }
