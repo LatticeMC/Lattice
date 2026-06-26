@@ -15,23 +15,23 @@ paperweight {
 
         patchFile {
             path = "purpur-server/build.gradle.kts"
-            outputFile = file("tentacles-server/build.gradle.kts")
-            patchFile = file("tentacles-server/build.gradle.kts.patch")
+            outputFile = file("lattice-server/build.gradle.kts")
+            patchFile = file("lattice-server/build.gradle.kts.patch")
         }
         patchFile {
             path = "purpur-api/build.gradle.kts"
-            outputFile = file("tentacles-api/build.gradle.kts")
-            patchFile = file("tentacles-api/build.gradle.kts.patch")
+            outputFile = file("lattice-api/build.gradle.kts")
+            patchFile = file("lattice-api/build.gradle.kts.patch")
         }
         patchRepo("paperApi") {
             upstreamPath = "paper-api"
-            patchesDir = file("tentacles-api/paper-patches")
+            patchesDir = file("lattice-api/paper-patches")
             outputDir = file("paper-api")
         }
         patchDir("purpurApi") {
             upstreamPath = "purpur-api"
             excludes = listOf("build.gradle.kts", "build.gradle.kts.patch", "paper-patches")
-            patchesDir = file("tentacles-api/purpur-patches")
+            patchesDir = file("lattice-api/purpur-patches")
             outputDir = file("purpur-api")
         }
     }
@@ -80,7 +80,7 @@ subprojects {
     extensions.configure<PublishingExtension> {
         repositories {
             maven("https://repo.purpurmc.org/snapshots") {
-                name = "tentacles"
+                name = "lattice"
                 credentials(PasswordCredentials::class)
             }
         }
@@ -93,7 +93,7 @@ tasks.register("printMinecraftVersion") {
     }
 }
 
-tasks.register("printTentaclesVersion") {
+tasks.register("printLatticeVersion") {
     doLast {
         println(project.version)
     }

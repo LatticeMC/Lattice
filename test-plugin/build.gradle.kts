@@ -1,7 +1,7 @@
 version = "1.0.0-SNAPSHOT"
 
 dependencies {
-    compileOnly(project(":tentacles-api"))
+    compileOnly(project(":lattice-api"))
 }
 
 tasks.processResources {

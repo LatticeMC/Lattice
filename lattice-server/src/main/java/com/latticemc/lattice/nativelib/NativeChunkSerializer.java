@@ -13,7 +13,7 @@ import java.util.zip.InflaterInputStream;
 /**
  * First-batch native fast path for RegionFile zlib compression.
  *
- * <p>This Tentacles migration only needs the DEFLATE/zlib helpers used by
+ * <p>This Lattice migration only needs the DEFLATE/zlib helpers used by
  * {@code RegionFileMixin}. NBT indexing and other second-stage features stay
  * out of this first batch on purpose.</p>
  */

@@ -10,8 +10,8 @@ on:
       - 'scripts/**'
       - 'paper-server/**'
       - 'purpur-server/**'
-      - 'tentacles-api/**'
-      - 'tentacles-server/**'
+      - 'lattice-api/**'
+      - 'lattice-server/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
@@ -23,8 +23,8 @@ on:
       - 'scripts/**'
       - 'paper-server/**'
       - 'purpur-server/**'
-      - 'tentacles-api/**'
-      - 'tentacles-server/**'
+      - 'lattice-api/**'
+      - 'lattice-server/**'
       - '.github/workflows/build.yml'
 jobs:
   build:
@@ -54,11 +54,11 @@ jobs:
       - name: Build
         run: ./gradlew build --stacktrace
       - name: Build reobf Paperclip jar
-        run: ./gradlew :tentacles-server:createMojmapPaperclipJar --stacktrace
+        run: ./gradlew :lattice-server:createMojmapPaperclipJar --stacktrace
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tentacles-build
+          name: lattice-build
           path: |
-            tentacles-server/build/**/*paperclip*.jar
+            lattice-server/build/**/*paperclip*.jar
           if-no-files-found: error

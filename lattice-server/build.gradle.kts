@@ -32,15 +32,15 @@ paperweight {
             outputDir = rootDirectory.dir("paper-server")
         }
     }
-    //activeFork = purpur // Tentacles
+    //activeFork = purpur // Lattice
     // Purpur end - Rebrand
 
-    // Tentacles start - Rebrand
-    val tentacles = forks.register("tentacles") {
+    // Lattice start - Rebrand
+    val lattice = forks.register("lattice") {
         forks = purpur
         upstream.patchRepo("paperServer") {
             upstreamRepo = purpur.patchedRepo("paperServer")
-            patchesDir = rootDirectory.dir("tentacles-server/paper-patches")
+            patchesDir = rootDirectory.dir("lattice-server/paper-patches")
             outputDir = rootDirectory.dir("paper-server")
         }
         upstream.patchDir("purpurServer") {
@@ -52,12 +52,12 @@ paperweight {
                 "build.gradle.kts",
                 "build.gradle.kts.patch"
             )
-            patchesDir = rootDirectory.dir("tentacles-server/purpur-patches")
+            patchesDir = rootDirectory.dir("lattice-server/purpur-patches")
             outputDir = rootDirectory.dir("purpur-server")
         }
     }
-    activeFork = tentacles
-    // Tentacles end - Rebrand
+    activeFork = lattice
+    // Lattice end - Rebrand
 
     spigot {
         enabled = true
@@ -182,7 +182,7 @@ abstract class MockitoAgentProvider : CommandLineArgumentProvider {
 }
 
 dependencies {
-    implementation(project(":tentacles-api")) // Purpur // Tentacles
+    implementation(project(":lattice-api")) // Purpur // Lattice
     implementation("org.spongepowered:mixin:0.8.7")
     implementation("org.ow2.asm:asm-util:9.8")
     implementation("org.ow2.asm:asm-analysis:9.8")
@@ -260,15 +260,15 @@ tasks.jar {
         val gitBranch = git.exec(providers, "rev-parse", "--abbrev-ref", "HEAD").get().trim()
         attributes(
             "Main-Class" to "org.bukkit.craftbukkit.Main",
-            "Implementation-Title" to "Tentacles", // Purpur // Tentacles
+            "Implementation-Title" to "Lattice", // Purpur // Lattice
             "Implementation-Version" to implementationVersion,
             "Implementation-Vendor" to date,
-            "Specification-Title" to "Tentacles", // Purpur // Tentacles
+            "Specification-Title" to "Lattice", // Purpur // Lattice
             "Specification-Version" to project.version,
-            "Specification-Vendor" to "Tentacles Team", // Purpur // Tentacles
+            "Specification-Vendor" to "Lattice Team", // Purpur // Lattice
             "MixinConfigs" to "mixin.lattice.json",
-            "Brand-Id" to "tentaclesmc:tentacles", // Purpur // Tentacles
-            "Brand-Name" to "Tentacles", // Purpur // Tentacles
+            "Brand-Id" to "latticemc:lattice", // Purpur // Lattice
+            "Brand-Name" to "Lattice", // Purpur // Lattice
             "Build-Number" to (build ?: ""),
             "Build-Time" to buildTime.toString(),
             "Git-Branch" to gitBranch,

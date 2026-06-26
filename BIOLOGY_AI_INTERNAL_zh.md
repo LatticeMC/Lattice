@@ -14,9 +14,9 @@
 
 - native 决策核：`lattice-native/src/world/entity/biological_ai.cpp`
 - JNI 桥：`lattice-native/jni/biological_ai.cpp`
-- Java fallback：`tentacles-server/src/main/java/com/latticemc/lattice/nativelib/NativeBiologicalAi.java`
-- profile 常量：`tentacles-server/src/main/java/com/latticemc/lattice/nativelib/BiologicalAiProfiles.java`
-- 物种接线：`tentacles-server/src/main/java/com/latticemc/lattice/mixin/*Mixin.java`
+- Java fallback：`lattice-server/src/main/java/com/latticemc/lattice/nativelib/NativeBiologicalAi.java`
+- profile 常量：`lattice-server/src/main/java/com/latticemc/lattice/nativelib/BiologicalAiProfiles.java`
+- 物种接线：`lattice-server/src/main/java/com/latticemc/lattice/mixin/*Mixin.java`
 
 ## 已完成能力
 
@@ -76,7 +76,7 @@
 推荐统一验证命令：
 
 ```bash
-./gradlew :tentacles-server:compileJava :tentacles-server:compileTestJava
+./gradlew :lattice-server:compileJava :lattice-server:compileTestJava
 
 cmake -S lattice-native -B lattice-native/build-test -DLATTICE_BUILD_TESTS=ON
 cmake --build lattice-native/build-test --target test_biological_ai

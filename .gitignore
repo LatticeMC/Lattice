@@ -51,9 +51,9 @@ manifest.mf
 # other stuff
 run/
 
-!tentacles-api/build.gradle.kts
-!tentacles-server/build.gradle.kts
-tentacles-server/src/minecraft
+!lattice-api/build.gradle.kts
+!lattice-server/build.gradle.kts
+lattice-server/src/minecraft
 purpur-api
 purpur-server
 paper-api
@@ -67,6 +67,7 @@ test-plugin.settings.gradle.kts
 *.dll
 
 # Java metadata
+!**/META-INF/services/
 META-INF/
 
 # Replay logs

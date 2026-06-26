@@ -55,9 +55,9 @@ cd lattice-native/build && ctest --output-on-failure
 
 Lattice 遵循标准的 Purpur 补丁系统。服务端修改以文件补丁的形式存储，而非完整源文件。未来将逐步弃用 Mixin hook，转向直接补丁方式，以提升可维护性和上游更新兼容性：
 
-- `tentacles-api/paper-patches/` -- 在 Paper 之上的 API 新增
-- `tentacles-server/paper-patches/` -- 在 Paper 之上的服务端修改
-- `tentacles-server/purpur-patches/` -- 在 Purpur 之上的服务端修改
+- `lattice-api/paper-patches/` -- 在 Paper 之上的 API 新增
+- `lattice-server/paper-patches/` -- 在 Paper 之上的服务端修改
+- `lattice-server/purpur-patches/` -- 在 Purpur 之上的服务端修改
 
 原生库以共享对象形式（`liblattice.so` / `lattice.dll` / `liblattice.dylib`）在启动时通过 JNI 加载。每个原生调用都受 `LatticeNative.isLoaded()` 保护，当原生库不可用时透明回退到 JDK 实现。在 `-Dlattice.verify=true` 模式下，每次原生调用都会被 JDK 参考实现并行执行，输出结果将被比对验证。
 
@@ -107,22 +107,22 @@ Java 服务端可在任何拥有 Java 21 运行时的平台上构建和运行。
 ## 项目结构
 
 ```
-Tentacles/
+Lattice/
 ├── lattice-native/          C++ 原生加速库（CMake，C++20）
 │   ├── jni/                 JNI 桥接层
 │   ├── src/                 核心实现（io、world、core）
 │   ├── include/lattice/     公共头文件
 │   └── tests/               单元测试（doctest）
-├── tentacles-api/           服务端 API 模块
+├── lattice-api/             服务端 API 模块
 │   └── paper-patches/       在 Paper 之上的 API 补丁
-├── tentacles-server/        服务端实现模块
+├── lattice-server/          服务端实现模块
 │   ├── paper-patches/       在 Paper 之上的服务端补丁
 │   ├── purpur-patches/      在 Purpur 之上的服务端补丁
 │   └── src/                 Java 源码（bootstrap、nativelib、mixin）
 ├── scripts/                 构建与上游同步脚本
 ├── build.gradle.kts         根构建文件（paperweight patcher）
 ├── settings.gradle.kts      项目设置
-└── gradle.properties        版本与构建配置
+└── gradle.properties        版本和构建配置
 ```
 
 ## 参与贡献

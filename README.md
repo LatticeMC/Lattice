@@ -55,9 +55,9 @@ cd lattice-native/build && ctest --output-on-failure
 
 Lattice follows the standard Purpur patch system. Server modifications are stored as file patches rather than full source files. Over time, Mixin-based hooks will be gradually phased out in favor of direct patches for better maintainability and compatibility with upstream updates:
 
-- `tentacles-api/paper-patches/` -- API additions on top of Paper
-- `tentacles-server/paper-patches/` -- Server changes on top of Paper
-- `tentacles-server/purpur-patches/` -- Server changes on top of Purpur
+- `lattice-api/paper-patches/` -- API additions on top of Paper
+- `lattice-server/paper-patches/` -- Server changes on top of Paper
+- `lattice-server/purpur-patches/` -- Server changes on top of Purpur
 
 The native library is a shared object (`liblattice.so` / `lattice.dll` / `liblattice.dylib`) loaded at startup via JNI. Every native call is guarded by `LatticeNative.isLoaded()` and falls back transparently to the JDK implementation when unavailable. Under `-Dlattice.verify=true`, each native call is shadowed by the JDK reference and outputs are compared.
 
@@ -107,15 +107,15 @@ The Java server builds and runs on any platform with a Java 21 runtime.
 ## Project Structure
 
 ```
-Tentacles/
+Lattice/
 ├── lattice-native/          C++ native acceleration library (CMake, C++20)
 │   ├── jni/                 JNI bridge layer
 │   ├── src/                 Core implementations (io, world, core)
 │   ├── include/lattice/     Public headers
 │   └── tests/               Unit tests (doctest)
-├── tentacles-api/           Server API module
+├── lattice-api/             Server API module
 │   └── paper-patches/       API patches on top of Paper
-├── tentacles-server/        Server implementation module
+├── lattice-server/          Server implementation module
 │   ├── paper-patches/       Server patches on top of Paper
 │   ├── purpur-patches/      Server patches on top of Purpur
 │   └── src/                 Java sources (bootstrap, nativelib, mixin)

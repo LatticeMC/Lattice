@@ -25,6 +25,16 @@ public abstract class HeightmapMixin {
             return;
         }
 
+        try {
+            lattice$primeHeightmapsNative(chunk, types);
+            ci.cancel();
+        } catch (Exception | LinkageError e) {
+            LatticeNative.logFallbackOnce("native_heightmap", e.getMessage());
+        }
+    }
+
+    private static void lattice$primeHeightmapsNative(ChunkAccess chunk, Set<Heightmap.Types> types) {
+
         LevelChunkSection[] sections = chunk.getSections();
         int sectionCount = sections.length;
         long[][] storages = new long[sectionCount][];
@@ -41,9 +51,9 @@ public abstract class HeightmapMixin {
 
         for (int sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex) {
             PalettedContainer<BlockState> states = sections[sectionIndex].getStates();
-            PalettedContainerDataAccessor<BlockState> data = dataOf(states);
-            BitStorage storage = data.lattice$getStorage();
-            Palette<BlockState> palette = data.lattice$getPalette();
+            PalettedContainerAccess.Data<BlockState> data = PalettedContainerAccess.dataOf(states);
+            BitStorage storage = data.storage();
+            Palette<BlockState> palette = data.palette();
 
             storages[sectionIndex] = storage.getBits() == 0 ? null : storage.getRaw();
             elementBits[sectionIndex] = storage.getBits();
@@ -55,7 +65,7 @@ public abstract class HeightmapMixin {
 
         for (int sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex) {
             PalettedContainer<BlockState> states = sections[sectionIndex].getStates();
-            Palette<BlockState> palette = dataOf(states).lattice$getPalette();
+            Palette<BlockState> palette = PalettedContainerAccess.dataOf(states).palette();
             int paletteSize = palette.getSize();
             for (int i = 0; i < heightmaps.length; ++i) {
                 int maskOffset = sectionIndex * maskLongsPerSection;
@@ -89,13 +99,6 @@ public abstract class HeightmapMixin {
             long[] packed = new SimpleBitStorage(bits, NativeHeightmap.COLUMN_COUNT, firstAvailable).getRaw();
             ((HeightmapAccessor) heightmaps[i]).lattice$setRawData(chunk, heightmapTypes[i], packed);
         }
-
-        ci.cancel();
-    }
-
-    @SuppressWarnings("unchecked")
-    private static PalettedContainerDataAccessor<BlockState> dataOf(PalettedContainer<BlockState> states) {
-        return (PalettedContainerDataAccessor<BlockState>) ((PalettedContainerAccessor<BlockState>) (Object) states).lattice$getData();
     }
 
     private static void buildMask(long[] flatMasks,

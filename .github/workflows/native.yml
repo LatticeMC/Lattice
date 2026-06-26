@@ -80,9 +80,9 @@ jobs:
         with:
           path: |
             ${{ matrix.build_dir || 'lattice-native/build' }}/_deps
-          key: tentacles-native-fetch-${{ matrix.name }}-libdeflate-v1.20
+          key: lattice-native-fetch-${{ matrix.name }}-libdeflate-v1.20
           restore-keys: |
-            tentacles-native-fetch-${{ matrix.name }}-
+            lattice-native-fetch-${{ matrix.name }}-
 
       - name: Configure (Unix)
         if: runner.os != 'Windows'
