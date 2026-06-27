@@ -5,10 +5,10 @@ Subject: [PATCH] feat: bootstrap Lattice mixin framework at startup
 
 
 diff --git a/src/main/java/org/bukkit/craftbukkit/Main.java b/src/main/java/org/bukkit/craftbukkit/Main.java
-index d665dc3fbd0989eb399c55d0717bc6fd79a0db17..abf79b814f57af1f23053f3857a109783a2dfe99 100644
+index e6ea34b18c6db63efa77bb67d3484e4d66315ed6..382ba564ba94ce063dfb00f5537c5c982fb548b0 100644
 --- a/src/main/java/org/bukkit/craftbukkit/Main.java
 +++ b/src/main/java/org/bukkit/craftbukkit/Main.java
-@@ -23,6 +23,10 @@ public class Main {
+@@ -22,6 +22,10 @@ public class Main {
      // Paper end - Reset loggers after shutdown
  
      public static void main(String[] args) {

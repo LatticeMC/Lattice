@@ -5,7 +5,7 @@ Subject: [PATCH] Rebrand
 
 
 diff --git a/src/main/java/org/purpurmc/purpur/PurpurVersionFetcher.java b/src/main/java/org/purpurmc/purpur/PurpurVersionFetcher.java
-index f2c22af968fbdbbea1bbd07712733c74e0b42333..ddcb0ab2a325227fd2644b6abb926a312aa91172 100644
+index f2c22af968fbdbbea1bbd07712733c74e0b42333..b90c36050a998ac4073b1b1f9d689b04ef3083d6 100644
 --- a/src/main/java/org/purpurmc/purpur/PurpurVersionFetcher.java
 +++ b/src/main/java/org/purpurmc/purpur/PurpurVersionFetcher.java
 @@ -36,15 +36,15 @@ public class PurpurVersionFetcher implements VersionFetcher {
@@ -51,7 +51,7 @@ index f2c22af968fbdbbea1bbd07712733c74e0b42333..ddcb0ab2a325227fd2644b6abb926a31
      private static int fetchDistanceFromSiteApi(final int jenkinsBuild) {
          try {
              try (final BufferedReader reader = Resources.asCharSource(
--                    URI.create("https://api.purpurmc.org/v2/purpur/" + BUILD_INFO.minecraftVersionId()).toURL(),
+-                URI.create("https://api.purpurmc.org/v2/purpur/" + BUILD_INFO.minecraftVersionId()).toURL(),
 +                    URI.create("https://api.example.com/nonexistent/" + BUILD_INFO.minecraftVersionId()).toURL(), // Purpur - Rebrand // Lattice
                  StandardCharsets.UTF_8
              ).openBufferedStream()) {
