@@ -1,10 +1,12 @@
 package com.latticemc.lattice.mixin;
 
 import com.latticemc.lattice.nativelib.NativeBeardifier;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.world.level.levelgen.Beardifier;
 import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.levelgen.structure.pools.JigsawJunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
@@ -35,7 +37,7 @@ public abstract class BeardifierMixin {
                 return;
             }
             this.lattice$nativeHandle = nativeHandle;
-            this.lattice$affectedBox = self.lattice$affectedBox();
+            this.lattice$affectedBox = lattice$affectedBox(self.lattice$pieces());
             if (this.lattice$affectedBox == null) {
                 nativeHandle.close();
                 this.lattice$nativeHandle = null;
@@ -43,7 +45,7 @@ public abstract class BeardifierMixin {
                     lattice$logger.warn("[Lattice] Beardifier affectedBox is null — falling back to vanilla");
                 }
             }
-        } catch (Exception e) {
+        } catch (RuntimeException | LinkageError e) {
             if (lattice$initLogged.compareAndSet(false, true)) {
                 lattice$logger.error("[Lattice] Beardifier init FAILED — falling back to vanilla", e);
             }
@@ -64,10 +66,36 @@ public abstract class BeardifierMixin {
             }
 
             cir.setReturnValue(lattice$nativeHandle.compute(x, y, z));
-        } catch (Exception e) {
+        } catch (RuntimeException | LinkageError e) {
             if (lattice$computeLogged.compareAndSet(false, true)) {
                 lattice$logger.error("[Lattice] Beardifier compute FAILED — falling back to vanilla", e);
             }
         }
+    }
+
+    @SuppressWarnings("ConstantValue")
+    private static BoundingBox lattice$affectedBox(List<Beardifier.Rigid> pieces) {
+        if (pieces.isEmpty()) return null;
+
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+
+        for (Beardifier.Rigid piece : pieces) {
+            BoundingBox box = piece.box();
+            if (box.minX() < minX) minX = box.minX();
+            if (box.minY() < minY) minY = box.minY();
+            if (box.minZ() < minZ) minZ = box.minZ();
+            if (box.maxX() > maxX) maxX = box.maxX();
+            if (box.maxY() > maxY) maxY = box.maxY();
+            if (box.maxZ() > maxZ) maxZ = box.maxZ();
+        }
+
+        final int radius = 12;
+        return new BoundingBox(minX - radius, minY - radius, minZ - radius,
+                               maxX + radius, maxY + radius, maxZ + radius);
     }
 }
