@@ -43,6 +43,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
     @Unique private static final Logger lattice$logger = LoggerFactory.getLogger("Lattice");
     @Unique private static final AtomicBoolean lattice$compileLogged = new AtomicBoolean(false);
     @Unique private static final AtomicBoolean lattice$nokLogged = new AtomicBoolean(false);
+    @Unique private volatile boolean lattice$nativeSurfaceDisabled = false;
     private final Map<SurfaceRules.RuleSource, CompiledSurfaceRules> lattice$compiled = new ConcurrentHashMap<>();
 
     @Shadow protected abstract BlockState getBand(int x, int y, int z);
@@ -73,8 +74,10 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                                       SurfaceRules.RuleSource ruleSource,
                                       CallbackInfo ci) {
         if (!LatticeNative.isLoaded()) return;
+        if (lattice$nativeSurfaceDisabled) return;
         CompiledSurfaceRules compiled = lattice$compile(ruleSource, randomState, biomes, context);
         if (compiled == null) {
+            lattice$nativeSurfaceDisabled = true;
             if (lattice$nokLogged.compareAndSet(false, true)) {
                 lattice$logger.warn("[Lattice] SurfaceSystem native path DISABLED — compile returned null, falling back to vanilla");
             }
@@ -183,9 +186,13 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                                      boolean hasFluid,
                                      CallbackInfoReturnable<Optional<BlockState>> cir) {
         if (!LatticeNative.isLoaded()) return;
+        if (lattice$nativeSurfaceDisabled) return;
         Registry<Biome> biomes = context.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.BIOME);
         CompiledSurfaceRules compiled = lattice$compile(rule, context.randomState(), biomes, context);
-        if (compiled == null) return;
+        if (compiled == null) {
+            lattice$nativeSurfaceDisabled = true;
+            return;
+        }
 
         Holder<Biome> biome = biomeGetter.apply(pos);
         int x = pos.getX();
