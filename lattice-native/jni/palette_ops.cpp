@@ -3,15 +3,16 @@
 // Java class: com.latticemc.lattice.nativelib.NativePaletteOps
 //
 // All methods are static utilities operating on caller-owned `long[]` /
-// `int[]` arrays. We pin via GetPrimitiveArrayCritical for the duration of
-// each call. Single-element get/set are exposed for completeness, but the
-// real wins are in `bulkGet` / `bulkSet` / `countUnique` where the
+// `int[]` arrays. Single-element get/set still use critical pinning, but
+// the bulk paths use region copies to avoid GCLocker serialization on G1.
+// The real wins are in `bulkGet` / `bulkSet` / `countUnique` where the
 // Java-side fallback would loop and pay the bit-math cost N times.
 
 #include <jni.h>
 
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 #include "world/palette/packed_storage.hpp"
 #include "jni_helper.hpp"
@@ -51,6 +52,29 @@ bool validate_storage(JNIEnv* env, jlongArray data,
         lattice::jni::throw_illegal_arg(env, buf);
         return false;
     }
+    return true;
+}
+
+bool storage_window(jint element_bits, jlong start_index, jint count,
+                    std::size_t& first_long,
+                    std::size_t& long_count,
+                    std::size_t& local_start_index) noexcept {
+    if (count <= 0) {
+        first_long = 0;
+        long_count = 0;
+        local_start_index = 0;
+        return true;
+    }
+
+    const int elements_per_long = ps::elements_per_long(element_bits);
+    if (elements_per_long <= 0 || start_index < 0) return false;
+
+    const std::size_t start = static_cast<std::size_t>(start_index);
+    const std::size_t end = start + static_cast<std::size_t>(count) - 1;
+    first_long = start / static_cast<std::size_t>(elements_per_long);
+    const std::size_t last_long = end / static_cast<std::size_t>(elements_per_long);
+    long_count = last_long - first_long + 1;
+    local_start_index = start - first_long * static_cast<std::size_t>(elements_per_long);
     return true;
 }
 
@@ -160,27 +184,25 @@ Java_com_latticemc_lattice_nativelib_NativePaletteOps_nativeBulkGet(
         return;
     }
 
-    // All validation/throwing done before entering the critical region.
-    // If any pin fails (very rare, only under memory pressure) we report
-    // OOM outside the critical region.
-    {
-        lattice::jni::CriticalLongArray dg(env, jdata);
-        if (!dg) { lattice::jni::throw_oom(env, "lattice palette: pin long[] failed"); return; }
-        lattice::jni::CriticalIntArray og(env, jout);
-        if (!og) {
-            // Release dg before we're allowed to call throw_oom (which itself
-            // uses regular JNI calls that mustn't nest inside a critical region).
-            dg.release_ro();
-            lattice::jni::throw_oom(env, "lattice palette: pin int[] failed");
-            return;
-        }
-        ps::bulk_get(reinterpret_cast<const std::uint64_t*>(dg.data()),
-                     static_cast<int>(elementBits),
-                     static_cast<std::size_t>(startIndex),
-                     static_cast<std::size_t>(count),
-                     reinterpret_cast<std::uint32_t*>(og.data()) + outOff);
-        dg.release_ro();
+    std::size_t first_long = 0;
+    std::size_t long_count = 0;
+    std::size_t local_start_index = 0;
+    if (!storage_window(elementBits, startIndex, count, first_long, long_count, local_start_index)) {
+        lattice::jni::throw_illegal_arg(env, "lattice palette: invalid bulkGet storage window");
+        return;
     }
+
+    std::vector<jlong> data_window(long_count);
+    std::vector<jint> out_window(static_cast<std::size_t>(count));
+    env->GetLongArrayRegion(jdata, static_cast<jsize>(first_long), static_cast<jsize>(long_count), data_window.data());
+    if (env->ExceptionCheck()) return;
+
+    ps::bulk_get(reinterpret_cast<const std::uint64_t*>(data_window.data()),
+                 static_cast<int>(elementBits),
+                 local_start_index,
+                 static_cast<std::size_t>(count),
+                 reinterpret_cast<std::uint32_t*>(out_window.data()));
+    env->SetIntArrayRegion(jout, outOff, count, out_window.data());
 }
 
 /*
@@ -212,23 +234,27 @@ Java_com_latticemc_lattice_nativelib_NativePaletteOps_nativeBulkSet(
         return;
     }
 
-    {
-        lattice::jni::CriticalLongArray dg(env, jdata);
-        if (!dg) { lattice::jni::throw_oom(env, "lattice palette: pin long[] failed"); return; }
-        lattice::jni::CriticalIntArray ig(env, jin);
-        if (!ig) {
-            dg.release_ro();
-            lattice::jni::throw_oom(env, "lattice palette: pin int[] failed");
-            return;
-        }
-        ps::bulk_set(reinterpret_cast<std::uint64_t*>(dg.data()),
-                     static_cast<int>(elementBits),
-                     static_cast<std::size_t>(startIndex),
-                     static_cast<std::size_t>(count),
-                     reinterpret_cast<const std::uint32_t*>(ig.data()) + inOff);
-        ig.release_ro();
-        // dg dtor releases long[] with writes committed.
+    std::size_t first_long = 0;
+    std::size_t long_count = 0;
+    std::size_t local_start_index = 0;
+    if (!storage_window(elementBits, startIndex, count, first_long, long_count, local_start_index)) {
+        lattice::jni::throw_illegal_arg(env, "lattice palette: invalid bulkSet storage window");
+        return;
     }
+
+    std::vector<jlong> data_window(long_count);
+    std::vector<jint> in_window(static_cast<std::size_t>(count));
+    env->GetLongArrayRegion(jdata, static_cast<jsize>(first_long), static_cast<jsize>(long_count), data_window.data());
+    if (env->ExceptionCheck()) return;
+    env->GetIntArrayRegion(jin, inOff, count, in_window.data());
+    if (env->ExceptionCheck()) return;
+
+    ps::bulk_set(reinterpret_cast<std::uint64_t*>(data_window.data()),
+                 static_cast<int>(elementBits),
+                 local_start_index,
+                 static_cast<std::size_t>(count),
+                 reinterpret_cast<const std::uint32_t*>(in_window.data()));
+    env->SetLongArrayRegion(jdata, static_cast<jsize>(first_long), static_cast<jsize>(long_count), data_window.data());
 }
 
 /*
@@ -255,24 +281,25 @@ Java_com_latticemc_lattice_nativelib_NativePaletteOps_nativeCountUnique(
     const jsize hlen = env->GetArrayLength(jhist);
     if (histogramCap > hlen) histogramCap = hlen;
 
-    jlong n = 0;
-    {
-        lattice::jni::CriticalLongArray dg(env, jdata);
-        if (!dg) { lattice::jni::throw_oom(env, "lattice palette: pin long[] failed"); return 0; }
-        lattice::jni::CriticalIntArray hg(env, jhist);
-        if (!hg) {
-            dg.release_ro();
-            lattice::jni::throw_oom(env, "lattice palette: pin histogram failed");
-            return 0;
-        }
-        n = static_cast<jlong>(ps::count_unique(
-            reinterpret_cast<const std::uint64_t*>(dg.data()),
-            static_cast<int>(elementBits),
-            static_cast<std::size_t>(size),
-            reinterpret_cast<std::uint32_t*>(hg.data()),
-            static_cast<std::size_t>(histogramCap)));
-        dg.release_ro();
-        // hg dtor commits histogram increments back to Java.
+    const std::size_t long_count = ps::required_long_count(elementBits, static_cast<std::size_t>(size));
+    std::vector<jlong> data_window(long_count);
+    std::vector<jint> histogram(static_cast<std::size_t>(histogramCap));
+    env->GetLongArrayRegion(jdata, 0, static_cast<jsize>(long_count), data_window.data());
+    if (env->ExceptionCheck()) return 0;
+    if (histogramCap > 0) {
+        env->GetIntArrayRegion(jhist, 0, histogramCap, histogram.data());
+        if (env->ExceptionCheck()) return 0;
+    }
+
+    const jlong n = static_cast<jlong>(ps::count_unique(
+        reinterpret_cast<const std::uint64_t*>(data_window.data()),
+        static_cast<int>(elementBits),
+        static_cast<std::size_t>(size),
+        reinterpret_cast<std::uint32_t*>(histogram.data()),
+        static_cast<std::size_t>(histogramCap)));
+
+    if (histogramCap > 0) {
+        env->SetIntArrayRegion(jhist, 0, histogramCap, histogram.data());
     }
     return n;
 }

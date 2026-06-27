@@ -1,0 +1,39 @@
+--- a/net/minecraft/world/level/levelgen/Beardifier.java
++++ b/net/minecraft/world/level/levelgen/Beardifier.java
+@@ -1,5 +_,6 @@
+ package net.minecraft.world.level.levelgen;
+ 
++import com.latticemc.lattice.nativelib.NativeBeardifier;
+ import com.google.common.annotations.VisibleForTesting;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+@@ -34,6 +_,7 @@
+     private final List<Beardifier.Rigid> pieces;
+     private final List<JigsawJunction> junctions;
+     private final @Nullable BoundingBox affectedBox;
++    private final @Nullable NativeBeardifier nativeBeardifier;
+ 
+     public static Beardifier forStructuresInChunk(StructureManager structureManager, ChunkPos chunkPos) {
+         List<StructureStart> list = structureManager.startsForStructure(chunkPos, structure -> structure.terrainAdaptation() != TerrainAdjustment.NONE);
+@@ -97,6 +_,7 @@
+         this.pieces = pieces;
+         this.junctions = junctions;
+         this.affectedBox = affectedBox;
++        this.nativeBeardifier = NativeBeardifier.isAvailable() ? NativeBeardifier.create(pieces, junctions) : null;
+     }
+ 
+     @Override
+@@ -119,6 +_,13 @@
+             if (!this.affectedBox.isInside(i, i1, i2)) {
+                 return 0.0;
+             } else {
++                if (this.nativeBeardifier != null) {
++                    try {
++                        return this.nativeBeardifier.compute(i, i1, i2);
++                    } catch (RuntimeException | LinkageError ignored) {
++                    }
++                }
++
+                 double d = 0.0;
+ 
+                 for (Beardifier.Rigid rigid : this.pieces) {

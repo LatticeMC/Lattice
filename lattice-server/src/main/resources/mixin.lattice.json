@@ -34,8 +34,6 @@
     "EnderDragonMixin",
     "ExperienceOrbMixin",
     "TrackedEntityVisibilityMixin",
-    "BeardifierAccessor",
-    "BeardifierMixin",
     "SurfaceSystemAccessor",
     "SurfaceSystemMixin",
     "PalettedContainerDataAccessor",

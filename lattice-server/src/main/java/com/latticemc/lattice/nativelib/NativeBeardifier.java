@@ -8,18 +8,13 @@ import net.minecraft.world.level.levelgen.structure.pools.JigsawJunction;
 public final class NativeBeardifier implements AutoCloseable {
     private static final Cleaner CLEANER = Cleaner.create();
 
-    private long handle;
+    private final long handle;
     private final Cleaner.Cleanable cleanable;
     private boolean closed = false;
 
     private NativeBeardifier(long handle) {
         this.handle = handle;
         this.cleanable = CLEANER.register(this, new Cleanup(handle));
-    }
-
-    public static boolean isAvailable() {
-        LatticeNative.ensureLoaded();
-        return LatticeNative.isLoaded();
     }
 
     public static NativeBeardifier create(List<Beardifier.Rigid> pieces,
@@ -53,7 +48,7 @@ public final class NativeBeardifier implements AutoCloseable {
             long h = nativeCreate(pieceInts, junctionInts);
             if (h == 0L) return null;
             return new NativeBeardifier(h);
-        } catch (Exception e) {
+        } catch (RuntimeException | LinkageError e) {
             return null;
         }
     }
@@ -67,7 +62,6 @@ public final class NativeBeardifier implements AutoCloseable {
     public void close() {
         if (closed) return;
         closed = true;
-        handle = 0L;
         cleanable.clean();
     }
 
