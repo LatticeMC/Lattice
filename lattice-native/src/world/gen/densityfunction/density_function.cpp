@@ -334,10 +334,9 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
                   (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ctx.cellX) & 0xFFFFFFu) << 40)
                 | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ctx.cellZ) & 0xFFFFFFu) << 16)
                 | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(static_cast<int>(ctx.y)) & 0xFFFFu));
-            const auto it = bucket.find(key);
-            if (it != bucket.end()) return it->second;
+            if (double* cached = bucket.find(key)) return *cached;
             const double v = evaluate(arena, n.a, ctx);
-            bucket[key] = v;
+            bucket.get_or_insert(key) = v;
             return v;
         }
         case NodeKind::kFlatCache: {

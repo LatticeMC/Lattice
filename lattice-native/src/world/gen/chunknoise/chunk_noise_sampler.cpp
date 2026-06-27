@@ -2,6 +2,8 @@
 
 #include "world/gen/chunknoise/chunk_noise_sampler.hpp"
 
+#include <vector>
+
 namespace lattice::world::gen::chunknoise {
 
 namespace {
@@ -82,10 +84,10 @@ inline void fill_density_column_impl(const densityfunction::NodeArena& arena,
                                      bool to_end) noexcept {
     const int slot_count = static_cast<int>(arena.interpolator_inputs.size());
     if (slot_count <= 0) return;
+    std::vector<double> row(static_cast<std::size_t>(verticalCellCount + 1), 0.0);
     for (int slot = 0; slot < slot_count; ++slot) {
         const auto root = arena.interpolator_inputs[static_cast<std::size_t>(slot)];
         for (int cellZ = 0; cellZ <= horizontalCellCount; ++cellZ) {
-            std::vector<double> row(static_cast<std::size_t>(verticalCellCount + 1), 0.0);
             densityfunction::Context ctx{};
             ctx.x = x;
             ctx.z = z + static_cast<double>(cellZ);

@@ -57,6 +57,8 @@ Java_com_latticemc_lattice_nativelib_NativeBeardifier_nativeCreate(
         }
     }
 
+    bf::prepare_spatial_buckets(*store);
+
     return reinterpret_cast<jlong>(store);
 }
 
@@ -73,8 +75,7 @@ Java_com_latticemc_lattice_nativelib_NativeBeardifier_nativeCompute(
         jint blockX, jint blockY, jint blockZ) {
     auto* data = reinterpret_cast<bf::BeardifierData*>(handle);
     if (!data) return 0.0;
-    return static_cast<jdouble>(bf::compute(data->pieces.data(), static_cast<int>(data->pieces.size()),
-                                            data->junctions.data(), static_cast<int>(data->junctions.size()),
+    return static_cast<jdouble>(bf::compute(*data,
                                             static_cast<int>(blockX),
                                             static_cast<int>(blockY),
                                             static_cast<int>(blockZ)));

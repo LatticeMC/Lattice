@@ -64,14 +64,42 @@ namespace {
 // Packed storage index read. Same algorithm as PackedIntegerArray.get.
 // `storage` is null only when `element_bits == 0` — handled separately by
 // callers so we don't pay the null-check here.
+template <int ElementBits>
+[[nodiscard]] inline std::uint32_t read_packed_bits(const std::uint64_t* storage,
+                                                    std::size_t index) noexcept {
+    static_assert(ElementBits > 0 && ElementBits <= 32);
+    constexpr int kElementsPerLong = 64 / ElementBits;
+    constexpr std::uint64_t kMask = (std::uint64_t{1} << ElementBits) - 1u;
+    const std::size_t long_index = index / static_cast<std::size_t>(kElementsPerLong);
+    const int bit_off = int(index % static_cast<std::size_t>(kElementsPerLong)) * ElementBits;
+    return static_cast<std::uint32_t>((storage[long_index] >> bit_off) & kMask);
+}
+
+[[nodiscard]] inline std::uint32_t read_packed_fallback(const std::uint64_t* storage,
+                                                        int element_bits,
+                                                        std::size_t index) noexcept {
+    const int epl = 64 / element_bits;
+    const std::size_t long_index = index / static_cast<std::size_t>(epl);
+    const int bit_off = int(index % static_cast<std::size_t>(epl)) * element_bits;
+    const std::uint64_t mask = (std::uint64_t{1} << element_bits) - 1u;
+    return static_cast<std::uint32_t>((storage[long_index] >> bit_off) & mask);
+}
+
 [[nodiscard]] inline std::uint32_t read_packed(const std::uint64_t* storage,
                                                int element_bits,
                                                std::size_t index) noexcept {
-    const int epl = 64 / element_bits;
-    const std::size_t long_index = index / static_cast<std::size_t>(epl);
-    const int         bit_off    = int(index % static_cast<std::size_t>(epl)) * element_bits;
-    const std::uint64_t mask     = (std::uint64_t{1} << element_bits) - 1u;
-    return static_cast<std::uint32_t>((storage[long_index] >> bit_off) & mask);
+    switch (element_bits) {
+        case 1:  return read_packed_bits<1>(storage, index);
+        case 2:  return read_packed_bits<2>(storage, index);
+        case 3:  return read_packed_bits<3>(storage, index);
+        case 4:  return read_packed_bits<4>(storage, index);
+        case 5:  return read_packed_bits<5>(storage, index);
+        case 6:  return read_packed_bits<6>(storage, index);
+        case 8:  return read_packed_bits<8>(storage, index);
+        case 16: return read_packed_bits<16>(storage, index);
+        case 32: return read_packed_bits<32>(storage, index);
+        default: return read_packed_fallback(storage, element_bits, index);
+    }
 }
 
 // Test passing_mask[bit_index].

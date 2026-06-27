@@ -46,7 +46,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 
 #include "world/gen/noise/double_perlin_noise.hpp"
@@ -303,6 +302,86 @@ struct FlatCacheEntry {
     double value;
 };
 
+struct CacheAllInCellEntry {
+    bool         valid = false;
+    std::uint64_t key = 0;
+    double       value = 0.0;
+};
+
+struct CacheAllInCellMap {
+    std::vector<CacheAllInCellEntry> entries;
+    std::size_t used = 0;
+
+    [[nodiscard]] static std::uint64_t hash_key(std::uint64_t key) noexcept {
+        return key * 11400714819323198485ull;
+    }
+
+    void clear() noexcept {
+        for (auto& e : entries) e.valid = false;
+        used = 0;
+    }
+
+    void ensure_capacity(std::size_t expected_entries) {
+        std::size_t cap = 1;
+        const std::size_t needed = expected_entries * 2u;
+        while (cap < needed) cap <<= 1u;
+        if (cap == 0) cap = 1;
+        if (entries.size() < cap) {
+            entries.assign(cap, {});
+        } else {
+            clear();
+        }
+    }
+
+    [[nodiscard]] double* find(std::uint64_t key) noexcept {
+        if (entries.empty()) return nullptr;
+        const std::size_t mask = entries.size() - 1u;
+        std::size_t pos = static_cast<std::size_t>(hash_key(key)) & mask;
+        while (true) {
+            auto& e = entries[pos];
+            if (!e.valid) return nullptr;
+            if (e.key == key) return &e.value;
+            pos = (pos + 1u) & mask;
+        }
+    }
+
+    [[nodiscard]] double& get_or_insert(std::uint64_t key) {
+        if (entries.empty() || (used + 1u) * 2u > entries.size()) {
+            rehash(entries.empty() ? 4u : entries.size() * 2u);
+        }
+
+        const std::size_t mask = entries.size() - 1u;
+        std::size_t pos = static_cast<std::size_t>(hash_key(key)) & mask;
+        while (true) {
+            auto& e = entries[pos];
+            if (!e.valid) {
+                e.valid = true;
+                e.key = key;
+                e.value = 0.0;
+                ++used;
+                return e.value;
+            }
+            if (e.key == key) return e.value;
+            pos = (pos + 1u) & mask;
+        }
+    }
+
+private:
+    void rehash(std::size_t new_cap) {
+        std::vector<CacheAllInCellEntry> old = std::move(entries);
+        std::size_t cap = 1;
+        while (cap < new_cap) cap <<= 1u;
+        if (cap == 0) cap = 1;
+        entries.assign(cap, {});
+        used = 0;
+        for (const auto& e : old) {
+            if (!e.valid) continue;
+            double& slot = get_or_insert(e.key);
+            slot = e.value;
+        }
+    }
+};
+
 /// Per-Interpolated state mirroring Mojang's
 /// `ChunkNoiseSampler.DensityInterpolator`. Each kInterpolated node
 /// gets one of these (slot id assigned at NodeArena push time).
@@ -366,10 +445,9 @@ struct CacheState {
     std::vector<Cache2DEntry>   cache_2d;
     std::vector<CacheOnceEntry> cache_once;
     std::vector<FlatCacheEntry> flat_cache;
-    // CacheAllInCell uses an unordered_map per slot, keyed by a packed
-    // (cellX, cellZ, y) triple. Less common in practice; the simpler
-    // per-slot std::unordered_map is fine.
-    std::vector<std::unordered_map<std::uint64_t, double>> cache_all_in_cell;
+    // CacheAllInCell uses a per-slot flat open-addressing map keyed by a
+    // packed (cellX, cellZ, y) triple.
+    std::vector<CacheAllInCellMap> cache_all_in_cell;
 
     /// Per-slot Interpolator state (one entry per kInterpolated node).
     std::vector<InterpolatorState> interpolators;

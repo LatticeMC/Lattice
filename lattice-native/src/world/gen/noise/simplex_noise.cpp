@@ -12,6 +12,7 @@
 
 #include "world/gen/noise/simplex_noise.hpp"
 
+#include <array>
 #include <cmath>
 
 namespace lattice::world::gen::noise {
@@ -24,6 +25,16 @@ constexpr int kGradients[12][3] = {
     { 1, 0, 1}, {-1, 0, 1}, { 1, 0,-1}, {-1, 0,-1},
     { 0, 1, 1}, { 0,-1, 1}, { 0, 1,-1}, { 0,-1,-1},
 };
+
+constexpr std::array<int, 256> make_permutation_mod12() noexcept {
+    std::array<int, 256> out{};
+    for (int i = 0; i < 256; ++i) {
+        out[static_cast<std::size_t>(i)] = i % 12;
+    }
+    return out;
+}
+
+constexpr auto kPermutationMod12 = make_permutation_mod12();
 
 // Mojang constants. SKEW = 0.5 * (sqrt(3) - 1), UNSKEW = (3 - sqrt(3)) / 6.
 // We compute them at compile time from std::sqrt is technically not
@@ -47,6 +58,10 @@ inline int floor_to_int(double x) noexcept {
 // arithmetic into precomputed values.
 inline int pmap(const SimplexNoiseSampler& s, int input) noexcept {
     return s.permutation[input & 0xFF];
+}
+
+inline int pmap_mod12(const SimplexNoiseSampler& s, int input) noexcept {
+    return kPermutationMod12[static_cast<std::uint8_t>(pmap(s, input))];
 }
 
 // `dot` of a gradient index with (x, y, z).
@@ -85,14 +100,13 @@ double sample_2d(const SimplexNoiseSampler& s, double x, double y) noexcept {
     const double y2 = y0 - 1.0 + 2.0 * G2;
 
     // Hashed gradient indices of the three corners. pmap returns
-    // [0, 255], so `% 12` yields [0, 11] without sign issues.
-    const int gi0 = pmap(s, i + pmap(s, j)) % 12;
-    const int gi1 = pmap(s, i + i1 + pmap(s, j + j1)) % 12;
-    const int gi2 = pmap(s, i + 1 + pmap(s, j + 1)) % 12;
+    // [0, 255], so we can use a precomputed mod-12 lookup directly.
+    const int gi0 = pmap_mod12(s, i + pmap(s, j));
+    const int gi1 = pmap_mod12(s, i + i1 + pmap(s, j + j1));
+    const int gi2 = pmap_mod12(s, i + 1 + pmap(s, j + 1));
 
     auto corner = [](int gi, double xc, double yc) noexcept {
-        double t_ = 0.5 - xc * xc - yc * yc;
-        if (t_ < 0.0) return 0.0;
+        double t_ = std::max(0.0, 0.5 - xc * xc - yc * yc);
         t_ *= t_;
         return t_ * t_ * dot2(kGradients[gi], xc, yc);
     };
@@ -152,14 +166,13 @@ double sample_3d(const SimplexNoiseSampler& s, double x, double y, double z) noe
     const double z3 = z0 - 1.0 + 3.0 * G3;
 
     // Mojang's hashing: through permutation table.
-    const int gi0 = pmap(s, i + pmap(s, j + pmap(s, k))) % 12;
-    const int gi1 = pmap(s, i + i1 + pmap(s, j + j1 + pmap(s, k + k1))) % 12;
-    const int gi2 = pmap(s, i + i2 + pmap(s, j + j2 + pmap(s, k + k2))) % 12;
-    const int gi3 = pmap(s, i + 1 + pmap(s, j + 1 + pmap(s, k + 1))) % 12;
+    const int gi0 = pmap_mod12(s, i + pmap(s, j + pmap(s, k)));
+    const int gi1 = pmap_mod12(s, i + i1 + pmap(s, j + j1 + pmap(s, k + k1)));
+    const int gi2 = pmap_mod12(s, i + i2 + pmap(s, j + j2 + pmap(s, k + k2)));
+    const int gi3 = pmap_mod12(s, i + 1 + pmap(s, j + 1 + pmap(s, k + 1)));
 
     auto contrib = [](int gi, double xc, double yc, double zc) noexcept {
-        double t_ = 0.6 - xc * xc - yc * yc - zc * zc;
-        if (t_ < 0.0) return 0.0;
+        double t_ = std::max(0.0, 0.6 - xc * xc - yc * yc - zc * zc);
         t_ *= t_;
         return t_ * t_ * dot3(kGradients[gi], xc, yc, zc);
     };

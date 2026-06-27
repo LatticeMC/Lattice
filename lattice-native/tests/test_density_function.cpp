@@ -267,6 +267,37 @@ TEST_CASE("density: Cache2D returns cached value on (x,z) hit") {
     CHECK(cs.cache_2d[0].valid == true);
 }
 
+TEST_CASE("density: CacheAllInCell stores and retrieves per key") {
+    NodeArena arena;
+    Node leaf{}; leaf.kind = NodeKind::kConstant; leaf.d0 = 11.0;
+    NodeRef leaf_ref = arena.push(leaf);
+    Node cell{}; cell.kind = NodeKind::kCacheAllInCell; cell.a = leaf_ref;
+    arena.root = arena.push(cell);
+
+    CacheState cs;
+    cs.resize_for(arena);
+
+    Context ctx{};
+    ctx.cache = &cs;
+    ctx.x = 1.0;
+    ctx.y = 5.0;
+    ctx.z = 2.0;
+    ctx.cellX = 7;
+    ctx.cellZ = 9;
+
+    CHECK(evaluate(arena, ctx) == 11.0);
+    CHECK(cs.cache_all_in_cell.size() == 1);
+    CHECK(cs.cache_all_in_cell[0].used == 1);
+
+    ctx.y = 6.0;
+    CHECK(evaluate(arena, ctx) == 11.0);
+    CHECK(cs.cache_all_in_cell[0].used == 2);
+
+    ctx.y = 5.0;
+    CHECK(evaluate(arena, ctx) == 11.0);
+    CHECK(cs.cache_all_in_cell[0].used == 2);
+}
+
 TEST_CASE("density: mul short-circuits when left side is zero") {
     NodeArena arena;
     Node left{}; left.kind = NodeKind::kConstant; left.d0 = 0.0;
