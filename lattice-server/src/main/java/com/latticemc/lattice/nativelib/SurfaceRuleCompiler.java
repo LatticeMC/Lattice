@@ -23,6 +23,7 @@ import net.minecraft.world.level.levelgen.synth.NormalNoise;
 
 public final class SurfaceRuleCompiler {
     private static final String PKG = "net.minecraft.world.level.levelgen.SurfaceRules$";
+    private static final String PAPER_FLAT_BEDROCK = "io.papermc.paper.world.worldgen.OptionallyFlatBedrockConditionSource";
 
     private final NativeMaterialRules nativeRules;
     private final RandomState randomState;
@@ -116,6 +117,11 @@ public final class SurfaceRuleCompiler {
             VerticalAnchor trueAt = (VerticalAnchor) getField(src, "trueAtAndBelow");
             VerticalAnchor falseAt = (VerticalAnchor) getField(src, "falseAtAndAbove");
             ref = nativeRules.addCondVerticalGradient(trueAt.resolveY(worldContext), falseAt.resolveY(worldContext), randomState, randomName);
+        } else if (isPaperFlatBedrock(src)) {
+            Identifier randomName = (Identifier) getField(src, "randomName");
+            VerticalAnchor trueAt = (VerticalAnchor) getField(src, "trueAtAndBelow");
+            VerticalAnchor falseAt = (VerticalAnchor) getField(src, "falseAtAndAbove");
+            ref = nativeRules.addCondVerticalGradient(trueAt.resolveY(worldContext), falseAt.resolveY(worldContext), randomState, randomName);
         } else if (isType(src, "NoiseThresholdConditionSource")) {
             @SuppressWarnings("unchecked")
             ResourceKey<NormalNoise.NoiseParameters> noise = (ResourceKey<NormalNoise.NoiseParameters>) getField(src, "noise");
@@ -153,6 +159,10 @@ public final class SurfaceRuleCompiler {
 
     private static boolean isEnumSingleton(Object value, String simpleName) {
         return isType(value, simpleName);
+    }
+
+    private static boolean isPaperFlatBedrock(Object value) {
+        return value.getClass().getName().equals(PAPER_FLAT_BEDROCK);
     }
 
     private static Object getField(Object owner, String fieldName) {
