@@ -17,6 +17,10 @@ public final class NativeBeardifier implements AutoCloseable {
         this.cleanable = CLEANER.register(this, new Cleanup(handle));
     }
 
+    public static boolean isAvailable() {
+        return LatticeNative.isLoaded();
+    }
+
     public static NativeBeardifier create(List<Beardifier.Rigid> pieces,
                                           List<JigsawJunction> junctions) {
         LatticeNative.ensureLoaded();
