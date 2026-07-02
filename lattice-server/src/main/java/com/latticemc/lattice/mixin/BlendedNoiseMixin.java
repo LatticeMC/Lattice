@@ -18,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(BlendedNoise.class)
-public abstract class BlendedNoiseMixin {
+public abstract class BlendedNoiseMixin implements NativeInterpolatedNoiseAccess {
     @Shadow @Final private PerlinNoise minLimitNoise;
     @Shadow @Final private PerlinNoise maxLimitNoise;
     @Shadow @Final private PerlinNoise mainNoise;
@@ -79,6 +79,11 @@ public abstract class BlendedNoiseMixin {
         NativeInterpolatedNoise nativeSampler = this.lattice$native;
         if (nativeSampler == null) return;
         cir.setReturnValue(nativeSampler.sample(context.blockX(), context.blockY(), context.blockZ()));
+    }
+
+    @Override
+    public NativeInterpolatedNoise lattice$getNativeInterpolatedNoise() {
+        return this.lattice$native;
     }
 
     @Unique

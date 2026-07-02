@@ -477,8 +477,67 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateGrid(
                       static_cast<int>(nx),
                       static_cast<int>(ny),
                       static_cast<int>(nz),
-                      cache,
-                      reinterpret_cast<double*>(buf.data()));
+                       cache,
+                       reinterpret_cast<double*>(buf.data()));
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpolatedCell(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle, jlong cacheHandle,
+        jdouble x0, jdouble yTop, jdouble z0,
+        jint cellX, jint cellZ,
+        jint cellWidth, jint cellHeight,
+        jdoubleArray out) {
+    auto* a = arena_from(handle);
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!a || !cache) {
+        lattice::jni::throw_illegal_state(env, "lattice density: null arena/cache");
+        return;
+    }
+    if (!out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null output array");
+        return;
+    }
+    if (cellWidth <= 0 || cellHeight <= 0) return;
+
+    const long long required = static_cast<long long>(cellWidth)
+                             * static_cast<long long>(cellHeight)
+                             * static_cast<long long>(cellWidth);
+    lattice::jni::CriticalDoubleArray buf{env, out};
+    if (!buf) {
+        lattice::jni::throw_illegal_state(env, "lattice density: array critical lock failed");
+        return;
+    }
+    if (static_cast<long long>(buf.size()) < required) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: output array too small");
+        return;
+    }
+
+    df::start_interpolation(*cache);
+    df::on_sampled_cell_corners(*cache, 0, 0);
+
+    df::Context ctx{};
+    ctx.cache = cache;
+    ctx.cellX = static_cast<int>(cellX);
+    ctx.cellZ = static_cast<int>(cellZ);
+
+    double* dst = reinterpret_cast<double*>(buf.data());
+    std::size_t index = 0;
+    for (int iy = 0; iy < cellHeight; ++iy) {
+        const int in_cell_y = cellHeight - 1 - iy;
+        ctx.y = yTop - static_cast<double>(iy);
+        df::interpolate_y(*cache, static_cast<double>(in_cell_y) / static_cast<double>(cellHeight));
+        for (int ix = 0; ix < cellWidth; ++ix) {
+            ctx.x = x0 + static_cast<double>(ix);
+            df::interpolate_x(*cache, static_cast<double>(ix) / static_cast<double>(cellWidth));
+            for (int iz = 0; iz < cellWidth; ++iz) {
+                ctx.z = z0 + static_cast<double>(iz);
+                df::interpolate_z(*cache, static_cast<double>(iz) / static_cast<double>(cellWidth));
+                dst[index++] = df::evaluate(*a, a->root, ctx);
+            }
+        }
+    }
 }
 
 // ---- Worldgen-10: Spline support -----------------------------------------

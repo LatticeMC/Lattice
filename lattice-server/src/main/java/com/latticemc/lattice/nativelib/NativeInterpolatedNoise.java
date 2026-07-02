@@ -59,6 +59,10 @@ public final class NativeInterpolatedNoise {
         return nativeSample(this.handle, blockX, blockY, blockZ);
     }
 
+    public long handle() {
+        return this.handle;
+    }
+
     private record Destroy(long handle) implements Runnable {
         @Override
         public void run() {

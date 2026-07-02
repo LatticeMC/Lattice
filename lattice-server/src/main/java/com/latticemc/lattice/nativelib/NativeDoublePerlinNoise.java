@@ -56,6 +56,10 @@ public final class NativeDoublePerlinNoise {
         return nativeSample(this.handle, x, y, z);
     }
 
+    public long handle() {
+        return this.handle;
+    }
+
     private record Destroy(long handle) implements Runnable {
         @Override
         public void run() {

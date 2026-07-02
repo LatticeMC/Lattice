@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(NormalNoise.class)
-public abstract class NormalNoiseMixin {
+public abstract class NormalNoiseMixin implements NativeNormalNoiseAccess {
     @Shadow @Final private double valueFactor;
     @Shadow @Final private PerlinNoise first;
     @Shadow @Final private PerlinNoise second;
@@ -52,6 +52,11 @@ public abstract class NormalNoiseMixin {
         NativeDoublePerlinNoise nativeSampler = this.lattice$native;
         if (nativeSampler == null) return;
         cir.setReturnValue(nativeSampler.sample(x, y, z));
+    }
+
+    @Override
+    public NativeDoublePerlinNoise lattice$getNativeDoublePerlinNoise() {
+        return this.lattice$native;
     }
 
     @Unique
