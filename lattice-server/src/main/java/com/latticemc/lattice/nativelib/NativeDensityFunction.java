@@ -6,6 +6,8 @@ import java.lang.ref.Cleaner;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.IdentityHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
@@ -17,8 +19,11 @@ import org.slf4j.LoggerFactory;
 
 public final class NativeDensityFunction {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
+    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "true"));
+    private static final boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
+    private static final Map<DensityFunction, Boolean> FAILED_COMPILES = new WeakHashMap<>();
     private static final ThreadLocal<double[]> GRID_BUFFER = ThreadLocal.withInitial(() -> new double[0]);
     private static final ThreadLocal<double[]> CORNER_ROW = ThreadLocal.withInitial(() -> new double[2]);
     private static final LongAdder COMPILE_ATTEMPTS = new LongAdder();
@@ -33,14 +38,14 @@ public final class NativeDensityFunction {
 
     private final long handle;
     private final long cacheHandle;
-    private final boolean hasInterpolators;
+    private final List<InterpolatorBinding> interpolators;
     @SuppressWarnings("unused")
     private final Cleaner.Cleanable cleanable;
 
-    private NativeDensityFunction(long handle, long cacheHandle, boolean hasInterpolators) {
+    private NativeDensityFunction(long handle, long cacheHandle, List<InterpolatorBinding> interpolators) {
         this.handle = handle;
         this.cacheHandle = cacheHandle;
-        this.hasInterpolators = hasInterpolators;
+        this.interpolators = List.copyOf(interpolators);
         this.cleanable = CLEANER.register(this, new Destroy(handle, cacheHandle));
     }
 
@@ -52,13 +57,14 @@ public final class NativeDensityFunction {
                                        double dy,
                                        int cellX,
                                        int cellZ) {
-        SLICE_ATTEMPTS.increment();
+        if (!ENABLED) return false;
+        if (STATS_ENABLED) SLICE_ATTEMPTS.increment();
         NativeDensityFunction compiled = tryCompile(function);
         if (compiled == null) return false;
         try {
             nativeClearCache(compiled.cacheHandle);
             nativeEvaluateGrid(compiled.handle, compiled.cacheHandle, x, y0, z, 1.0, dy, 1.0, cellX, cellZ, 1, values.length, 1, values);
-            SLICE_SUCCESS.increment();
+            if (STATS_ENABLED) SLICE_SUCCESS.increment();
             return true;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_grid", e.getMessage());
@@ -77,24 +83,21 @@ public final class NativeDensityFunction {
                                       int cellZ,
                                       int localCellY,
                                       int localCellZ) {
-        CELL_ATTEMPTS.increment();
-        maybeLogStats();
+        if (!ENABLED) return false;
+        if (STATS_ENABLED) {
+            CELL_ATTEMPTS.increment();
+            maybeLogStats();
+        }
         NativeDensityFunction compiled = tryCompile(function);
         if (compiled == null) return false;
         int expected = cellWidth * cellHeight * cellWidth;
         if (values.length < expected) return false;
 
-        double[] grid = GRID_BUFFER.get();
-        if (grid.length < expected) {
-            grid = new double[expected];
-            GRID_BUFFER.set(grid);
-        }
-
         try {
             nativeClearCache(compiled.cacheHandle);
-            if (compiled.hasInterpolators) {
-                CELL_INTERPOLATED.increment();
-                compiled.syncInterpolators(function, localCellY, localCellZ);
+            if (!compiled.interpolators.isEmpty()) {
+                if (STATS_ENABLED) CELL_INTERPOLATED.increment();
+                compiled.syncInterpolators(localCellY, localCellZ);
                 nativeEvaluateInterpolatedCell(
                         compiled.handle,
                         compiled.cacheHandle,
@@ -107,6 +110,11 @@ public final class NativeDensityFunction {
                         cellHeight,
                         values);
             } else {
+                double[] grid = GRID_BUFFER.get();
+                if (grid.length < expected) {
+                    grid = new double[expected];
+                    GRID_BUFFER.set(grid);
+                }
                 nativeEvaluateGrid(
                         compiled.handle,
                         compiled.cacheHandle,
@@ -132,7 +140,7 @@ public final class NativeDensityFunction {
                     }
                 }
             }
-            CELL_SUCCESS.increment();
+            if (STATS_ENABLED) CELL_SUCCESS.increment();
             return true;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_cell_grid", e.getMessage());
@@ -145,11 +153,14 @@ public final class NativeDensityFunction {
         synchronized (CACHE) {
             NativeDensityFunction cached = CACHE.get(function);
             if (cached != null) return cached;
-            COMPILE_ATTEMPTS.increment();
+            if (FAILED_COMPILES.containsKey(function)) return null;
+            if (STATS_ENABLED) COMPILE_ATTEMPTS.increment();
             NativeDensityFunction compiled = compileNew(function);
             if (compiled != null) {
-                COMPILE_SUCCESS.increment();
+                if (STATS_ENABLED) COMPILE_SUCCESS.increment();
                 CACHE.put(function, compiled);
+            } else {
+                FAILED_COMPILES.put(function, Boolean.TRUE);
             }
             return compiled;
         }
@@ -202,8 +213,8 @@ public final class NativeDensityFunction {
             nativeSetRoot(handle, root);
             cacheHandle = nativeCreateCache(handle);
             if (cacheHandle == 0L) return null;
-            NativeDensityFunction compiled = new NativeDensityFunction(handle, cacheHandle, compiler.hasInterpolators());
-            if (compiled.hasInterpolators) {
+            NativeDensityFunction compiled = new NativeDensityFunction(handle, cacheHandle, compiler.interpolators());
+            if (!compiled.interpolators.isEmpty()) {
                 nativePrepareInterpolators(compiled.cacheHandle, 1, 1);
             }
             return compiled;
@@ -232,34 +243,14 @@ public final class NativeDensityFunction {
     }
 
     private void syncInterpolators(DensityFunction root, int localCellY, int localCellZ) {
-        syncInterpolators(root, localCellY, localCellZ, new IdentityHashMap<>());
-    }
-
-    private void syncInterpolators(DensityFunction function, int localCellY, int localCellZ, Map<DensityFunction, Boolean> seen) {
-        if (seen.put(function, Boolean.TRUE) != null) return;
-        String name = function.getClass().getName();
-        if (name.contains("NoiseChunk$NoiseInterpolator")) {
-            int slot = (Integer) invoke(function, "lattice$nativeSlot");
-            double[][] slice0 = (double[][]) invoke(function, "lattice$slice0");
-            double[][] slice1 = (double[][]) invoke(function, "lattice$slice1");
-            setCornerRow(cacheHandle, slot, 0, false, slice0[localCellZ], localCellY);
-            setCornerRow(cacheHandle, slot, 1, false, slice0[localCellZ + 1], localCellY);
-            setCornerRow(cacheHandle, slot, 0, true, slice1[localCellZ], localCellY);
-            setCornerRow(cacheHandle, slot, 1, true, slice1[localCellZ + 1], localCellY);
-            return;
+        for (InterpolatorBinding binding : interpolators) {
+            double[][] slice0 = (double[][]) invoke(binding.function(), "lattice$slice0");
+            double[][] slice1 = (double[][]) invoke(binding.function(), "lattice$slice1");
+            setCornerRow(cacheHandle, binding.slot(), 0, false, slice0[localCellZ], localCellY);
+            setCornerRow(cacheHandle, binding.slot(), 1, false, slice0[localCellZ + 1], localCellY);
+            setCornerRow(cacheHandle, binding.slot(), 0, true, slice1[localCellZ], localCellY);
+            setCornerRow(cacheHandle, binding.slot(), 1, true, slice1[localCellZ + 1], localCellY);
         }
-        DensityFunction child = child(function, "wrapped");
-        if (child != null) syncInterpolators(child, localCellY, localCellZ, seen);
-        child = child(function, "input");
-        if (child != null) syncInterpolators(child, localCellY, localCellZ, seen);
-        child = child(function, "argument1");
-        if (child != null) syncInterpolators(child, localCellY, localCellZ, seen);
-        child = child(function, "argument2");
-        if (child != null) syncInterpolators(child, localCellY, localCellZ, seen);
-        child = child(function, "whenInRange");
-        if (child != null) syncInterpolators(child, localCellY, localCellZ, seen);
-        child = child(function, "whenOutOfRange");
-        if (child != null) syncInterpolators(child, localCellY, localCellZ, seen);
     }
 
     private static void setCornerRow(long cacheHandle, int slot, int cellZ, boolean toEndBuffer, double[] source, int cellY) {
@@ -277,6 +268,8 @@ public final class NativeDensityFunction {
             return null;
         }
     }
+
+    private record InterpolatorBinding(DensityFunction function, int slot) {}
 
     private static Object invoke(Object owner, String methodName) {
         try {
@@ -297,7 +290,7 @@ public final class NativeDensityFunction {
     private static final class Compiler {
         private final long handle;
         private final Map<DensityFunction, Integer> refs = new IdentityHashMap<>();
-        private boolean hasInterpolators;
+        private final List<InterpolatorBinding> interpolators = new ArrayList<>();
 
         private Compiler(long handle) {
             this.handle = handle;
@@ -312,8 +305,8 @@ public final class NativeDensityFunction {
             return ref;
         }
 
-        private boolean hasInterpolators() {
-            return hasInterpolators;
+        private List<InterpolatorBinding> interpolators() {
+            return interpolators;
         }
 
         private int compileUncached(DensityFunction function) {
@@ -351,7 +344,7 @@ public final class NativeDensityFunction {
                 if (input < 0) return -1;
                 int ref = nativeAddInterpolated(handle, input);
                 if (ref >= 0) {
-                    hasInterpolators = true;
+                    interpolators.add(new InterpolatorBinding(function, ref));
                     invokeInt(function, "lattice$setNativeSlot", ref);
                 }
                 return ref;
