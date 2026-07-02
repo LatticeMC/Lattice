@@ -50,7 +50,7 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
       - name: Apply patches
-        run: ./gradlew applyAllPatches --stacktrace
+        run: ./gradlew applyAllPatches --no-parallel --stacktrace
       - name: Build
         run: ./gradlew build --stacktrace
       - name: Build reobf Paperclip jar
