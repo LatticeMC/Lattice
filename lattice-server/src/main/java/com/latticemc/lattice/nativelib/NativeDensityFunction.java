@@ -242,7 +242,7 @@ public final class NativeDensityFunction {
         }
     }
 
-    private void syncInterpolators(DensityFunction root, int localCellY, int localCellZ) {
+    private void syncInterpolators(int localCellY, int localCellZ) {
         for (InterpolatorBinding binding : interpolators) {
             double[][] slice0 = (double[][]) invoke(binding.function(), "lattice$slice0");
             double[][] slice1 = (double[][]) invoke(binding.function(), "lattice$slice1");
