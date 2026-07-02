@@ -13,6 +13,7 @@ public final class NativeMaterialRules implements AutoCloseable {
     public static final int NO_MATCH = -1;
     public static final int BANDLANDS_SENTINEL = -2;
     private static final double[] EMPTY_DOUBLES = new double[0];
+    private static final int[] EMPTY_INTS = new int[0];
 
     private final long handle;
     private final Map<String, Integer> noiseSlots = new HashMap<>();
@@ -45,6 +46,22 @@ public final class NativeMaterialRules implements AutoCloseable {
         if (ctxInts.length < 10 || ctxBools.length < 2) throw new IllegalArgumentException("context array too short");
         if (namedNoiseValues == null) namedNoiseValues = EMPTY_DOUBLES;
         return nativeEvaluate(handle, ctxInts, temperature, surfaceNoise, surfaceSecondaryNoise, namedNoiseValues, ctxBools);
+    }
+
+    public int[] evaluateBatch(int count,
+                               int[] columnCtx,
+                               double surfaceNoise,
+                               double surfaceSecondaryNoise,
+                               double[] namedNoiseValues,
+                               byte[] columnBools,
+                               int[] blockData) {
+        checkOpen();
+        if (count <= 0) return EMPTY_INTS;
+        if (columnCtx == null || columnBools == null || blockData == null) throw new IllegalArgumentException("null batch context array");
+        if (columnCtx.length < 6 || columnBools.length < 2) throw new IllegalArgumentException("batch context array too short");
+        if (blockData.length < count * 5) throw new IllegalArgumentException("blockData array too short");
+        if (namedNoiseValues == null) namedNoiseValues = EMPTY_DOUBLES;
+        return nativeEvaluateBatch(handle, count, columnCtx, surfaceNoise, surfaceSecondaryNoise, namedNoiseValues, columnBools, blockData);
     }
 
     public int addCondHole() { checkOpen(); return nativeAddCondHole(handle); }
@@ -126,6 +143,7 @@ public final class NativeMaterialRules implements AutoCloseable {
     private static native void nativeDestroy(long handle);
     private static native void nativeSetRootRule(long handle, int ruleRef);
     private static native int nativeEvaluate(long handle, int[] ctxInts, double temperature, double surfaceNoise, double surfaceSecondaryNoise, double[] namedNoiseValues, byte[] ctxBools);
+    private static native int[] nativeEvaluateBatch(long handle, int count, int[] columnCtx, double surfaceNoise, double surfaceSecondaryNoise, double[] namedNoiseValues, byte[] columnBools, int[] blockData);
     private static native int nativeAddCondAboveYWithSurface(long h, int minY, int adjust);
     private static native int nativeAddCondAboveYWithStoneDepth(long h, int minY, int surfaceDepthMultiplier);
     private static native int nativeAddCondStoneDepth(long h, int offset, boolean adjustSurfaceDepth, int secondaryRange, boolean ceiling);

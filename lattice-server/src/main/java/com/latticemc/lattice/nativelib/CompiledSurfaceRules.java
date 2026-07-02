@@ -28,6 +28,10 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         return namedNoises.get(index).getValue().getValue(x, 0.0, z);
     }
 
+    public int getNamedNoiseCount() {
+        return namedNoiseCount;
+    }
+
     public BlockState tryApply(SurfaceSystemAccess system,
                                ChunkAccess chunk,
                                Holder<Biome> biome,
@@ -66,6 +70,60 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         if (id == NativeMaterialRules.NO_MATCH) return null;
         if (id == NativeMaterialRules.BANDLANDS_SENTINEL) return system.bandlands(x, y, z);
         return Block.stateById(id);
+    }
+
+    public int[] tryApplyBatch(SurfaceSystemAccess system,
+                               Holder<Biome> biome,
+                               int x,
+                               int z,
+                               int surfaceTop,
+                               int surfaceDepth,
+                               int minSurfaceLevel,
+                               boolean hole,
+                               boolean steepSlope,
+                               double surfaceNoise,
+                               double surfaceSecondaryNoise,
+                               double[] namedNoiseValues,
+                               int[] columnCtx,
+                               byte[] bools,
+                               int count,
+                               int[] blockData) {
+        columnCtx[0] = x;
+        columnCtx[1] = z;
+        columnCtx[2] = surfaceTop;
+        columnCtx[3] = system.biomeId(biome.value());
+        columnCtx[4] = surfaceDepth;
+        columnCtx[5] = minSurfaceLevel;
+        bools[0] = (byte) (hole ? 1 : 0);
+        bools[1] = (byte) (steepSlope ? 1 : 0);
+
+        return rules.evaluateBatch(
+                count,
+                columnCtx,
+                surfaceNoise,
+                surfaceSecondaryNoise,
+                namedNoiseValues,
+                bools,
+                blockData);
+    }
+
+    public void appendBatchBlockData(SurfaceSystemAccess system,
+                                     Holder<Biome> biome,
+                                     int x,
+                                     int y,
+                                     int z,
+                                     int fluidHeight,
+                                     int stoneDepthFloor,
+                                     int stoneDepthCeiling,
+                                     int[] blockData,
+                                     int index,
+                                     BlockPos.MutableBlockPos mutablePos) {
+        int base = index * 5;
+        blockData[base] = y;
+        blockData[base + 1] = fluidHeight;
+        blockData[base + 2] = stoneDepthFloor;
+        blockData[base + 3] = stoneDepthCeiling;
+        blockData[base + 4] = biome.value().coldEnoughToSnow(mutablePos.set(x, y, z), system.seaLevel()) ? 1 : 0;
     }
 
     @Override

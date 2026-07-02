@@ -357,4 +357,87 @@ Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluate(
     return result;
 }
 
+JNIEXPORT jintArray JNICALL
+Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluateBatch(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle,
+        jint count,
+        jintArray jColumnCtx,
+        jdouble surfaceNoise,
+        jdouble surfaceSecondaryNoise,
+        jdoubleArray jNamedNoiseArr,
+        jbyteArray jColumnBools,
+        jintArray jBlockData) {
+    auto* a = arena_from(handle);
+    if (!a) return nullptr;
+    if (count <= 0) return env->NewIntArray(0);
+    if (!jColumnCtx || !jColumnBools || !jBlockData) return nullptr;
+    if (env->GetArrayLength(jColumnCtx) < 6 || env->GetArrayLength(jColumnBools) < 2 || env->GetArrayLength(jBlockData) < count * 5) {
+        return nullptr;
+    }
+
+    jint* columnCtx = env->GetIntArrayElements(jColumnCtx, nullptr);
+    jbyte* columnBools = env->GetByteArrayElements(jColumnBools, nullptr);
+    jint* blockData = env->GetIntArrayElements(jBlockData, nullptr);
+    jdouble* namedNoise = nullptr;
+    jsize namedNoiseLen = 0;
+    if (jNamedNoiseArr) {
+        namedNoiseLen = env->GetArrayLength(jNamedNoiseArr);
+        if (namedNoiseLen > 0) {
+            namedNoise = env->GetDoubleArrayElements(jNamedNoiseArr, nullptr);
+        }
+    }
+    if (!columnCtx || !columnBools || !blockData) {
+        if (namedNoise) env->ReleaseDoubleArrayElements(jNamedNoiseArr, namedNoise, JNI_ABORT);
+        if (blockData) env->ReleaseIntArrayElements(jBlockData, blockData, JNI_ABORT);
+        if (columnBools) env->ReleaseByteArrayElements(jColumnBools, columnBools, JNI_ABORT);
+        if (columnCtx) env->ReleaseIntArrayElements(jColumnCtx, columnCtx, JNI_ABORT);
+        return nullptr;
+    }
+
+    jintArray result = env->NewIntArray(count);
+    if (!result) {
+        if (namedNoise) env->ReleaseDoubleArrayElements(jNamedNoiseArr, namedNoise, JNI_ABORT);
+        env->ReleaseIntArrayElements(jBlockData, blockData, JNI_ABORT);
+        env->ReleaseByteArrayElements(jColumnBools, columnBools, JNI_ABORT);
+        env->ReleaseIntArrayElements(jColumnCtx, columnCtx, JNI_ABORT);
+        return nullptr;
+    }
+
+    std::vector<jint> out(static_cast<std::size_t>(count));
+
+    mr::SampleContext ctx{};
+    ctx.x = columnCtx[0];
+    ctx.z = columnCtx[1];
+    ctx.surface_y = columnCtx[2];
+    ctx.biome_id = columnCtx[3];
+    ctx.surface_depth = columnCtx[4];
+    ctx.min_surface_level = columnCtx[5];
+    ctx.surface_noise = surfaceNoise;
+    ctx.surface_secondary_noise = surfaceSecondaryNoise;
+    ctx.hole_at_position = (columnBools[0] != 0);
+    ctx.steep_slope = (columnBools[1] != 0);
+    if (namedNoise && namedNoiseLen > 0) {
+        ctx.noise_values = namedNoise;
+        ctx.noise_value_count = static_cast<int>(namedNoiseLen);
+    }
+
+    for (jint i = 0; i < count; ++i) {
+        const jint off = i * 5;
+        ctx.y = blockData[off];
+        ctx.fluid_height = blockData[off + 1];
+        ctx.stone_depth_floor = blockData[off + 2];
+        ctx.stone_depth_ceiling = blockData[off + 3];
+        ctx.temperature = blockData[off + 4] != 0 ? 0.0 : 1.0;
+        out[static_cast<std::size_t>(i)] = mr::evaluate(*a, ctx);
+    }
+
+    env->SetIntArrayRegion(result, 0, count, out.data());
+    if (namedNoise) env->ReleaseDoubleArrayElements(jNamedNoiseArr, namedNoise, JNI_ABORT);
+    env->ReleaseIntArrayElements(jBlockData, blockData, JNI_ABORT);
+    env->ReleaseByteArrayElements(jColumnBools, columnBools, JNI_ABORT);
+    env->ReleaseIntArrayElements(jColumnCtx, columnCtx, JNI_ABORT);
+    return result;
+}
+
 } // extern "C"

@@ -17,6 +17,7 @@ import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.biome.Biomes;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.BlockColumn;
 import net.minecraft.world.level.chunk.ChunkAccess;
@@ -92,10 +93,13 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         final BlockPos.MutableBlockPos topPos = new BlockPos.MutableBlockPos();
 
         final SurfaceSystemAccessImpl systemAccess = new SurfaceSystemAccessImpl(this, biomes);
-        final int[] ints = new int[10];
-        final byte[] bools = new byte[2];
-        final int namedNoiseCount = compiled.getDoublesLength() - 3;
+        final int[] batchBlockData = new int[chunk.getHeight() * 5];
+        final int[] batchYs = new int[chunk.getHeight()];
+        final int[] columnCtx = new int[6];
+        final byte[] columnBools = new byte[2];
+        final int namedNoiseCount = compiled.getNamedNoiseCount();
         final double[] namedNoiseValues = new double[namedNoiseCount];
+        final BlockPos.MutableBlockPos coldCheckPos = new BlockPos.MutableBlockPos();
 
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
@@ -115,6 +119,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                 int minY = chunk.getMinY();
                 int minSurfaceLevel = lattice$minSurfaceLevel(noiseChunk, x, z, surfaceDepth);
                 boolean steep = lattice$isSteep(chunk, lx, lz);
+                boolean hole = surfaceDepth <= 0;
 
                 final double surfaceNoise = systemAccess.surfaceNoiseValue(x, z);
                 final double surfaceSecondaryNoise = systemAccess.surfaceSecondaryValue(x, z);
@@ -122,6 +127,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                     namedNoiseValues[i] = compiled.getNamedNoiseValue(i, x, z);
                 }
 
+                int count = 0;
                 for (int y = surfaceTop; y >= minY; y--) {
                     BlockState block = blockColumn.getBlock(y);
                     if (block.isAir()) {
@@ -143,27 +149,38 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                         stoneDepthAbove++;
                         int stoneDepthBelow = y - stoneBase + 1;
                         if (block == this.defaultBlock) {
-                            BlockState out = compiled.tryApply(
-                                    systemAccess,
-                                    chunk,
-                                    biome,
-                                    x,
-                                    y,
-                                    z,
-                                    fluidHeight,
-                                    stoneDepthAbove,
-                                    stoneDepthBelow,
-                                    surfaceDepth,
-                                    minSurfaceLevel,
-                                    surfaceDepth <= 0,
-                                    steep,
-                                    ints,
-                                    surfaceNoise,
-                                    surfaceSecondaryNoise,
-                                    namedNoiseValues,
-                                    bools);
-                            if (out != null) blockColumn.setBlock(y, out);
+                            batchYs[count] = y;
+                            compiled.appendBatchBlockData(systemAccess, biome, x, y, z, fluidHeight, stoneDepthAbove, stoneDepthBelow, batchBlockData, count, coldCheckPos);
+                            count++;
                         }
+                    }
+                }
+
+                if (count > 0) {
+                    int[] results = compiled.tryApplyBatch(
+                            systemAccess,
+                            biome,
+                            x,
+                            z,
+                            surfaceTop,
+                            surfaceDepth,
+                            minSurfaceLevel,
+                            hole,
+                            steep,
+                            surfaceNoise,
+                            surfaceSecondaryNoise,
+                            namedNoiseValues,
+                            columnCtx,
+                            columnBools,
+                            count,
+                            batchBlockData);
+                    for (int i = 0; i < count; i++) {
+                        int id = results[i];
+                        if (id == NativeMaterialRules.NO_MATCH) continue;
+                        BlockState out = id == NativeMaterialRules.BANDLANDS_SENTINEL
+                                ? this.getBand(x, batchYs[i], z)
+                                : Block.stateById(id);
+                        if (out != null) blockColumn.setBlock(batchYs[i], out);
                     }
                 }
 
