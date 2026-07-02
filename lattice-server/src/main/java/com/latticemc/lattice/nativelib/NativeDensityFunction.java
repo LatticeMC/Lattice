@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.WeakHashMap;
 import net.minecraft.world.level.levelgen.DensityFunction;
@@ -24,7 +25,6 @@ public final class NativeDensityFunction {
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, Boolean> FAILED_COMPILES = new WeakHashMap<>();
-    private static final ThreadLocal<double[]> GRID_BUFFER = ThreadLocal.withInitial(() -> new double[0]);
     private static final ThreadLocal<double[]> CORNER_ROW = ThreadLocal.withInitial(() -> new double[2]);
     private static final LongAdder COMPILE_ATTEMPTS = new LongAdder();
     private static final LongAdder COMPILE_SUCCESS = new LongAdder();
@@ -35,6 +35,9 @@ public final class NativeDensityFunction {
     private static final LongAdder CELL_INTERPOLATED = new LongAdder();
     private static final ConcurrentHashMap<String, LongAdder> UNSUPPORTED = new ConcurrentHashMap<>();
     private static final int LOG_INTERVAL = 4096;
+    private static final AtomicBoolean STATUS_LOGGED = new AtomicBoolean(false);
+    private static final AtomicBoolean FIRST_SLICE_LOGGED = new AtomicBoolean(false);
+    private static final AtomicBoolean FIRST_CELL_LOGGED = new AtomicBoolean(false);
 
     private final long handle;
     private final long cacheHandle;
@@ -57,6 +60,10 @@ public final class NativeDensityFunction {
                                        double dy,
                                        int cellX,
                                        int cellZ) {
+        logStatusOnce();
+        if (FIRST_SLICE_LOGGED.compareAndSet(false, true)) {
+            LOGGER.info("[Lattice] NativeDensityFunction first slice attempt");
+        }
         if (!ENABLED) return false;
         if (STATS_ENABLED) SLICE_ATTEMPTS.increment();
         NativeDensityFunction compiled = tryCompile(function);
@@ -83,6 +90,10 @@ public final class NativeDensityFunction {
                                       int cellZ,
                                       int localCellY,
                                       int localCellZ) {
+        logStatusOnce();
+        if (FIRST_CELL_LOGGED.compareAndSet(false, true)) {
+            LOGGER.info("[Lattice] NativeDensityFunction first cell attempt");
+        }
         if (!ENABLED) return false;
         if (STATS_ENABLED) {
             CELL_ATTEMPTS.increment();
@@ -110,35 +121,17 @@ public final class NativeDensityFunction {
                         cellHeight,
                         values);
             } else {
-                double[] grid = GRID_BUFFER.get();
-                if (grid.length < expected) {
-                    grid = new double[expected];
-                    GRID_BUFFER.set(grid);
-                }
-                nativeEvaluateGrid(
+                nativeEvaluateCell(
                         compiled.handle,
                         compiled.cacheHandle,
                         cellStartBlockX,
                         cellStartBlockY + cellHeight - 1,
                         cellStartBlockZ,
-                        1.0,
-                        -1.0,
-                        1.0,
                         cellX,
                         cellZ,
                         cellWidth,
                         cellHeight,
-                        cellWidth,
-                        grid);
-                for (int iy = 0; iy < cellHeight; iy++) {
-                    int yBase = iy * cellWidth * cellWidth;
-                    for (int ix = 0; ix < cellWidth; ix++) {
-                        int outBase = yBase + ix * cellWidth;
-                        for (int iz = 0; iz < cellWidth; iz++) {
-                            values[outBase + iz] = grid[yBase + iz * cellWidth + ix];
-                        }
-                    }
-                }
+                        values);
             }
             if (STATS_ENABLED) CELL_SUCCESS.increment();
             return true;
@@ -179,6 +172,12 @@ public final class NativeDensityFunction {
                 attempts,
                 CELL_INTERPOLATED.sum(),
                 unsupportedSummary());
+    }
+
+    private static void logStatusOnce() {
+        if (STATUS_LOGGED.compareAndSet(false, true)) {
+            LOGGER.info("[Lattice] NativeDensityFunction enabled={} stats={}", ENABLED, STATS_ENABLED);
+        }
     }
 
     private static String unsupportedSummary() {
@@ -436,6 +435,7 @@ public final class NativeDensityFunction {
     private static native void nativeDestroyCache(long cacheHandle);
     private static native void nativeClearCache(long cacheHandle);
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
+    private static native void nativeEvaluateCell(long handle, long cacheHandle, double x0, double yTop, double z0, int cellX, int cellZ, int cellWidth, int cellHeight, double[] out);
     private static native void nativeEvaluateInterpolatedCell(long handle, long cacheHandle, double x0, double yTop, double z0, int cellX, int cellZ, int cellWidth, int cellHeight, double[] out);
     private static native int nativeAddConstant(long handle, double value);
     private static native int nativeAddAbs(long handle, int input);

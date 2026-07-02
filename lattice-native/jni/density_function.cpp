@@ -540,6 +540,57 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
     }
 }
 
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateCell(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle, jlong cacheHandle,
+        jdouble x0, jdouble yTop, jdouble z0,
+        jint cellX, jint cellZ,
+        jint cellWidth, jint cellHeight,
+        jdoubleArray out) {
+    auto* a = arena_from(handle);
+    if (!a) {
+        lattice::jni::throw_illegal_state(env, "lattice density: null arena");
+        return;
+    }
+    if (!out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null output array");
+        return;
+    }
+    if (cellWidth <= 0 || cellHeight <= 0) return;
+
+    const long long required = static_cast<long long>(cellWidth)
+                             * static_cast<long long>(cellHeight)
+                             * static_cast<long long>(cellWidth);
+    lattice::jni::CriticalDoubleArray buf{env, out};
+    if (!buf) {
+        lattice::jni::throw_illegal_state(env, "lattice density: array critical lock failed");
+        return;
+    }
+    if (static_cast<long long>(buf.size()) < required) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: output array too small");
+        return;
+    }
+
+    df::Context ctx{};
+    ctx.cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    ctx.cellX = static_cast<int>(cellX);
+    ctx.cellZ = static_cast<int>(cellZ);
+
+    double* dst = reinterpret_cast<double*>(buf.data());
+    std::size_t index = 0;
+    for (int iy = 0; iy < cellHeight; ++iy) {
+        ctx.y = yTop - static_cast<double>(iy);
+        for (int ix = 0; ix < cellWidth; ++ix) {
+            ctx.x = x0 + static_cast<double>(ix);
+            for (int iz = 0; iz < cellWidth; ++iz) {
+                ctx.z = z0 + static_cast<double>(iz);
+                dst[index++] = df::evaluate(*a, a->root, ctx);
+            }
+        }
+    }
+}
+
 // ---- Worldgen-10: Spline support -----------------------------------------
 
 JNIEXPORT jint JNICALL
