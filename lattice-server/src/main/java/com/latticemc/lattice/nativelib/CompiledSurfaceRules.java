@@ -73,7 +73,7 @@ public final class CompiledSurfaceRules implements AutoCloseable {
     }
 
     public int[] tryApplyBatch(SurfaceSystemAccess system,
-                               Holder<Biome> biome,
+                               int biomeId,
                                int x,
                                int z,
                                int surfaceTop,
@@ -91,7 +91,7 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         columnCtx[0] = x;
         columnCtx[1] = z;
         columnCtx[2] = surfaceTop;
-        columnCtx[3] = system.biomeId(biome.value());
+        columnCtx[3] = biomeId;
         columnCtx[4] = surfaceDepth;
         columnCtx[5] = minSurfaceLevel;
         bools[0] = (byte) (hole ? 1 : 0);
@@ -124,6 +124,25 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         blockData[base + 2] = stoneDepthFloor;
         blockData[base + 3] = stoneDepthCeiling;
         blockData[base + 4] = biome.value().coldEnoughToSnow(mutablePos.set(x, y, z), system.seaLevel()) ? 1 : 0;
+    }
+
+    public void appendBatchBlockData(int seaLevel,
+                                     Holder<Biome> biome,
+                                     int x,
+                                     int y,
+                                     int z,
+                                     int fluidHeight,
+                                     int stoneDepthFloor,
+                                     int stoneDepthCeiling,
+                                     int[] blockData,
+                                     int index,
+                                     BlockPos.MutableBlockPos mutablePos) {
+        int base = index * 5;
+        blockData[base] = y;
+        blockData[base + 1] = fluidHeight;
+        blockData[base + 2] = stoneDepthFloor;
+        blockData[base + 3] = stoneDepthCeiling;
+        blockData[base + 4] = biome.value().coldEnoughToSnow(mutablePos.set(x, y, z), seaLevel) ? 1 : 0;
     }
 
     @Override

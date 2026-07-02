@@ -4,6 +4,7 @@ import com.latticemc.lattice.nativelib.CompiledSurfaceRules;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeMaterialRules;
 import com.latticemc.lattice.nativelib.SurfaceRuleCompiler;
+import com.latticemc.lattice.nativelib.WorldStateSnapshot;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -91,8 +92,10 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         final int minBlockZ = pos.getMinBlockZ();
         final BlockColumn blockColumn = new ChunkBlockColumn(chunk, mutableBlockPos);
         final BlockPos.MutableBlockPos topPos = new BlockPos.MutableBlockPos();
+        final WorldStateSnapshot snapshot = WorldStateSnapshot.create(chunk, biomeManager, noiseChunk, biomes, useLegacyRandomSource);
 
         final SurfaceSystemAccessImpl systemAccess = new SurfaceSystemAccessImpl(this, biomes);
+        final int seaLevel = systemAccess.seaLevel();
         final int[] batchBlockData = new int[chunk.getHeight() * 5];
         final int[] batchYs = new int[chunk.getHeight()];
         final int[] columnCtx = new int[6];
@@ -105,9 +108,9 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
             for (int lz = 0; lz < 16; lz++) {
                 int x = minBlockX + lx;
                 int z = minBlockZ + lz;
-                int surfaceTop = chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, lx, lz) + 1;
+                int surfaceTop = snapshot.surfaceTop(lx, lz);
                 mutableBlockPos.setX(x).setZ(z);
-                Holder<Biome> biome = biomeManager.getBiome(topPos.set(x, useLegacyRandomSource ? 0 : surfaceTop, z));
+                Holder<Biome> biome = snapshot.biome(lx, lz);
                 if (biome.is(Biomes.ERODED_BADLANDS)) {
                     this.erodedBadlandsExtension(blockColumn, x, z, surfaceTop, chunk);
                 }
@@ -117,7 +120,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                 int stoneBase = Integer.MAX_VALUE;
                 int stoneDepthAbove = 0;
                 int minY = chunk.getMinY();
-                int minSurfaceLevel = lattice$minSurfaceLevel(noiseChunk, x, z, surfaceDepth);
+                int minSurfaceLevel = snapshot.minSurfaceLevel(lx, lz, surfaceDepth);
                 boolean steep = lattice$isSteep(chunk, lx, lz);
                 boolean hole = surfaceDepth <= 0;
 
@@ -150,7 +153,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                         int stoneDepthBelow = y - stoneBase + 1;
                         if (block == this.defaultBlock) {
                             batchYs[count] = y;
-                            compiled.appendBatchBlockData(systemAccess, biome, x, y, z, fluidHeight, stoneDepthAbove, stoneDepthBelow, batchBlockData, count, coldCheckPos);
+                            compiled.appendBatchBlockData(seaLevel, biome, x, y, z, fluidHeight, stoneDepthAbove, stoneDepthBelow, batchBlockData, count, coldCheckPos);
                             count++;
                         }
                     }
@@ -159,7 +162,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                 if (count > 0) {
                     int[] results = compiled.tryApplyBatch(
                             systemAccess,
-                            biome,
+                            snapshot.biomeId(lx, lz),
                             x,
                             z,
                             surfaceTop,
