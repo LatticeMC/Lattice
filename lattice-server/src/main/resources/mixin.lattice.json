@@ -41,6 +41,7 @@
     "HeightmapAccessor",
     "HeightmapMixin",
     "BeardifierMixin",
+    "CacheAllInCellMixin",
     "OreVeinifierAccessor",
     "NoiseChunkMixin",
     "NoiseChunkSliceProviderMixin",

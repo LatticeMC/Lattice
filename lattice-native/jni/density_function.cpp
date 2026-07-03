@@ -687,6 +687,88 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateCell(
     if (cache) unbind_cache_all_in_cell_arrays(*cache);
 }
 
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpolatedColumn(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle, jlong cacheHandle,
+        jdouble x0, jdouble z0, jdouble yMin,
+        jint cellX, jint firstCellZ,
+        jint cellWidth, jint cellHeight,
+        jint cellCountXZ, jint cellCountY,
+        jobjectArray cacheAllInCellValues,
+        jdoubleArray out) {
+    auto* a = arena_from(handle);
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!a || !cache) {
+        lattice::jni::throw_illegal_state(env, "lattice density: null arena/cache");
+        return;
+    }
+    if (!out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null column output array");
+        return;
+    }
+    if (cellWidth <= 0 || cellHeight <= 0 || cellCountXZ <= 0 || cellCountY <= 0) return;
+
+    const long long cell_value_count = static_cast<long long>(cellWidth)
+                                     * static_cast<long long>(cellHeight)
+                                     * static_cast<long long>(cellWidth);
+    const long long required = static_cast<long long>(cellCountXZ)
+                             * static_cast<long long>(cellCountY)
+                             * cell_value_count;
+    auto pinned_cache_arrays = bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues);
+    if (env->ExceptionCheck()) return;
+    lattice::jni::CriticalDoubleArray buf{env, out};
+    if (!buf) {
+        unbind_cache_all_in_cell_arrays(*cache);
+        lattice::jni::throw_illegal_state(env, "lattice density: column output pin failed");
+        return;
+    }
+    if (static_cast<long long>(buf.size()) < required) {
+        unbind_cache_all_in_cell_arrays(*cache);
+        lattice::jni::throw_illegal_arg(env, "lattice density: column output array too small");
+        return;
+    }
+
+    df::Context ctx{};
+    ctx.cache = cache;
+    ctx.cellX = static_cast<int>(cellX);
+    ctx.cellWidth = static_cast<int>(cellWidth);
+    ctx.cellHeight = static_cast<int>(cellHeight);
+
+    double* dst = reinterpret_cast<double*>(buf.data());
+    for (int lz = 0; lz < cellCountXZ; ++lz) {
+        ctx.cellZ = static_cast<int>(firstCellZ + lz);
+        const double cell_z0 = z0 + static_cast<double>(lz * cellWidth);
+        for (int ly = 0; ly < cellCountY; ++ly) {
+            df::start_interpolation(*cache);
+            df::on_sampled_cell_corners(*cache, ly, lz);
+            const double y_top = yMin + static_cast<double>(ly * cellHeight + cellHeight - 1);
+            const std::size_t base = (static_cast<std::size_t>(lz) * static_cast<std::size_t>(cellCountY)
+                                   + static_cast<std::size_t>(ly))
+                                  * static_cast<std::size_t>(cell_value_count);
+            std::size_t index = base;
+            for (int iy = 0; iy < cellHeight; ++iy) {
+                const int in_cell_y = cellHeight - 1 - iy;
+                ctx.inCellY = in_cell_y;
+                ctx.y = y_top - static_cast<double>(iy);
+                df::interpolate_y(*cache, static_cast<double>(in_cell_y) / static_cast<double>(cellHeight));
+                for (int ix = 0; ix < cellWidth; ++ix) {
+                    ctx.inCellX = ix;
+                    ctx.x = x0 + static_cast<double>(ix);
+                    df::interpolate_x(*cache, static_cast<double>(ix) / static_cast<double>(cellWidth));
+                    for (int iz = 0; iz < cellWidth; ++iz) {
+                        ctx.inCellZ = iz;
+                        ctx.z = cell_z0 + static_cast<double>(iz);
+                        df::interpolate_z(*cache, static_cast<double>(iz) / static_cast<double>(cellWidth));
+                        dst[index++] = df::evaluate(*a, a->root, ctx);
+                    }
+                }
+            }
+        }
+    }
+    unbind_cache_all_in_cell_arrays(*cache);
+}
+
 JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeCacheSlot(
         JNIEnv*, jclass, jlong handle, jint nodeRef) {

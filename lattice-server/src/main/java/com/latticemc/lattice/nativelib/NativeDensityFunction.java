@@ -20,14 +20,17 @@ import org.slf4j.LoggerFactory;
 
 public final class NativeDensityFunction {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
-    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "true"));
-    private static final boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "false"));
+    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "false"));
+    private static final boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "false"))
+            && Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCellUnsafe", "false"));
     private static final boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "false"));
     private static final boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, Boolean> FAILED_COMPILES = new WeakHashMap<>();
     private static final ThreadLocal<LastCompile> LAST_COMPILE = new ThreadLocal<>();
+    private static final ThreadLocal<LastCompile> LAST_CELL_COMPILE = new ThreadLocal<>();
+    private static final ThreadLocal<LastCellBypass> LAST_CELL_BYPASS = new ThreadLocal<>();
     private static final LongAdder COMPILE_ATTEMPTS = new LongAdder();
     private static final LongAdder COMPILE_SUCCESS = new LongAdder();
     private static final LongAdder SLICE_ATTEMPTS = new LongAdder();
@@ -121,6 +124,50 @@ public final class NativeDensityFunction {
         return tryFillCell(values, function, cellStartBlockX, cellStartBlockY, cellStartBlockZ, cellWidth, cellHeight, cellCountXZ, cellCountY, cellX, cellZ, localCellY, localCellZ, false);
     }
 
+    public static boolean tryFillCellColumn(double[] values,
+                                            DensityFunction function,
+                                            int cellStartBlockX,
+                                            int firstCellZ,
+                                            int cellNoiseMinY,
+                                            int cellWidth,
+                                            int cellHeight,
+                                            int cellCountXZ,
+                                            int cellCountY,
+                                            int cellX) {
+        logStatusOnce();
+        if (!ENABLED || !CELL_ENABLED) return false;
+        if (bypassCellNative(function)) return false;
+        NativeDensityFunction compiled = tryCompileCell(function);
+        if (compiled == null) return false;
+        if (compiled.clearsCachePerCell) return false;
+        int cellValueCount = cellWidth * cellHeight * cellWidth;
+        int expected = cellCountXZ * cellCountY * cellValueCount;
+        if (values.length < expected) return false;
+
+        try {
+            if (compiled.clearsCachePerCell) nativeClearCache(compiled.cacheHandle);
+            compiled.syncInterpolatorColumn(cellStartBlockX, cellCountXZ, cellCountY);
+            nativeEvaluateInterpolatedColumn(
+                    compiled.handle,
+                    compiled.cacheHandle,
+                    cellStartBlockX,
+                    firstCellZ * cellWidth,
+                    cellNoiseMinY * cellHeight,
+                    cellX,
+                    firstCellZ,
+                    cellWidth,
+                    cellHeight,
+                    cellCountXZ,
+                    cellCountY,
+                    compiled.cacheAllInCellValues,
+                    values);
+            return true;
+        } catch (RuntimeException | LinkageError e) {
+            LatticeNative.logFallbackOnce("density_function_cell_column", e.getMessage());
+            return false;
+        }
+    }
+
     private static boolean tryFillCell(double[] values,
                                        DensityFunction function,
                                        int cellStartBlockX,
@@ -141,14 +188,13 @@ public final class NativeDensityFunction {
         }
         if (!ENABLED) return false;
         if (!CELL_ENABLED) return false;
-        if (function != null && function.getClass().getName().contains("NoiseChunk$CacheAllInCell")) return false;
+        if (bypassCellNative(function)) return false;
         if (STATS_ENABLED) {
             CELL_ATTEMPTS.increment();
             maybeLogStats();
         }
-        NativeDensityFunction compiled = tryCompile(function);
+        NativeDensityFunction compiled = tryCompileCell(function);
         if (compiled == null) return false;
-        if (compiled.interpolators.isEmpty()) return false;
         int expected = cellWidth * cellHeight * cellWidth;
         if (values.length < expected) return false;
 
@@ -203,6 +249,24 @@ public final class NativeDensityFunction {
             LAST_COMPILE.set(new LastCompile(function, compiled));
             return compiled;
         }
+    }
+
+    private static NativeDensityFunction tryCompileCell(DensityFunction function) {
+        LastCompile last = LAST_CELL_COMPILE.get();
+        if (last != null && last.function() == function) return last.compiled();
+        NativeDensityFunction compiled = tryCompile(function);
+        NativeDensityFunction cellCompiled = compiled != null && !compiled.interpolators.isEmpty() ? compiled : null;
+        LAST_CELL_COMPILE.set(new LastCompile(function, cellCompiled));
+        return cellCompiled;
+    }
+
+    private static boolean bypassCellNative(DensityFunction function) {
+        if (function == null) return true;
+        LastCellBypass last = LAST_CELL_BYPASS.get();
+        if (last != null && last.function() == function) return last.bypass();
+        boolean bypass = function.getClass().getName().contains("NoiseChunk$CacheAllInCell");
+        LAST_CELL_BYPASS.set(new LastCellBypass(function, bypass));
+        return bypass;
     }
 
     private static void maybeLogStats() {
@@ -284,6 +348,7 @@ public final class NativeDensityFunction {
     }
 
     private record LastCompile(DensityFunction function, NativeDensityFunction compiled) {}
+    private record LastCellBypass(DensityFunction function, boolean bypass) {}
 
     private void syncInterpolatorColumn(int cellStartBlockX, int cellCountXZ, int cellCountY) {
         if (preparedHorizontalCellCount != cellCountXZ || preparedVerticalCellCount != cellCountY) {
@@ -572,6 +637,7 @@ public final class NativeDensityFunction {
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateCell(long handle, long cacheHandle, double x0, double yTop, double z0, int cellX, int cellZ, int cellWidth, int cellHeight, double[][] cacheAllInCellValues, double[] out);
     private static native void nativeEvaluateInterpolatedCell(long handle, long cacheHandle, double x0, double yTop, double z0, int cellX, int cellZ, int localCellY, int localCellZ, int cellWidth, int cellHeight, double[][] cacheAllInCellValues, double[] out);
+    private static native void nativeEvaluateInterpolatedColumn(long handle, long cacheHandle, double x0, double z0, double yMin, int cellX, int firstCellZ, int cellWidth, int cellHeight, int cellCountXZ, int cellCountY, double[][] cacheAllInCellValues, double[] out);
     private static native int nativeAddConstant(long handle, double value);
     private static native int nativeAddAbs(long handle, int input);
     private static native int nativeAddSquare(long handle, int input);

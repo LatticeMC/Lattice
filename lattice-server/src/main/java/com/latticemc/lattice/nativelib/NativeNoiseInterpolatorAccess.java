@@ -8,4 +8,6 @@ public interface NativeNoiseInterpolatorAccess {
     double[][] lattice$slice0();
 
     double[][] lattice$slice1();
+
+    void lattice$selectCellYZ(int y, int z);
 }

@@ -1,13 +1,17 @@
 package com.latticemc.lattice.mixin;
 
+import com.latticemc.lattice.nativelib.NativeCacheAllInCellAccess;
 import com.latticemc.lattice.nativelib.NativeDensityFunction;
 import com.latticemc.lattice.nativelib.NativeNoiseChunkAccess;
+import com.latticemc.lattice.nativelib.NativeNoiseInterpolatorAccess;
 import com.latticemc.lattice.nativelib.NativeOreVeinBlockStateFiller;
+import java.util.List;
 import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.NoiseChunk;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -22,9 +26,13 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     @Shadow @Final int cellCountXZ;
     @Shadow @Final int cellCountY;
     @Shadow @Final int cellNoiseMinY;
+    @Shadow @Final List<NoiseChunk.NoiseInterpolator> interpolators;
+    @Shadow @Final List<?> cellCaches;
     @Shadow private int cellStartBlockX;
     @Shadow int cellStartBlockY;
     @Shadow private int cellStartBlockZ;
+    @Shadow boolean fillingCell;
+    @Shadow long arrayInterpolationCounter;
 
     @Inject(method = "fillAllDirectly", at = @At("HEAD"), cancellable = true)
     private void lattice$fillCellNative(double[] values, DensityFunction function, CallbackInfo ci) {
@@ -72,35 +80,59 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
         interpolator.fillArray(values, contextProvider);
     }
 
-    @Redirect(
-            method = "selectCellYZ",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lnet/minecraft/world/level/levelgen/DensityFunction;fillArray([DLnet/minecraft/world/level/levelgen/DensityFunction$ContextProvider;)V"
-            )
-    )
-    private void lattice$fillCellCacheNative(DensityFunction function,
-                                             double[] values,
-                                             DensityFunction.ContextProvider contextProvider) {
-        int cellX = Math.floorDiv(this.cellStartBlockX, this.cellWidth);
-        int cellZ = Math.floorDiv(this.cellStartBlockZ, this.cellWidth);
-        if (NativeDensityFunction.tryFillCell(
-                values,
-                function,
-                this.cellStartBlockX,
-                this.cellStartBlockY,
-                this.cellStartBlockZ,
-                this.cellWidth,
-                this.cellHeight,
-                this.cellCountXZ,
-                this.cellCountY,
-                cellX,
-                cellZ,
-                Math.floorDiv(this.cellStartBlockY, this.cellHeight) - this.cellNoiseMinY,
-                cellZ - this.firstCellZ)) {
-            return;
+    /**
+     * @author Lattice
+     * @reason Fill CacheAllInCell columns through one native call per cache/X column.
+     */
+    @Overwrite
+    public void selectCellYZ(int y, int z) {
+        for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolators) {
+            ((NativeNoiseInterpolatorAccess) (Object) noiseInterpolator).lattice$selectCellYZ(y, z);
         }
-        function.fillArray(values, contextProvider);
+
+        this.fillingCell = true;
+        this.cellStartBlockY = (y + this.cellNoiseMinY) * this.cellHeight;
+        this.cellStartBlockZ = (this.firstCellZ + z) * this.cellWidth;
+        this.arrayInterpolationCounter++;
+
+        int cellX = Math.floorDiv(this.cellStartBlockX, this.cellWidth);
+        int cellValueCount = this.cellWidth * this.cellHeight * this.cellWidth;
+        int columnValueCount = this.cellCountXZ * this.cellCountY * cellValueCount;
+        int cellOffset = (z * this.cellCountY + y) * cellValueCount;
+        for (Object cache : this.cellCaches) {
+            NativeCacheAllInCellAccess access = (NativeCacheAllInCellAccess) cache;
+            double[] column = access.lattice$columnValues();
+            if (access.lattice$columnCellX() != cellX) {
+                column = new double[columnValueCount];
+                if (NativeDensityFunction.tryFillCellColumn(
+                        column,
+                        access.lattice$noiseFiller(),
+                        this.cellStartBlockX,
+                        this.firstCellZ,
+                        this.cellNoiseMinY,
+                        this.cellWidth,
+                        this.cellHeight,
+                        this.cellCountXZ,
+                        this.cellCountY,
+                        cellX)) {
+                    access.lattice$setColumnValues(column);
+                    access.lattice$setColumnCellX(cellX);
+                } else {
+                    access.lattice$setColumnValues(new double[0]);
+                    access.lattice$setColumnCellX(cellX);
+                    access.lattice$noiseFiller().fillArray(access.lattice$values(), this);
+                    continue;
+                }
+            }
+            if (column != null && column.length >= columnValueCount) {
+                System.arraycopy(column, cellOffset, access.lattice$values(), 0, cellValueCount);
+            } else {
+                access.lattice$noiseFiller().fillArray(access.lattice$values(), this);
+            }
+        }
+
+        this.arrayInterpolationCounter++;
+        this.fillingCell = false;
     }
 
     @Redirect(

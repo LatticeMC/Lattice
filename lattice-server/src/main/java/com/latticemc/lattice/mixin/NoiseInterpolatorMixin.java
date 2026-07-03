@@ -5,6 +5,7 @@ import net.minecraft.world.level.levelgen.NoiseChunk;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(NoiseChunk.NoiseInterpolator.class)
 public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorAccess {
@@ -31,4 +32,12 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
     public double[][] lattice$slice1() {
         return this.slice1;
     }
+
+    @Override
+    public void lattice$selectCellYZ(int y, int z) {
+        this.lattice$invokeSelectCellYZ(y, z);
+    }
+
+    @Invoker("selectCellYZ")
+    protected abstract void lattice$invokeSelectCellYZ(int y, int z);
 }

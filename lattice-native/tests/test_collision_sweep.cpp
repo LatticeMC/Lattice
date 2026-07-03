@@ -89,6 +89,60 @@ TEST_CASE("collision: dispatcher agrees at near-epsilon SIMD batch boundary") {
     CHECK(mv_d[2] == mv_s[2]);
 }
 
+TEST_CASE("collision: axis/sign near-epsilon clamp matrix") {
+    const double moving[6] = {0, 0, 0, 1, 1, 1};
+    const double eps = kCollisionEpsilon;
+
+    for (int axis = 0; axis < 3; ++axis) {
+        double obstacle[6] = {-5, -5, -5, 5, 5, 5};
+
+        obstacle[axis] = 1.0 + 0.5 * eps;
+        obstacle[axis + 3] = 2.0;
+        CHECK(calc_max_offset_scalar(axis, moving, 5.0, obstacle, 1) == doctest::Approx(0.5 * eps).epsilon(1e-12));
+
+        obstacle[axis] = 1.0 - 0.5 * eps;
+        obstacle[axis + 3] = 2.0;
+        CHECK(calc_max_offset_scalar(axis, moving, 5.0, obstacle, 1) == doctest::Approx(-0.5 * eps).epsilon(1e-12));
+
+        obstacle[axis] = 1.0 - 2.0 * eps;
+        obstacle[axis + 3] = 2.0;
+        CHECK(calc_max_offset_scalar(axis, moving, 5.0, obstacle, 1) == 5.0);
+
+        obstacle[axis] = -1.0;
+        obstacle[axis + 3] = -0.5 * eps;
+        CHECK(calc_max_offset_scalar(axis, moving, -5.0, obstacle, 1) == doctest::Approx(-0.5 * eps).epsilon(1e-12));
+
+        obstacle[axis] = -1.0;
+        obstacle[axis + 3] = 0.5 * eps;
+        CHECK(calc_max_offset_scalar(axis, moving, -5.0, obstacle, 1) == doctest::Approx(0.5 * eps).epsilon(1e-12));
+
+        obstacle[axis] = -1.0;
+        obstacle[axis + 3] = 2.0 * eps;
+        CHECK(calc_max_offset_scalar(axis, moving, -5.0, obstacle, 1) == -5.0);
+    }
+}
+
+TEST_CASE("collision: dispatcher agrees when near-epsilon clamp is in scalar tail") {
+    const double moving[6] = {0, 0, 0, 1, 1, 1};
+    const double eps = kCollisionEpsilon;
+    const double obstacles[30] = {
+        4.0, -5, -5, 5, 5, 5,
+        6.0, -5, -5, 7, 5, 5,
+        8.0, -5, -5, 9, 5, 5,
+        10.0, -5, -5, 11, 5, 5,
+        1.0 + 0.5 * eps, -5, -5, 2, 5, 5,
+    };
+    double mv_s[3] = {5.0, 0.0, 0.0};
+    double mv_d[3] = {5.0, 0.0, 0.0};
+    adjust_movement_scalar(moving, mv_s, obstacles, 5);
+    adjust_movement(moving, mv_d, obstacles, 5);
+
+    CHECK(mv_s[0] == doctest::Approx(0.5 * eps).epsilon(1e-12));
+    CHECK(mv_d[0] == doctest::Approx(mv_s[0]).epsilon(1e-12));
+    CHECK(mv_d[1] == mv_s[1]);
+    CHECK(mv_d[2] == mv_s[2]);
+}
+
 TEST_CASE("collision: touching boxes (gap=0) are blocked like Paper") {
     const double moving[6] = {0, 0, 0, 1, 1, 1};
     // Obstacle starts exactly at moving box max (touching)
