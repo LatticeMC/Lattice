@@ -62,7 +62,7 @@ public final class NativeDensityFunction {
                                        int cellZ) {
         logStatusOnce();
         if (FIRST_SLICE_LOGGED.compareAndSet(false, true)) {
-            LOGGER.info("[Lattice] NativeDensityFunction first slice attempt");
+            LOGGER.info("NativeDensityFunction first slice attempt");
         }
         if (!ENABLED) return false;
         if (STATS_ENABLED) SLICE_ATTEMPTS.increment();
@@ -92,7 +92,7 @@ public final class NativeDensityFunction {
                                       int localCellZ) {
         logStatusOnce();
         if (FIRST_CELL_LOGGED.compareAndSet(false, true)) {
-            LOGGER.info("[Lattice] NativeDensityFunction first cell attempt");
+            LOGGER.info("NativeDensityFunction first cell attempt");
         }
         if (!ENABLED) return false;
         if (STATS_ENABLED) {
@@ -163,7 +163,7 @@ public final class NativeDensityFunction {
         long attempts = CELL_ATTEMPTS.sum();
         if (attempts <= 0 || attempts % LOG_INTERVAL != 0) return;
         LOGGER.info(
-                "[Lattice] NativeDensityFunction stats: compile={}/{}, slice={}/{}, cell={}/{}, interpolatedCell={}, unsupported={}",
+                "NativeDensityFunction stats: compile={}/{}, slice={}/{}, cell={}/{}, interpolatedCell={}, unsupported={}",
                 COMPILE_SUCCESS.sum(),
                 COMPILE_ATTEMPTS.sum(),
                 SLICE_SUCCESS.sum(),
@@ -176,7 +176,7 @@ public final class NativeDensityFunction {
 
     private static void logStatusOnce() {
         if (STATUS_LOGGED.compareAndSet(false, true)) {
-            LOGGER.info("[Lattice] NativeDensityFunction enabled={} stats={}", ENABLED, STATS_ENABLED);
+            LOGGER.info("NativeDensityFunction enabled={} stats={}", ENABLED, STATS_ENABLED);
         }
     }
 
@@ -243,8 +243,8 @@ public final class NativeDensityFunction {
 
     private void syncInterpolators(int localCellY, int localCellZ) {
         for (InterpolatorBinding binding : interpolators) {
-            double[][] slice0 = (double[][]) invoke(binding.function(), "lattice$slice0");
-            double[][] slice1 = (double[][]) invoke(binding.function(), "lattice$slice1");
+            double[][] slice0 = binding.function().lattice$slice0();
+            double[][] slice1 = binding.function().lattice$slice1();
             setCornerRow(cacheHandle, binding.slot(), 0, false, slice0[localCellZ], localCellY);
             setCornerRow(cacheHandle, binding.slot(), 1, false, slice0[localCellZ + 1], localCellY);
             setCornerRow(cacheHandle, binding.slot(), 0, true, slice1[localCellZ], localCellY);
@@ -268,7 +268,7 @@ public final class NativeDensityFunction {
         }
     }
 
-    private record InterpolatorBinding(DensityFunction function, int slot) {}
+    private record InterpolatorBinding(NativeNoiseInterpolatorAccess function, int slot) {}
 
     private static Object invoke(Object owner, String methodName) {
         try {
@@ -341,10 +341,11 @@ public final class NativeDensityFunction {
             if (name.contains("NoiseChunk$NoiseInterpolator")) {
                 int input = compile((DensityFunction) invoke(function, "wrapped"));
                 if (input < 0) return -1;
+                if (!(function instanceof NativeNoiseInterpolatorAccess access)) return -1;
                 int ref = nativeAddInterpolated(handle, input);
                 if (ref >= 0) {
-                    interpolators.add(new InterpolatorBinding(function, ref));
-                    invokeInt(function, "lattice$setNativeSlot", ref);
+                    interpolators.add(new InterpolatorBinding(access, ref));
+                    access.lattice$setNativeSlot(ref);
                 }
                 return ref;
             }
@@ -509,13 +510,4 @@ public final class NativeDensityFunction {
     private static native void nativePrepareInterpolators(long cacheHandle, int horizontalCellCount, int verticalCellCount);
     private static native void nativeSetDensityRow(long cacheHandle, int slot, int cellZ, boolean toEndBuffer, double[] values);
 
-    private static void invokeInt(Object owner, String methodName, int value) {
-        try {
-            Method method = owner.getClass().getDeclaredMethod(methodName, int.class);
-            method.setAccessible(true);
-            method.invoke(owner, value);
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException(owner.getClass().getName() + "." + methodName + " changed shape", e);
-        }
-    }
 }
