@@ -326,6 +326,21 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
                 || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_all_in_cell.size())) {
                 return evaluate(arena, n.a, ctx);
             }
+            const int slot_id = n.cache_slot_id;
+            if (slot_id < static_cast<int>(ctx.cache->cache_all_in_cell_arrays.size())) {
+                const double* values = ctx.cache->cache_all_in_cell_arrays[static_cast<std::size_t>(slot_id)];
+                const std::size_t length = ctx.cache->cache_all_in_cell_array_lengths[static_cast<std::size_t>(slot_id)];
+                if (values && ctx.inCellX >= 0 && ctx.inCellY >= 0 && ctx.inCellZ >= 0
+                    && ctx.inCellX < ctx.cellWidth && ctx.inCellY < ctx.cellHeight && ctx.inCellZ < ctx.cellWidth) {
+                    const std::size_t index = (static_cast<std::size_t>(ctx.cellHeight - 1 - ctx.inCellY)
+                                             * static_cast<std::size_t>(ctx.cellWidth)
+                                             + static_cast<std::size_t>(ctx.inCellX))
+                                            * static_cast<std::size_t>(ctx.cellWidth)
+                                            + static_cast<std::size_t>(ctx.inCellZ);
+                    if (index < length) return values[index];
+                }
+            }
+            if (n.a < 0) return 0.0;
             auto& bucket = ctx.cache->cache_all_in_cell[n.cache_slot_id];
             // Pack (cellX, cellZ, y) into one 64-bit key. cellX / cellZ
             // fit in 24 bits each (Mojang sample range is well within

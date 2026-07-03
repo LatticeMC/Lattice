@@ -12,6 +12,9 @@ import java.util.zip.ZipException;
 
 public final class NativeZlibStreams {
 
+    private static final boolean NATIVE_INFLATE_ENABLED =
+            Boolean.parseBoolean(System.getProperty("lattice.nativeRegionZlibInflate", "false"));
+
     private NativeZlibStreams() {}
 
     static IOException mapNativeInflateFailure(RuntimeException error) {
@@ -30,6 +33,9 @@ public final class NativeZlibStreams {
     public static InputStream inflater(InputStream source) throws IOException {
         if (!com.latticemc.lattice.nativelib.LatticeNative.isLoaded()) {
             com.latticemc.lattice.nativelib.LatticeNative.logFallbackOnce("regionfile_zlib", "native inflater unavailable");
+            return new java.util.zip.InflaterInputStream(source);
+        }
+        if (!NATIVE_INFLATE_ENABLED) {
             return new java.util.zip.InflaterInputStream(source);
         }
         return new LazyNativeInflaterStream(source);

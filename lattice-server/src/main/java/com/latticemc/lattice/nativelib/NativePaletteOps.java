@@ -2,6 +2,9 @@ package com.latticemc.lattice.nativelib;
 
 public final class NativePaletteOps {
 
+    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativePaletteOps", "true"));
+    private static final int MIN_BULK_COUNT = Integer.getInteger("lattice.nativePaletteOpsMinCount", 64);
+
     private NativePaletteOps() {}
 
     public static int get(long[] data, int elementBits, long index) {
@@ -25,7 +28,7 @@ public final class NativePaletteOps {
 
     public static void bulkGet(long[] data, int elementBits,
                                long startIndex, int[] out, int outOff, int count) {
-        if (LatticeNative.isLoaded()) {
+        if (shouldUseNativeBulk(count)) {
             nativeBulkGet(data, elementBits, startIndex, out, outOff, count);
             return;
         }
@@ -35,12 +38,29 @@ public final class NativePaletteOps {
 
     public static void bulkSet(long[] data, int elementBits,
                                long startIndex, int[] in, int inOff, int count) {
-        if (LatticeNative.isLoaded()) {
+        if (shouldUseNativeBulk(count)) {
             nativeBulkSet(data, elementBits, startIndex, in, inOff, count);
             return;
         }
         LatticeNative.logFallbackOnce("palette_ops", "native palette bulkSet unavailable");
         javaBulkSet(data, elementBits, startIndex, in, inOff, count);
+    }
+
+    public static boolean tryBulkGet(long[] data, int elementBits,
+                                     long startIndex, int[] out, int outOff, int count) {
+        if (!shouldUseNativeBulk(count)) return false;
+        try {
+            nativeBulkGet(data, elementBits, startIndex, out, outOff, count);
+            if (LatticeNative.VERIFY) verifyBulkGet(data, elementBits, startIndex, out, outOff, count);
+            return true;
+        } catch (RuntimeException | LinkageError e) {
+            LatticeNative.logFallbackOnce("palette_ops", e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean shouldUseNativeBulk(int count) {
+        return ENABLED && LatticeNative.isLoaded() && count >= MIN_BULK_COUNT;
     }
 
     private static int javaGet(long[] data, int elementBits, long index) {
@@ -74,6 +94,15 @@ public final class NativePaletteOps {
                                     long startIndex, int[] in, int inOff, int count) {
         for (int i = 0; i < count; i++) {
             javaSet(data, elementBits, startIndex + i, in[inOff + i]);
+        }
+    }
+
+    private static void verifyBulkGet(long[] data, int elementBits,
+                                      long startIndex, int[] out, int outOff, int count) {
+        for (int i = 0; i < count; i++) {
+            int jv = javaGet(data, elementBits, startIndex + i);
+            int nv = out[outOff + i];
+            if (jv != nv) mismatch("bulkGet", elementBits, startIndex + i, jv, nv);
         }
     }
 

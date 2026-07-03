@@ -12,7 +12,9 @@
 
 #include <jni.h>
 
+#include <algorithm>
 #include <new>
+#include <vector>
 
 #include "jni_helper.hpp"
 #include "noise_handle.hpp"
@@ -38,6 +40,63 @@ inline const pns::DoublePerlinNoiseSampler* dpn_from(jlong h) noexcept {
 
 inline jint push_node(df::NodeArena* a, const df::Node& n) noexcept {
     return static_cast<jint>(a->push(n));
+}
+
+struct PinnedDoubleArray {
+    JNIEnv* env = nullptr;
+    jdoubleArray array = nullptr;
+    jdouble* data = nullptr;
+    std::size_t length = 0;
+
+    PinnedDoubleArray() = default;
+
+    PinnedDoubleArray(JNIEnv* env_in, jdoubleArray array_in) : env(env_in), array(array_in) {
+        if (!env || !array) return;
+        length = static_cast<std::size_t>(env->GetArrayLength(array));
+        data = env->GetDoubleArrayElements(array, nullptr);
+    }
+
+    ~PinnedDoubleArray() {
+        if (env && array && data) env->ReleaseDoubleArrayElements(array, data, JNI_ABORT);
+        if (env && array) env->DeleteLocalRef(array);
+    }
+
+    PinnedDoubleArray(const PinnedDoubleArray&) = delete;
+    PinnedDoubleArray& operator=(const PinnedDoubleArray&) = delete;
+
+    PinnedDoubleArray(PinnedDoubleArray&& other) noexcept
+        : env(other.env), array(other.array), data(other.data), length(other.length) {
+        other.env = nullptr;
+        other.array = nullptr;
+        other.data = nullptr;
+        other.length = 0;
+    }
+
+    PinnedDoubleArray& operator=(PinnedDoubleArray&&) = delete;
+};
+
+std::vector<PinnedDoubleArray> bind_cache_all_in_cell_arrays(JNIEnv* env, df::CacheState& cache, jobjectArray arrays) {
+    std::vector<PinnedDoubleArray> pinned;
+    if (!arrays) return pinned;
+    const jsize count = env->GetArrayLength(arrays);
+    const std::size_t slots = std::min<std::size_t>(static_cast<std::size_t>(count), cache.cache_all_in_cell_arrays.size());
+    pinned.reserve(slots);
+    for (std::size_t i = 0; i < slots; ++i) {
+        auto* array = static_cast<jdoubleArray>(env->GetObjectArrayElement(arrays, static_cast<jsize>(i)));
+        if (!array) continue;
+        pinned.emplace_back(env, array);
+        if (env->ExceptionCheck()) return pinned;
+        auto& guard = pinned.back();
+        if (!guard.data) continue;
+        cache.cache_all_in_cell_arrays[i] = reinterpret_cast<const double*>(guard.data);
+        cache.cache_all_in_cell_array_lengths[i] = guard.length;
+    }
+    return pinned;
+}
+
+void unbind_cache_all_in_cell_arrays(df::CacheState& cache) {
+    for (auto& p : cache.cache_all_in_cell_arrays) p = nullptr;
+    for (auto& n : cache.cache_all_in_cell_array_lengths) n = 0;
 }
 
 } // namespace
@@ -349,6 +408,16 @@ JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeAddCacheAllInCell(
         JNIEnv*, jclass, jlong h, jint i) { return add_cache(h, df::NodeKind::kCacheAllInCell, i); }
 JNIEXPORT jint JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeAddCacheAllInCellValue(
+        JNIEnv*, jclass, jlong handle) {
+    auto* a = arena_from(handle);
+    if (!a) return -1;
+    df::Node n{};
+    n.kind = df::NodeKind::kCacheAllInCell;
+    n.a = -1;
+    return push_node(a, n);
+}
+JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeAddFlatCache(
         JNIEnv*, jclass, jlong h, jint i) { return add_cache(h, df::NodeKind::kFlatCache, i); }
 
@@ -490,7 +559,9 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
         jlong handle, jlong cacheHandle,
         jdouble x0, jdouble yTop, jdouble z0,
         jint cellX, jint cellZ,
+        jint localCellY, jint localCellZ,
         jint cellWidth, jint cellHeight,
+        jobjectArray cacheAllInCellValues,
         jdoubleArray out) {
     auto* a = arena_from(handle);
     auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
@@ -507,40 +578,50 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
     const long long required = static_cast<long long>(cellWidth)
                              * static_cast<long long>(cellHeight)
                              * static_cast<long long>(cellWidth);
+    auto pinned_cache_arrays = bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues);
+    if (env->ExceptionCheck()) return;
     lattice::jni::CriticalDoubleArray buf{env, out};
     if (!buf) {
+        unbind_cache_all_in_cell_arrays(*cache);
         lattice::jni::throw_illegal_state(env, "lattice density: array critical lock failed");
         return;
     }
     if (static_cast<long long>(buf.size()) < required) {
+        unbind_cache_all_in_cell_arrays(*cache);
         lattice::jni::throw_illegal_arg(env, "lattice density: output array too small");
         return;
     }
 
     df::start_interpolation(*cache);
-    df::on_sampled_cell_corners(*cache, 0, 0);
+    df::on_sampled_cell_corners(*cache, static_cast<int>(localCellY), static_cast<int>(localCellZ));
 
     df::Context ctx{};
     ctx.cache = cache;
     ctx.cellX = static_cast<int>(cellX);
     ctx.cellZ = static_cast<int>(cellZ);
+    ctx.cellWidth = static_cast<int>(cellWidth);
+    ctx.cellHeight = static_cast<int>(cellHeight);
 
     double* dst = reinterpret_cast<double*>(buf.data());
     std::size_t index = 0;
     for (int iy = 0; iy < cellHeight; ++iy) {
         const int in_cell_y = cellHeight - 1 - iy;
+        ctx.inCellY = in_cell_y;
         ctx.y = yTop - static_cast<double>(iy);
         df::interpolate_y(*cache, static_cast<double>(in_cell_y) / static_cast<double>(cellHeight));
         for (int ix = 0; ix < cellWidth; ++ix) {
+            ctx.inCellX = ix;
             ctx.x = x0 + static_cast<double>(ix);
             df::interpolate_x(*cache, static_cast<double>(ix) / static_cast<double>(cellWidth));
             for (int iz = 0; iz < cellWidth; ++iz) {
+                ctx.inCellZ = iz;
                 ctx.z = z0 + static_cast<double>(iz);
                 df::interpolate_z(*cache, static_cast<double>(iz) / static_cast<double>(cellWidth));
                 dst[index++] = df::evaluate(*a, a->root, ctx);
             }
         }
     }
+    unbind_cache_all_in_cell_arrays(*cache);
 }
 
 JNIEXPORT void JNICALL
@@ -550,6 +631,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateCell(
         jdouble x0, jdouble yTop, jdouble z0,
         jint cellX, jint cellZ,
         jint cellWidth, jint cellHeight,
+        jobjectArray cacheAllInCellValues,
         jdoubleArray out) {
     auto* a = arena_from(handle);
     if (!a) {
@@ -565,33 +647,52 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateCell(
     const long long required = static_cast<long long>(cellWidth)
                              * static_cast<long long>(cellHeight)
                              * static_cast<long long>(cellWidth);
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    auto pinned_cache_arrays = cache ? bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues) : std::vector<PinnedDoubleArray>{};
+    if (env->ExceptionCheck()) return;
     lattice::jni::CriticalDoubleArray buf{env, out};
     if (!buf) {
+        if (cache) unbind_cache_all_in_cell_arrays(*cache);
         lattice::jni::throw_illegal_state(env, "lattice density: array critical lock failed");
         return;
     }
     if (static_cast<long long>(buf.size()) < required) {
+        if (cache) unbind_cache_all_in_cell_arrays(*cache);
         lattice::jni::throw_illegal_arg(env, "lattice density: output array too small");
         return;
     }
 
     df::Context ctx{};
-    ctx.cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    ctx.cache = cache;
     ctx.cellX = static_cast<int>(cellX);
     ctx.cellZ = static_cast<int>(cellZ);
+    ctx.cellWidth = static_cast<int>(cellWidth);
+    ctx.cellHeight = static_cast<int>(cellHeight);
 
     double* dst = reinterpret_cast<double*>(buf.data());
     std::size_t index = 0;
     for (int iy = 0; iy < cellHeight; ++iy) {
+        ctx.inCellY = cellHeight - 1 - iy;
         ctx.y = yTop - static_cast<double>(iy);
         for (int ix = 0; ix < cellWidth; ++ix) {
+            ctx.inCellX = ix;
             ctx.x = x0 + static_cast<double>(ix);
             for (int iz = 0; iz < cellWidth; ++iz) {
+                ctx.inCellZ = iz;
                 ctx.z = z0 + static_cast<double>(iz);
                 dst[index++] = df::evaluate(*a, a->root, ctx);
             }
         }
     }
+    if (cache) unbind_cache_all_in_cell_arrays(*cache);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeCacheSlot(
+        JNIEnv*, jclass, jlong handle, jint nodeRef) {
+    auto* a = arena_from(handle);
+    if (!a || nodeRef < 0 || static_cast<std::size_t>(nodeRef) >= a->nodes.size()) return -1;
+    return a->nodes[static_cast<std::size_t>(nodeRef)].cache_slot_id;
 }
 
 // ---- Worldgen-10: Spline support -----------------------------------------
@@ -817,46 +918,53 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetDensityRow(
 }
 
 JNIEXPORT void JNICALL
-Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetDensityCorners(
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetInterpolatorColumn(
         JNIEnv* env, jclass /*cls*/, jlong cacheHandle,
-        jint slot, jdoubleArray values) {
+        jint slot, jobjectArray startSlice, jobjectArray endSlice,
+        jint zRows, jint yRows) {
     auto* c = reinterpret_cast<df::CacheState*>(cacheHandle);
     if (!c) return;
     if (slot < 0 || slot >= static_cast<jint>(c->interpolators.size())) return;
-    if (!values) {
-        lattice::jni::throw_illegal_arg(env, "lattice df: null density corners");
+    if (!startSlice || !endSlice) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: null interpolator slice");
+        return;
+    }
+    if (zRows <= 0 || yRows <= 0) return;
+    if (env->GetArrayLength(startSlice) < zRows || env->GetArrayLength(endSlice) < zRows) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: interpolator slice z rows too short");
         return;
     }
 
     auto& it = c->interpolators[static_cast<std::size_t>(slot)];
-    const int vCC = c->vertical_cell_count;
-    const std::size_t i00 = 0;
-    const std::size_t i10 = static_cast<std::size_t>(vCC + 1);
-    const std::size_t i01 = 1;
-    const std::size_t i11 = i10 + 1;
-    if (i11 >= it.start_density_buffer.size() || i11 >= it.end_density_buffer.size()) {
-        lattice::jni::throw_illegal_arg(env, "lattice df: density corner buffers out of range");
+    const std::size_t required = static_cast<std::size_t>(zRows) * static_cast<std::size_t>(yRows);
+    if (it.start_density_buffer.size() < required || it.end_density_buffer.size() < required) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: interpolator native buffers too short");
         return;
     }
 
-    lattice::jni::CriticalDoubleArray src{env, values};
-    if (!src) {
-        lattice::jni::throw_illegal_state(env, "lattice df: density corners pin failed");
-        return;
-    }
-    if (src.size() < 8) {
-        lattice::jni::throw_illegal_arg(env, "lattice df: density corners too short");
-        return;
-    }
+    for (jint z = 0; z < zRows; ++z) {
+        auto* startRow = static_cast<jdoubleArray>(env->GetObjectArrayElement(startSlice, z));
+        auto* endRow = static_cast<jdoubleArray>(env->GetObjectArrayElement(endSlice, z));
+        if (!startRow || !endRow) {
+            if (startRow) env->DeleteLocalRef(startRow);
+            if (endRow) env->DeleteLocalRef(endRow);
+            lattice::jni::throw_illegal_arg(env, "lattice df: null interpolator slice row");
+            return;
+        }
+        if (env->GetArrayLength(startRow) < yRows || env->GetArrayLength(endRow) < yRows) {
+            env->DeleteLocalRef(startRow);
+            env->DeleteLocalRef(endRow);
+            lattice::jni::throw_illegal_arg(env, "lattice df: interpolator slice y row too short");
+            return;
+        }
 
-    it.start_density_buffer[i00] = src.data()[0];
-    it.start_density_buffer[i01] = src.data()[1];
-    it.start_density_buffer[i10] = src.data()[2];
-    it.start_density_buffer[i11] = src.data()[3];
-    it.end_density_buffer[i00] = src.data()[4];
-    it.end_density_buffer[i01] = src.data()[5];
-    it.end_density_buffer[i10] = src.data()[6];
-    it.end_density_buffer[i11] = src.data()[7];
+        const std::size_t offset = static_cast<std::size_t>(z) * static_cast<std::size_t>(yRows);
+        env->GetDoubleArrayRegion(startRow, 0, yRows, it.start_density_buffer.data() + offset);
+        env->GetDoubleArrayRegion(endRow, 0, yRows, it.end_density_buffer.data() + offset);
+        env->DeleteLocalRef(startRow);
+        env->DeleteLocalRef(endRow);
+        if (env->ExceptionCheck()) return;
+    }
 }
 
 JNIEXPORT void JNICALL

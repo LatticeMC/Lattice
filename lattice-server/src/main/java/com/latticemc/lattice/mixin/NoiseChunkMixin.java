@@ -19,6 +19,8 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     @Shadow @Final private int firstCellZ;
     @Shadow @Final int cellWidth;
     @Shadow @Final int cellHeight;
+    @Shadow @Final int cellCountXZ;
+    @Shadow @Final int cellCountY;
     @Shadow @Final int cellNoiseMinY;
     @Shadow private int cellStartBlockX;
     @Shadow int cellStartBlockY;
@@ -26,7 +28,9 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
 
     @Inject(method = "fillAllDirectly", at = @At("HEAD"), cancellable = true)
     private void lattice$fillCellNative(double[] values, DensityFunction function, CallbackInfo ci) {
-        if (NativeDensityFunction.tryFillCell(
+        int cellX = Math.floorDiv(this.cellStartBlockX, this.cellWidth);
+        int cellZ = Math.floorDiv(this.cellStartBlockZ, this.cellWidth);
+        if (NativeDensityFunction.tryFillCellDirect(
                 values,
                 function,
                 this.cellStartBlockX,
@@ -34,10 +38,12 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 this.cellStartBlockZ,
                 this.cellWidth,
                 this.cellHeight,
-                Math.floorDiv(this.cellStartBlockX, this.cellWidth),
-                Math.floorDiv(this.cellStartBlockZ, this.cellWidth),
+                this.cellCountXZ,
+                this.cellCountY,
+                cellX,
+                cellZ,
                 Math.floorDiv(this.cellStartBlockY, this.cellHeight) - this.cellNoiseMinY,
-                Math.floorDiv(this.cellStartBlockZ, this.cellWidth) - this.firstCellZ)) {
+                cellZ - this.firstCellZ)) {
             ci.cancel();
         }
     }
@@ -50,8 +56,8 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
             )
     )
     private void lattice$fillInterpolatorSliceNative(NoiseChunk.NoiseInterpolator interpolator,
-                                                     double[] values,
-                                                     DensityFunction.ContextProvider contextProvider) {
+                                                      double[] values,
+                                                      DensityFunction.ContextProvider contextProvider) {
         if (NativeDensityFunction.tryFillSlice(
                 values,
                 interpolator.wrapped(),
@@ -64,6 +70,37 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
             return;
         }
         interpolator.fillArray(values, contextProvider);
+    }
+
+    @Redirect(
+            method = "selectCellYZ",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/world/level/levelgen/DensityFunction;fillArray([DLnet/minecraft/world/level/levelgen/DensityFunction$ContextProvider;)V"
+            )
+    )
+    private void lattice$fillCellCacheNative(DensityFunction function,
+                                             double[] values,
+                                             DensityFunction.ContextProvider contextProvider) {
+        int cellX = Math.floorDiv(this.cellStartBlockX, this.cellWidth);
+        int cellZ = Math.floorDiv(this.cellStartBlockZ, this.cellWidth);
+        if (NativeDensityFunction.tryFillCell(
+                values,
+                function,
+                this.cellStartBlockX,
+                this.cellStartBlockY,
+                this.cellStartBlockZ,
+                this.cellWidth,
+                this.cellHeight,
+                this.cellCountXZ,
+                this.cellCountY,
+                cellX,
+                cellZ,
+                Math.floorDiv(this.cellStartBlockY, this.cellHeight) - this.cellNoiseMinY,
+                cellZ - this.firstCellZ)) {
+            return;
+        }
+        function.fillArray(values, contextProvider);
     }
 
     @Redirect(

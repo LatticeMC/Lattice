@@ -457,6 +457,8 @@ struct CacheState {
     // CacheAllInCell uses a per-slot flat open-addressing map keyed by a
     // packed (cellX, cellZ, y) triple.
     std::vector<CacheAllInCellMap> cache_all_in_cell;
+    std::vector<const double*> cache_all_in_cell_arrays;
+    std::vector<std::size_t> cache_all_in_cell_array_lengths;
 
     /// Per-slot Interpolator state (one entry per kInterpolated node).
     std::vector<InterpolatorState> interpolators;
@@ -480,6 +482,8 @@ struct CacheState {
         cache_once.resize(arena.num_cache_once_slots);
         flat_cache.resize(arena.num_flat_cache_slots);
         cache_all_in_cell.resize(arena.num_cache_all_in_cell_slots);
+        cache_all_in_cell_arrays.resize(arena.num_cache_all_in_cell_slots, nullptr);
+        cache_all_in_cell_array_lengths.resize(arena.num_cache_all_in_cell_slots, 0);
         interpolators.resize(arena.num_interpolator_slots);
     }
 
@@ -503,6 +507,8 @@ struct CacheState {
         for (auto& e : cache_once)      e.valid = false;
         for (auto& e : flat_cache)      e.valid = false;
         for (auto& m : cache_all_in_cell) m.clear();
+        for (auto& p : cache_all_in_cell_arrays) p = nullptr;
+        for (auto& n : cache_all_in_cell_array_lengths) n = 0;
         // Interpolator buffers retain their allocation; only the
         // logical loop state is reset.
         is_in_interpolation_loop = false;
@@ -525,6 +531,11 @@ struct Context {
     /// NoiseRouter uses.
     int cellX = 0;
     int cellZ = 0;
+    int inCellX = 0;
+    int inCellY = 0;
+    int inCellZ = 0;
+    int cellWidth = 0;
+    int cellHeight = 0;
 };
 
 /// Evaluate the tree rooted at `arena.root` at the given context.
