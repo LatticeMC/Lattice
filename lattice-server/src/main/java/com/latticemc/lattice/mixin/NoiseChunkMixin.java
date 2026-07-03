@@ -43,6 +43,30 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     }
 
     @Redirect(
+            method = "fillSlice",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/world/level/levelgen/NoiseChunk$NoiseInterpolator;fillArray([DLnet/minecraft/world/level/levelgen/DensityFunction$ContextProvider;)V"
+            )
+    )
+    private void lattice$fillInterpolatorSliceNative(NoiseChunk.NoiseInterpolator interpolator,
+                                                     double[] values,
+                                                     DensityFunction.ContextProvider contextProvider) {
+        if (NativeDensityFunction.tryFillSlice(
+                values,
+                interpolator.wrapped(),
+                this.cellStartBlockX,
+                this.cellNoiseMinY * this.cellHeight,
+                this.cellStartBlockZ,
+                this.cellHeight,
+                Math.floorDiv(this.cellStartBlockX, this.cellWidth),
+                Math.floorDiv(this.cellStartBlockZ, this.cellWidth))) {
+            return;
+        }
+        interpolator.fillArray(values, contextProvider);
+    }
+
+    @Redirect(
             method = "<init>",
             at = @At(
                     value = "INVOKE",

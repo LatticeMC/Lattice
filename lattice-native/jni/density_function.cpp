@@ -16,12 +16,14 @@
 
 #include "jni_helper.hpp"
 #include "noise_handle.hpp"
+#include "world/gen/densityfunction/beardifier.hpp"
 #include "world/gen/densityfunction/density_function.hpp"
 #include "world/gen/noise/double_perlin_noise.hpp"
 #include "world/gen/noise/interpolated_noise.hpp"
 
 namespace df  = lattice::world::gen::densityfunction;
 namespace pns = lattice::world::gen::noise;
+namespace bf  = lattice::world::gen::densityfunction::beardifier;
 
 namespace {
 
@@ -695,6 +697,17 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeAddInterpolated
     n.kind = df::NodeKind::kInterpolatedNoise;
     // The sampler is at offset 0 of NativeInterpolatedNoise's Bundle.
     n.interp_noise_ptr = reinterpret_cast<const lattice::world::gen::noise::InterpolatedNoiseSampler*>(samplerHandle);
+    return push_node(a, n);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeAddBeardifier(
+        JNIEnv*, jclass /*cls*/, jlong handle, jlong beardifierHandle) {
+    auto* a = arena_from(handle);
+    if (!a || beardifierHandle == 0) return -1;
+    df::Node n{};
+    n.kind = df::NodeKind::kBeardifier;
+    n.beardifier_ptr = reinterpret_cast<const bf::BeardifierData*>(beardifierHandle);
     return push_node(a, n);
 }
 

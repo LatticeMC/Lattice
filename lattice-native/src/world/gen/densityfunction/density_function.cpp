@@ -530,6 +530,14 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             if (!n.interp_noise_ptr) return 0.0;
             return noise::sample(*n.interp_noise_ptr, ctx.x, ctx.y, ctx.z);
         }
+
+        case NodeKind::kBeardifier: {
+            if (!n.beardifier_ptr) return 0.0;
+            return beardifier::compute(*n.beardifier_ptr,
+                                       static_cast<int>(ctx.x),
+                                       static_cast<int>(ctx.y),
+                                       static_cast<int>(ctx.z));
+        }
     }
     return 0.0;
 }

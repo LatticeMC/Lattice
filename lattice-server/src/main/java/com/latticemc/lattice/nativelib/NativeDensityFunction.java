@@ -399,6 +399,12 @@ public final class NativeDensityFunction {
                 int spline = compileSpline(invoke(function, "spline"));
                 return spline < 0 ? -1 : nativeAddSpline(handle, spline);
             }
+            if (name.equals("net.minecraft.world.level.levelgen.Beardifier")) {
+                long beardifierHandle = function instanceof NativeBeardifierAccess access
+                        ? access.lattice$nativeBeardifierHandleFromMixin()
+                        : ((Number) invoke(function, "lattice$nativeBeardifierHandle")).longValue();
+                return beardifierHandle == 0L ? -1 : nativeAddBeardifier(handle, beardifierHandle);
+            }
             if (name.endsWith("DensityFunctions$BlendAlpha")) return nativeAddBlendAlpha(handle);
             if (name.endsWith("DensityFunctions$BlendOffset")) return nativeAddBlendOffset(handle);
             if (name.endsWith("DensityFunctions$BlendDensity")) {
@@ -507,6 +513,7 @@ public final class NativeDensityFunction {
     private static native int nativeAddFixedFloatSpline(long handle, float value);
     private static native int nativeAddImplSpline(long handle, int locationFunctionNodeRef, float[] locations, float[] derivatives, int[] valueSplineRefs);
     private static native int nativeAddSpline(long handle, int splineRef);
+    private static native int nativeAddBeardifier(long handle, long beardifierHandle);
     private static native void nativePrepareInterpolators(long cacheHandle, int horizontalCellCount, int verticalCellCount);
     private static native void nativeSetDensityRow(long cacheHandle, int slot, int cellZ, boolean toEndBuffer, double[] values);
 

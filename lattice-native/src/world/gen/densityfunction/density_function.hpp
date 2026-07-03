@@ -51,6 +51,7 @@
 #include "world/gen/noise/double_perlin_noise.hpp"
 #include "world/gen/noise/interpolated_noise.hpp"
 #include "world/gen/noise/simplex_noise.hpp"
+#include "world/gen/densityfunction/beardifier.hpp"
 #include "world/gen/densityfunction/spline.hpp"
 
 namespace lattice::world::gen::densityfunction {
@@ -163,6 +164,10 @@ enum class NodeKind : std::uint8_t {
     // OctavePerlinNoiseSampler pointers (lower / upper / interpolation)
     // plus 5 tuning doubles; operand-free.
     kInterpolatedNoise, // (interp_sampler_ptr in interp_noise_ptr)
+
+    // Beardifier: borrowed per-chunk BeardifierData pointer, owned by the
+    // Java Beardifier instance. Used by final-density trees.
+    kBeardifier,
 };
 
 /// Index into a `NodeArena::nodes` vector. -1 = null/no operand.
@@ -198,6 +203,10 @@ struct Node {
     // Owned by the JNI side (NativeInterpolatedNoise); the arena just
     // borrows the address.
     const noise::InterpolatedNoiseSampler* interp_noise_ptr = nullptr;
+
+    // Beardifier data pointer (kind == kBeardifier only). Borrowed from
+    // NativeBeardifier and kept alive by the owning Java Beardifier.
+    const beardifier::BeardifierData* beardifier_ptr = nullptr;
 
     // Cache slot index inside the CacheState's per-kind vector. Only
     // meaningful for kCache2D / kCacheOnce / kCacheAllInCell / kFlatCache.

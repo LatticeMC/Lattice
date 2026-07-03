@@ -15,13 +15,17 @@
  
      public static Beardifier forStructuresInChunk(StructureManager structureManager, ChunkPos chunkPos) {
          List<StructureStart> list = structureManager.startsForStructure(chunkPos, structure -> structure.terrainAdaptation() != TerrainAdjustment.NONE);
-@@ -97,6 +_,7 @@
+@@ -97,6 +_,11 @@
          this.pieces = pieces;
          this.junctions = junctions;
          this.affectedBox = affectedBox;
 +        this.nativeBeardifier = NativeBeardifier.isAvailable() ? NativeBeardifier.create(pieces, junctions) : null;
      }
  
++    public long lattice$nativeBeardifierHandle() {
++        return this.nativeBeardifier == null ? 0L : this.nativeBeardifier.handle();
++    }
++
      @Override
 @@ -119,6 +_,13 @@
              if (!this.affectedBox.isInside(i, i1, i2)) {

@@ -62,6 +62,10 @@ public final class NativeBeardifier implements AutoCloseable {
         return nativeCompute(handle, blockX, blockY, blockZ);
     }
 
+    public long handle() {
+        return closed ? 0L : handle;
+    }
+
     @Override
     public void close() {
         if (closed) return;
