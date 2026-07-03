@@ -259,15 +259,15 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
 
         case NodeKind::kShiftedNoise: {
             if (!n.noise_ptr) return 0.0;
-            // n.d0 = scale (xyz uniform)
+            // n.d0 = scaleXZ, n.d1 = scaleY
             // operands: a = shiftX function, b = shiftY function, c = shiftZ function
             const double sx = evaluate(arena, n.a, ctx);
             const double sy = evaluate(arena, n.b, ctx);
             const double sz = evaluate(arena, n.c, ctx);
             return noise::sample(*n.noise_ptr,
-                                 (ctx.x + sx) * n.d0,
-                                 (ctx.y + sy) * n.d0,
-                                 (ctx.z + sz) * n.d0);
+                                  ctx.x * n.d0 + sx,
+                                  ctx.y * n.d1 + sy,
+                                  ctx.z * n.d0 + sz);
         }
 
         // ---- Worldgen-4c additions ----

@@ -27,7 +27,7 @@
  *   - Lerp(t, low, high)            -- vanilla method_40488
  *   - RangeChoice(input, minIncl, maxExcl, whenIn, whenOut)
  *   - Noise(noiseSampler, scaleXZ, scaleY)
- *   - ShiftedNoise(shiftX, shiftZ, scale, noiseSampler)
+ *   - ShiftedNoise(shiftX, shiftY, shiftZ, scaleXZ, scaleY, noiseSampler)
  *
  * Not yet implemented (deferred to a follow-up commit):
  *
@@ -74,7 +74,7 @@ enum class NodeKind : std::uint8_t {
     kLerp,              // (t, low, high)
     kRangeChoice,       // (input, minIncl, maxExcl, whenIn, whenOut)
     kNoise,             // (noiseSampler, scaleXZ, scaleY)
-    kShiftedNoise,      // (shiftX, shiftZ, scale, noiseSampler)
+    kShiftedNoise,      // (shiftX, shiftY, shiftZ, scaleXZ, scaleY, noiseSampler)
 
     // Worldgen-4c additions ------------------------------------------------
     //

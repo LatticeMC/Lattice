@@ -336,7 +336,19 @@ public final class NativeDensityFunction {
                 return noise == null ? -1 : nativeAddShift(handle, noise.handle());
             }
             if (name.endsWith("DensityFunctions$ShiftedNoise")) {
-                return -1;
+                int shiftX = compile((DensityFunction) invoke(function, "shiftX"));
+                int shiftY = compile((DensityFunction) invoke(function, "shiftY"));
+                int shiftZ = compile((DensityFunction) invoke(function, "shiftZ"));
+                if (shiftX < 0 || shiftY < 0 || shiftZ < 0) {
+                    recordUnsupported(function);
+                    return -1;
+                }
+                NativeDoublePerlinNoise noise = nativeNoiseHolderNoise(invoke(function, "noise"));
+                if (noise == null) {
+                    recordUnsupported(function);
+                    return -1;
+                }
+                return nativeAddShiftedNoise(handle, shiftX, shiftY, shiftZ, noise.handle(), (Double) invoke(function, "xzScale"), (Double) invoke(function, "yScale"));
             }
             if (name.contains("NoiseChunk$NoiseInterpolator")) {
                 int input = compile((DensityFunction) invoke(function, "wrapped"));
@@ -381,6 +393,15 @@ public final class NativeDensityFunction {
                 int whenOut = compile((DensityFunction) invoke(function, "whenOutOfRange"));
                 if (input < 0 || whenIn < 0 || whenOut < 0) return -1;
                 return nativeAddRangeChoice(handle, input, (Double) invoke(function, "minInclusive"), (Double) invoke(function, "maxExclusive"), whenIn, whenOut);
+            }
+            if (name.endsWith("DensityFunctions$MapRange")) {
+                int input = compile((DensityFunction) invoke(function, "input"));
+                if (input < 0) return -1;
+                return nativeAddMapRange(handle, input,
+                        (Double) invoke(function, "fromLow"),
+                        (Double) invoke(function, "fromHigh"),
+                        (Double) invoke(function, "toLow"),
+                        (Double) invoke(function, "toHigh"));
             }
             if (name.endsWith("DensityFunctions$WeirdScaledSampler")) {
                 int input = compile((DensityFunction) invoke(function, "input"));
@@ -495,7 +516,7 @@ public final class NativeDensityFunction {
     private static native int nativeAddYClampedGradient(long handle, int fromY, int toY, double fromValue, double toValue);
     private static native int nativeAddRangeChoice(long handle, int input, double minInclusive, double maxExclusive, int whenIn, int whenOut);
     private static native int nativeAddNoise(long handle, long noiseHandle, double scaleXZ, double scaleY);
-    private static native int nativeAddShiftedNoise(long handle, int shiftX, int shiftY, int shiftZ, long noiseHandle, double scale);
+    private static native int nativeAddShiftedNoise(long handle, int shiftX, int shiftY, int shiftZ, long noiseHandle, double xzScale, double yScale);
     private static native int nativeAddShiftA(long handle, long noiseHandle);
     private static native int nativeAddShiftB(long handle, long noiseHandle);
     private static native int nativeAddShift(long handle, long noiseHandle);
@@ -508,6 +529,7 @@ public final class NativeDensityFunction {
     private static native int nativeAddBlendOffset(long handle);
     private static native int nativeAddBlendDensity(long handle, int input);
     private static native int nativeAddClamp(long handle, int input, double minValue, double maxValue);
+    private static native int nativeAddMapRange(long handle, int input, double fromLow, double fromHigh, double toLow, double toHigh);
     private static native int nativeAddInterpolatedNoise(long handle, long samplerHandle);
     private static native int nativeAddWeirdScaledSampler(long handle, int input, long noiseHandle, int type);
     private static native int nativeAddFixedFloatSpline(long handle, float value);

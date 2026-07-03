@@ -287,7 +287,7 @@ JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeAddShiftedNoise(
         JNIEnv*, jclass, jlong handle,
         jint shiftX, jint shiftY, jint shiftZ,
-        jlong noiseHandle, jdouble scale) {
+        jlong noiseHandle, jdouble xzScale, jdouble yScale) {
     auto* a = arena_from(handle);
     if (!a) return -1;
     df::Node n{};
@@ -295,7 +295,8 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeAddShiftedNoise
     n.a         = static_cast<df::NodeRef>(shiftX);
     n.b         = static_cast<df::NodeRef>(shiftY);
     n.c         = static_cast<df::NodeRef>(shiftZ);
-    n.d0        = scale;
+    n.d0        = xzScale;
+    n.d1        = yScale;
     n.noise_ptr = dpn_from(noiseHandle);
     return push_node(a, n);
 }
