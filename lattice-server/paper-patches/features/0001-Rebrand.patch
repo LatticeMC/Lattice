@@ -34,7 +34,7 @@ index 1b0ee48e28aaa68ddb1f28c23d3c5f5f40505c98..45a3f2576fd0cca58dfdeb75a2217674
              getManifestAttribute(manifest, ATTRIBUTE_BRAND_ID)
                  .map(Key::key)
 -                .orElse(BRAND_PURPUR_ID), // Purpur - Rebrand
-+                .orElse(BRAND_TENTACLES_ID), // Purpur - Rebrand // Lattice
++                .orElse(Key.key("latticemc", "lattice")), // Purpur - Rebrand // Lattice
              getManifestAttribute(manifest, ATTRIBUTE_BRAND_NAME)
 -                .orElse(BRAND_PURPUR_NAME), // Purpur - Rebrand
 +                .orElse(BRAND_LATTICE_NAME), // Purpur - Rebrand
