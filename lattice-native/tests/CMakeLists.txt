@@ -226,10 +226,11 @@ lattice_add_test(chunk_noise_sampler
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
-             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
-             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
-             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
-             ${CMAKE_SOURCE_DIR}/src/world/gen/chunknoise/chunk_noise_sampler.cpp)
+              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
+              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
+              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
+              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp
+              ${CMAKE_SOURCE_DIR}/src/world/gen/chunknoise/chunk_noise_sampler.cpp)
 
 # Worldgen-8: header-only Xoroshiro128++ port + OreVeinSampler.
 lattice_add_test(xoroshiro128pp
