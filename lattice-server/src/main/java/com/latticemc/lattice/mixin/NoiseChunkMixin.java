@@ -120,14 +120,14 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 } else {
                     access.lattice$setColumnValues(new double[0]);
                     access.lattice$setColumnCellX(cellX);
-                    access.lattice$noiseFiller().fillArray(access.lattice$values(), this);
+                    access.lattice$noiseFiller().fillArray(access.lattice$values(), (DensityFunction.ContextProvider) (Object) this);
                     continue;
                 }
             }
             if (column != null && column.length >= columnValueCount) {
                 System.arraycopy(column, cellOffset, access.lattice$values(), 0, cellValueCount);
             } else {
-                access.lattice$noiseFiller().fillArray(access.lattice$values(), this);
+                access.lattice$noiseFiller().fillArray(access.lattice$values(), (DensityFunction.ContextProvider) (Object) this);
             }
         }
 
