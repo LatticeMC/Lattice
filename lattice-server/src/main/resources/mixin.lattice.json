@@ -42,6 +42,8 @@
     "HeightmapMixin",
     "OreVeinifierAccessor",
     "NoiseChunkMixin",
+    "NoiseChunkSliceProviderMixin",
+    "NoiseInterpolatorMixin",
     "MinecraftServerStartMixin",
     "SimplexNoiseMixin",
     "ImprovedNoiseAccessor",
