@@ -381,10 +381,22 @@ public final class NativeDensityFunction {
                 if (input < 0 || whenIn < 0 || whenOut < 0) return -1;
                 return nativeAddRangeChoice(handle, input, (Double) invoke(function, "minInclusive"), (Double) invoke(function, "maxExclusive"), whenIn, whenOut);
             }
+            if (name.endsWith("DensityFunctions$WeirdScaledSampler")) {
+                int input = compile((DensityFunction) invoke(function, "input"));
+                if (input < 0) return -1;
+                NativeDoublePerlinNoise noise = nativeNoiseHolderNoise(invoke(function, "noise"));
+                if (noise == null) return -1;
+                int type = "TYPE2".equals(((Enum<?>) invoke(function, "rarityValueMapper")).name()) ? 1 : 0;
+                return nativeAddWeirdScaledSampler(handle, input, noise.handle(), type);
+            }
             if (name.endsWith("DensityFunctions$Clamp")) {
                 int input = compile((DensityFunction) invoke(function, "input"));
                 if (input < 0) return -1;
                 return nativeAddClamp(handle, input, (Double) invoke(function, "minValue"), (Double) invoke(function, "maxValue"));
+            }
+            if (name.endsWith("DensityFunctions$Spline")) {
+                int spline = compileSpline(invoke(function, "spline"));
+                return spline < 0 ? -1 : nativeAddSpline(handle, spline);
             }
             if (name.endsWith("DensityFunctions$BlendAlpha")) return nativeAddBlendAlpha(handle);
             if (name.endsWith("DensityFunctions$BlendOffset")) return nativeAddBlendOffset(handle);
@@ -417,6 +429,30 @@ public final class NativeDensityFunction {
             }
 
             recordUnsupported(function);
+            return -1;
+        }
+
+        private int compileSpline(Object spline) {
+            String name = spline.getClass().getName();
+            if (name.endsWith("CubicSpline$Constant")) {
+                return nativeAddFixedFloatSpline(handle, ((Number) invoke(spline, "value")).floatValue());
+            }
+            if (name.endsWith("CubicSpline$Multipoint")) {
+                Object coordinate = invoke(spline, "coordinate");
+                Object holder = invoke(coordinate, "function");
+                int locationFunction = compile((DensityFunction) invoke(holder, "value"));
+                if (locationFunction < 0) return -1;
+                float[] locations = (float[]) invoke(spline, "locations");
+                float[] derivatives = (float[]) invoke(spline, "derivatives");
+                List<?> values = (List<?>) invoke(spline, "values");
+                int[] valueRefs = new int[values.size()];
+                for (int i = 0; i < values.size(); i++) {
+                    int valueRef = compileSpline(values.get(i));
+                    if (valueRef < 0) return -1;
+                    valueRefs[i] = valueRef;
+                }
+                return nativeAddImplSpline(handle, locationFunction, locations, derivatives, valueRefs);
+            }
             return -1;
         }
 
@@ -466,6 +502,10 @@ public final class NativeDensityFunction {
     private static native int nativeAddBlendDensity(long handle, int input);
     private static native int nativeAddClamp(long handle, int input, double minValue, double maxValue);
     private static native int nativeAddInterpolatedNoise(long handle, long samplerHandle);
+    private static native int nativeAddWeirdScaledSampler(long handle, int input, long noiseHandle, int type);
+    private static native int nativeAddFixedFloatSpline(long handle, float value);
+    private static native int nativeAddImplSpline(long handle, int locationFunctionNodeRef, float[] locations, float[] derivatives, int[] valueSplineRefs);
+    private static native int nativeAddSpline(long handle, int splineRef);
     private static native void nativePrepareInterpolators(long cacheHandle, int horizontalCellCount, int verticalCellCount);
     private static native void nativeSetDensityRow(long cacheHandle, int slot, int cellZ, boolean toEndBuffer, double[] values);
 

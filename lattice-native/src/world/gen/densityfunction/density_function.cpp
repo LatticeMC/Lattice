@@ -388,22 +388,19 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             const int    type  = static_cast<int>(n.d0);
             // RarityValueMapper rarities, vanilla constants:
             const double rarity = (type == 1)
-                ? /* Type2 */ (input < -0.5     ? 0.75
-                              : input < -0.3   ? 1.0
-                              : input < -0.15  ? 1.5
-                              : input < 0.0    ? 2.0
-                              : input < 0.4    ? 2.5
-                              : input < 0.7    ? 3.0
-                              :                  4.0)
-                : /* Type1 */ (input < -0.75    ? 0.5
+                ? /* Type2 / spaghetti rarity 2D */ (input < -0.75 ? 0.5
                               : input < -0.5   ? 0.75
                               : input < 0.5    ? 1.0
                               : input < 0.75   ? 2.0
-                              :                  3.0);
-            return noise::sample(*n.noise_ptr,
-                                 ctx.x / rarity,
-                                 ctx.y / rarity,
-                                 ctx.z / rarity) * rarity;
+                              :                  3.0)
+                : /* Type1 / spaghetti rarity 3D */ (input < -0.5   ? 0.75
+                              : input < 0.0    ? 1.0
+                              : input < 0.5    ? 1.5
+                              :                  2.0);
+            return std::abs(noise::sample(*n.noise_ptr,
+                                  ctx.x / rarity,
+                                  ctx.y / rarity,
+                                  ctx.z / rarity)) * rarity;
         }
 
         case NodeKind::kEndIslands: {
