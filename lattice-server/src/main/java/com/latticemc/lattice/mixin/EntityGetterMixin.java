@@ -2,6 +2,7 @@ package com.latticemc.lattice.mixin;
 
 import java.util.function.Predicate;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.EntityGetter;
 import org.jspecify.annotations.Nullable;
@@ -29,5 +30,23 @@ public interface EntityGetterMixin {
                 z,
                 distance,
                 player -> predicate == null || predicate.test(player)));
+    }
+
+    @Inject(method = "hasNearbyAlivePlayer", at = @At("HEAD"), cancellable = true)
+    private void lattice$hasNearbyAlivePlayer(double x,
+                                              double y,
+                                              double z,
+                                              double distance,
+                                              CallbackInfoReturnable<Boolean> cir) {
+        if (distance < 0.0) return;
+        final EntityGetter self = (EntityGetter) this;
+        cir.setReturnValue(NativeGoalQuerySupport.findNearestPlayer(
+                self,
+                x,
+                y,
+                z,
+                distance,
+                player -> EntitySelector.NO_SPECTATORS.test(player)
+                        && EntitySelector.LIVING_ENTITY_STILL_ALIVE.test(player)) != null);
     }
 }

@@ -25,7 +25,7 @@ public final class NativeDensityFunction {
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, Boolean> FAILED_COMPILES = new WeakHashMap<>();
-    private static final ThreadLocal<double[]> CORNER_ROW = ThreadLocal.withInitial(() -> new double[2]);
+    private static final ThreadLocal<double[]> CORNER_VALUES = ThreadLocal.withInitial(() -> new double[8]);
     private static final LongAdder COMPILE_ATTEMPTS = new LongAdder();
     private static final LongAdder COMPILE_SUCCESS = new LongAdder();
     private static final LongAdder SLICE_ATTEMPTS = new LongAdder();
@@ -245,18 +245,21 @@ public final class NativeDensityFunction {
         for (InterpolatorBinding binding : interpolators) {
             double[][] slice0 = binding.function().lattice$slice0();
             double[][] slice1 = binding.function().lattice$slice1();
-            setCornerRow(cacheHandle, binding.slot(), 0, false, slice0[localCellZ], localCellY);
-            setCornerRow(cacheHandle, binding.slot(), 1, false, slice0[localCellZ + 1], localCellY);
-            setCornerRow(cacheHandle, binding.slot(), 0, true, slice1[localCellZ], localCellY);
-            setCornerRow(cacheHandle, binding.slot(), 1, true, slice1[localCellZ + 1], localCellY);
+            double[] corners = CORNER_VALUES.get();
+            double[] startZ0 = slice0[localCellZ];
+            double[] startZ1 = slice0[localCellZ + 1];
+            double[] endZ0 = slice1[localCellZ];
+            double[] endZ1 = slice1[localCellZ + 1];
+            corners[0] = startZ0[localCellY];
+            corners[1] = startZ0[localCellY + 1];
+            corners[2] = startZ1[localCellY];
+            corners[3] = startZ1[localCellY + 1];
+            corners[4] = endZ0[localCellY];
+            corners[5] = endZ0[localCellY + 1];
+            corners[6] = endZ1[localCellY];
+            corners[7] = endZ1[localCellY + 1];
+            nativeSetDensityCorners(cacheHandle, binding.slot(), corners);
         }
-    }
-
-    private static void setCornerRow(long cacheHandle, int slot, int cellZ, boolean toEndBuffer, double[] source, int cellY) {
-        double[] row = CORNER_ROW.get();
-        row[0] = source[cellY];
-        row[1] = source[cellY + 1];
-        nativeSetDensityRow(cacheHandle, slot, cellZ, toEndBuffer, row);
     }
 
     private static DensityFunction child(DensityFunction function, String name) {
@@ -537,6 +540,7 @@ public final class NativeDensityFunction {
     private static native int nativeAddSpline(long handle, int splineRef);
     private static native int nativeAddBeardifier(long handle, long beardifierHandle);
     private static native void nativePrepareInterpolators(long cacheHandle, int horizontalCellCount, int verticalCellCount);
+    private static native void nativeSetDensityCorners(long cacheHandle, int slot, double[] values);
     private static native void nativeSetDensityRow(long cacheHandle, int slot, int cellZ, boolean toEndBuffer, double[] values);
 
 }

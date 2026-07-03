@@ -817,6 +817,49 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetDensityRow(
 }
 
 JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetDensityCorners(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle,
+        jint slot, jdoubleArray values) {
+    auto* c = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!c) return;
+    if (slot < 0 || slot >= static_cast<jint>(c->interpolators.size())) return;
+    if (!values) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: null density corners");
+        return;
+    }
+
+    auto& it = c->interpolators[static_cast<std::size_t>(slot)];
+    const int vCC = c->vertical_cell_count;
+    const std::size_t i00 = 0;
+    const std::size_t i10 = static_cast<std::size_t>(vCC + 1);
+    const std::size_t i01 = 1;
+    const std::size_t i11 = i10 + 1;
+    if (i11 >= it.start_density_buffer.size() || i11 >= it.end_density_buffer.size()) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: density corner buffers out of range");
+        return;
+    }
+
+    lattice::jni::CriticalDoubleArray src{env, values};
+    if (!src) {
+        lattice::jni::throw_illegal_state(env, "lattice df: density corners pin failed");
+        return;
+    }
+    if (src.size() < 8) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: density corners too short");
+        return;
+    }
+
+    it.start_density_buffer[i00] = src.data()[0];
+    it.start_density_buffer[i01] = src.data()[1];
+    it.start_density_buffer[i10] = src.data()[2];
+    it.start_density_buffer[i11] = src.data()[3];
+    it.end_density_buffer[i00] = src.data()[4];
+    it.end_density_buffer[i01] = src.data()[5];
+    it.end_density_buffer[i10] = src.data()[6];
+    it.end_density_buffer[i11] = src.data()[7];
+}
+
+JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSwapBuffers(
         JNIEnv*, jclass /*cls*/, jlong cacheHandle) {
     auto* c = reinterpret_cast<df::CacheState*>(cacheHandle);

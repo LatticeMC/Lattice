@@ -69,6 +69,26 @@ TEST_CASE("collision: scalar and dispatcher agree") {
     CHECK(mv_d[2] == mv_s[2]);
 }
 
+TEST_CASE("collision: dispatcher agrees at near-epsilon SIMD batch boundary") {
+    const double moving[6] = {0, 0, 0, 1, 1, 1};
+    const double eps = kCollisionEpsilon;
+    const double obstacles[24] = {
+        1.0 + 0.5 * eps, -5, -5, 2, 5, 5,
+        4.0, -5, -5, 5, 5, 5,
+        6.0, -5, -5, 7, 5, 5,
+        8.0, -5, -5, 9, 5, 5,
+    };
+    double mv_s[3] = {5.0, 0.0, 0.0};
+    double mv_d[3] = {5.0, 0.0, 0.0};
+    adjust_movement_scalar(moving, mv_s, obstacles, 4);
+    adjust_movement(moving, mv_d, obstacles, 4);
+
+    CHECK(mv_s[0] == doctest::Approx(0.5 * eps).epsilon(1e-12));
+    CHECK(mv_d[0] == doctest::Approx(mv_s[0]).epsilon(1e-12));
+    CHECK(mv_d[1] == mv_s[1]);
+    CHECK(mv_d[2] == mv_s[2]);
+}
+
 TEST_CASE("collision: touching boxes (gap=0) are blocked like Paper") {
     const double moving[6] = {0, 0, 0, 1, 1, 1};
     // Obstacle starts exactly at moving box max (touching)
