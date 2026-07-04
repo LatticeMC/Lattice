@@ -24,6 +24,7 @@ public final class NativeDensityFunction {
     private static final boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "false"))
             && Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCellUnsafe", "false"));
     private static final boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "false"));
+    private static final boolean SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionSpline", "false"));
     private static final boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
@@ -545,6 +546,7 @@ public final class NativeDensityFunction {
                 return nativeAddClamp(handle, input, (Double) invoke(function, "minValue"), (Double) invoke(function, "maxValue"));
             }
             if (name.endsWith("DensityFunctions$Spline")) {
+                if (!SPLINE_ENABLED) return -1;
                 int spline = compileSpline(invoke(function, "spline"));
                 return spline < 0 ? -1 : nativeAddSpline(handle, spline);
             }
