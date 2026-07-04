@@ -58,6 +58,7 @@
     "PigMixin",
     "CowMixin",
     "ChickenMixin",
+    "CommandsMixin",
     "BatMixin",
     "RabbitMixin",
     "BeeMixin",

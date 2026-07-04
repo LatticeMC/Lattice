@@ -20,12 +20,14 @@ import org.slf4j.LoggerFactory;
 
 public final class NativeDensityFunction {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
-    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "false"));
-    private static final boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "false"))
+    private static volatile boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "false"));
+    private static volatile boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "false"))
             && Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCellUnsafe", "false"));
-    private static final boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "false"));
-    private static final boolean SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionSpline", "false"));
-    private static final boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
+    private static volatile boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "false"));
+    private static volatile boolean SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionSpline", "false"));
+    private static volatile boolean MULTIPOINT_SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionMultipointSpline", "false"));
+    private static volatile boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
+    private static volatile boolean PROFILING_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionProfiling");
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, Boolean> FAILED_COMPILES = new WeakHashMap<>();
@@ -39,6 +41,13 @@ public final class NativeDensityFunction {
     private static final LongAdder CELL_ATTEMPTS = new LongAdder();
     private static final LongAdder CELL_SUCCESS = new LongAdder();
     private static final LongAdder CELL_INTERPOLATED = new LongAdder();
+    private static final LongAdder COMPILE_NANOS = new LongAdder();
+    private static final LongAdder SLICE_NANOS = new LongAdder();
+    private static final LongAdder CELL_NANOS = new LongAdder();
+    private static final LongAdder COLUMN_NANOS = new LongAdder();
+    private static final LongAdder COLUMN_COUNT = new LongAdder();
+    private static final LongAdder SYNC_NANOS = new LongAdder();
+    private static final LongAdder SYNC_COUNT = new LongAdder();
     private static final ConcurrentHashMap<String, LongAdder> UNSUPPORTED = new ConcurrentHashMap<>();
     private static final int LOG_INTERVAL = 4096;
     private static final AtomicBoolean STATUS_LOGGED = new AtomicBoolean(false);
@@ -79,12 +88,14 @@ public final class NativeDensityFunction {
         }
         if (!ENABLED) return false;
         if (STATS_ENABLED) SLICE_ATTEMPTS.increment();
+        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompile(function);
         if (compiled == null) return false;
         try {
             nativeClearCache(compiled.cacheHandle);
             nativeEvaluateGrid(compiled.handle, compiled.cacheHandle, x, y0, z, 1.0, dy, 1.0, cellX, cellZ, 1, values.length, 1, values);
             if (STATS_ENABLED) SLICE_SUCCESS.increment();
+            if (PROFILING_ENABLED) SLICE_NANOS.add(System.nanoTime() - start);
             return true;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_grid", e.getMessage());
@@ -138,6 +149,7 @@ public final class NativeDensityFunction {
         logStatusOnce();
         if (!ENABLED || !CELL_ENABLED) return false;
         if (bypassCellNative(function)) return false;
+        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompileCell(function);
         if (compiled == null) return false;
         if (compiled.clearsCachePerCell) return false;
@@ -162,6 +174,10 @@ public final class NativeDensityFunction {
                     cellCountY,
                     compiled.cacheAllInCellValues,
                     values);
+            if (PROFILING_ENABLED) {
+                COLUMN_NANOS.add(System.nanoTime() - start);
+                COLUMN_COUNT.increment();
+            }
             return true;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_cell_column", e.getMessage());
@@ -194,6 +210,7 @@ public final class NativeDensityFunction {
             CELL_ATTEMPTS.increment();
             maybeLogStats();
         }
+        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompileCell(function);
         if (compiled == null) return false;
         int expected = cellWidth * cellHeight * cellWidth;
@@ -218,6 +235,7 @@ public final class NativeDensityFunction {
                     compiled.cacheAllInCellValues,
                     values);
             if (STATS_ENABLED) CELL_SUCCESS.increment();
+            if (PROFILING_ENABLED) CELL_NANOS.add(System.nanoTime() - start);
             return true;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_cell_grid", e.getMessage());
@@ -240,7 +258,9 @@ public final class NativeDensityFunction {
                 return null;
             }
             if (STATS_ENABLED) COMPILE_ATTEMPTS.increment();
+            long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
             NativeDensityFunction compiled = compileNew(function);
+            if (PROFILING_ENABLED) COMPILE_NANOS.add(System.nanoTime() - start);
             if (compiled != null) {
                 if (STATS_ENABLED) COMPILE_SUCCESS.increment();
                 CACHE.put(function, compiled);
@@ -360,10 +380,85 @@ public final class NativeDensityFunction {
         }
         if (syncedCellStartBlockX == cellStartBlockX) return;
 
+        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
         for (InterpolatorBinding binding : interpolators) {
             nativeSetInterpolatorColumn(cacheHandle, binding.slot(), binding.function().lattice$slice0(), binding.function().lattice$slice1(), cellCountXZ + 1, cellCountY + 1);
         }
+        if (PROFILING_ENABLED) {
+            SYNC_NANOS.add(System.nanoTime() - start);
+            SYNC_COUNT.increment();
+        }
         syncedCellStartBlockX = cellStartBlockX;
+    }
+
+    public static boolean setOption(String option, boolean value) {
+        switch (option) {
+            case "enabled" -> ENABLED = value;
+            case "cell" -> CELL_ENABLED = value;
+            case "directCell" -> DIRECT_CELL_ENABLED = value;
+            case "spline" -> SPLINE_ENABLED = value;
+            case "multipointSpline" -> MULTIPOINT_SPLINE_ENABLED = value;
+            case "stats" -> STATS_ENABLED = value;
+            case "profiling" -> PROFILING_ENABLED = value;
+            default -> { return false; }
+        }
+        clearCompiledCaches();
+        return true;
+    }
+
+    public static String status() {
+        return "enabled=" + ENABLED
+                + " cell=" + CELL_ENABLED
+                + " directCell=" + DIRECT_CELL_ENABLED
+                + " spline=" + SPLINE_ENABLED
+                + " multipointSpline=" + MULTIPOINT_SPLINE_ENABLED
+                + " stats=" + STATS_ENABLED
+                + " profiling=" + PROFILING_ENABLED
+                + " compile=" + COMPILE_SUCCESS.sum() + '/' + COMPILE_ATTEMPTS.sum()
+                + " slice=" + SLICE_SUCCESS.sum() + '/' + SLICE_ATTEMPTS.sum()
+                + " cell=" + CELL_SUCCESS.sum() + '/' + CELL_ATTEMPTS.sum()
+                + " interpolatedCell=" + CELL_INTERPOLATED.sum()
+                + " timingsUs={compile=" + avgMicros(COMPILE_NANOS.sum(), COMPILE_ATTEMPTS.sum())
+                + ", slice=" + avgMicros(SLICE_NANOS.sum(), SLICE_SUCCESS.sum())
+                + ", cell=" + avgMicros(CELL_NANOS.sum(), CELL_SUCCESS.sum())
+                + ", column=" + avgMicros(COLUMN_NANOS.sum(), COLUMN_COUNT.sum())
+                + ", sync=" + avgMicros(SYNC_NANOS.sum(), SYNC_COUNT.sum()) + '}'
+                + " unsupported=" + unsupportedSummary();
+    }
+
+    public static void resetStats() {
+        COMPILE_ATTEMPTS.reset();
+        COMPILE_SUCCESS.reset();
+        SLICE_ATTEMPTS.reset();
+        SLICE_SUCCESS.reset();
+        CELL_ATTEMPTS.reset();
+        CELL_SUCCESS.reset();
+        CELL_INTERPOLATED.reset();
+        COMPILE_NANOS.reset();
+        SLICE_NANOS.reset();
+        CELL_NANOS.reset();
+        COLUMN_NANOS.reset();
+        COLUMN_COUNT.reset();
+        SYNC_NANOS.reset();
+        SYNC_COUNT.reset();
+        UNSUPPORTED.clear();
+    }
+
+    private static void clearCompiledCaches() {
+        synchronized (CACHE) {
+            CACHE.clear();
+            FAILED_COMPILES.clear();
+        }
+        LAST_COMPILE.remove();
+        LAST_CELL_COMPILE.remove();
+        LAST_CELL_BYPASS.remove();
+        STATUS_LOGGED.set(false);
+        FIRST_SLICE_LOGGED.set(false);
+        FIRST_CELL_LOGGED.set(false);
+    }
+
+    private static long avgMicros(long nanos, long count) {
+        return count <= 0 ? 0L : nanos / count / 1_000L;
     }
 
     private static DensityFunction child(DensityFunction function, String name) {
@@ -604,6 +699,7 @@ public final class NativeDensityFunction {
                 return nativeAddFixedFloatSpline(handle, ((Number) invoke(spline, "value")).floatValue());
             }
             if (name.endsWith("CubicSpline$Multipoint")) {
+                if (!MULTIPOINT_SPLINE_ENABLED) return -1;
                 Object coordinate = invoke(spline, "coordinate");
                 Object holder = invoke(coordinate, "function");
                 int locationFunction = compile((DensityFunction) invoke(holder, "value"));
