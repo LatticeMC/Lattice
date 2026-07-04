@@ -20,24 +20,24 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 
-final class HerbivoreAiSupport {
+public final class HerbivoreAiSupport {
     private static final NativeBiologicalAi.Stimulus[] NO_STIMULI = new NativeBiologicalAi.Stimulus[0];
 
     private HerbivoreAiSupport() {}
 
-    static @Nullable LivingEntity selectThreat(@Nullable LivingEntity lastHurtByMob,
-                                               @Nullable LivingEntity target) {
+    public static @Nullable LivingEntity selectThreat(@Nullable LivingEntity lastHurtByMob,
+                                                      @Nullable LivingEntity target) {
         if (lastHurtByMob != null && lastHurtByMob.isAlive()) return lastHurtByMob;
         if (target != null && target.isAlive()) return target;
         return null;
     }
 
     @SafeVarargs
-    static @Nullable LivingEntity findNearestThreat(Mob self,
-                                                    ServerLevel level,
-                                                    double range,
-                                                    Predicate<LivingEntity> predicate,
-                                                    Class<? extends LivingEntity>... nativePrefilterTypes) {
+    public static @Nullable LivingEntity findNearestThreat(Mob self,
+                                                           ServerLevel level,
+                                                           double range,
+                                                           Predicate<LivingEntity> predicate,
+                                                           Class<? extends LivingEntity>... nativePrefilterTypes) {
         final AABB area = self.getBoundingBox().inflate(range);
         if (NativeEntityQuery.isAvailable()) {
             final List<LivingEntity> candidates = level.getEntitiesOfClass(LivingEntity.class, area, entity -> true);
@@ -115,19 +115,19 @@ final class HerbivoreAiSupport {
         return nearest;
     }
 
-    static @Nullable LivingEntity cachedThreat(Mob self,
-                                               @Nullable LivingEntity cached,
-                                               double range,
-                                               Predicate<LivingEntity> predicate) {
+    public static @Nullable LivingEntity cachedThreat(Mob self,
+                                                      @Nullable LivingEntity cached,
+                                                      double range,
+                                                      Predicate<LivingEntity> predicate) {
         if (cached == null || !cached.isAlive() || cached.isSpectator() || !predicate.test(cached)) return null;
         return self.distanceToSqr(cached) <= range * range ? cached : null;
     }
 
-    static boolean shouldRefreshThreatScan(Mob self, int interval) {
+    public static boolean shouldRefreshThreatScan(Mob self, int interval) {
         return interval <= 1 || (self.tickCount + self.getId()) % interval == 0;
     }
 
-    static float threatStrength(@Nullable LivingEntity threat) {
+    public static float threatStrength(@Nullable LivingEntity threat) {
         if (threat == null) return 0.0F;
         if (threat instanceof Monster) return 1.0F;
         if (threat instanceof NeutralMob) return 0.7F;
@@ -135,10 +135,10 @@ final class HerbivoreAiSupport {
         return 0.6F;
     }
 
-    static NativeBiologicalAi.Stimulus[] buildStimuli(Entity self,
-                                                       @Nullable LivingEntity threat,
-                                                       @Nullable Player temptingPlayer,
-                                                       float foodStrength) {
+    public static NativeBiologicalAi.Stimulus[] buildStimuli(Entity self,
+                                                             @Nullable LivingEntity threat,
+                                                             @Nullable Player temptingPlayer,
+                                                             float foodStrength) {
         final boolean hasThreat = threat != null && threat.isAlive();
         final boolean hasFood = temptingPlayer != null;
         if (!hasThreat && !hasFood) return NO_STIMULI;
@@ -164,11 +164,11 @@ final class HerbivoreAiSupport {
         return stimuli;
     }
 
-    static boolean applyDecision(Mob mob,
-                                 NativeBiologicalAi.Decision decision,
-                                 @Nullable LivingEntity threat,
-                                 @Nullable Player temptingPlayer,
-                                 double minPursueSpeed) {
+    public static boolean applyDecision(Mob mob,
+                                        NativeBiologicalAi.Decision decision,
+                                        @Nullable LivingEntity threat,
+                                        @Nullable Player temptingPlayer,
+                                        double minPursueSpeed) {
         try {
             return applyDecisionInner(mob, decision, threat, temptingPlayer, minPursueSpeed);
         } catch (final Exception e) {

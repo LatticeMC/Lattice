@@ -7,17 +7,17 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import org.jspecify.annotations.Nullable;
 
-final class PollinatorAiSupport {
+public final class PollinatorAiSupport {
     private PollinatorAiSupport() {}
 
-    static boolean applyDecision(Mob mob,
-                                 NativeBiologicalAi.Decision decision,
-                                 @Nullable LivingEntity prey,
-                                 @Nullable Player temptingPlayer,
-                                 int preyIndex,
-                                 int foodIndex,
-                                 double minPreyPursueSpeed,
-                                 double minFoodPursueSpeed) {
+    public static boolean applyDecision(Mob mob,
+                                        NativeBiologicalAi.Decision decision,
+                                        @Nullable LivingEntity prey,
+                                        @Nullable Player temptingPlayer,
+                                        int preyIndex,
+                                        int foodIndex,
+                                        double minPreyPursueSpeed,
+                                        double minFoodPursueSpeed) {
         if (decision.action() == NativeBiologicalAi.Action.PURSUE && decision.stimulusIndex() == preyIndex && prey != null && prey.isAlive()) {
             mob.lookAt(prey, 25.0F, 25.0F);
             if (mob.distanceToSqr(prey) > 2.25) {

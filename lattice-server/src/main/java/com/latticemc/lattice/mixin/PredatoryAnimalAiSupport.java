@@ -17,15 +17,15 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 
-final class PredatoryAnimalAiSupport {
+public final class PredatoryAnimalAiSupport {
     private PredatoryAnimalAiSupport() {}
 
     @SafeVarargs
-    static @Nullable LivingEntity findNearestPrey(Mob self,
-                                                  ServerLevel level,
-                                                  double range,
-                                                  Predicate<LivingEntity> predicate,
-                                                  Class<? extends LivingEntity>... nativePrefilterTypes) {
+    public static @Nullable LivingEntity findNearestPrey(Mob self,
+                                                         ServerLevel level,
+                                                         double range,
+                                                         Predicate<LivingEntity> predicate,
+                                                         Class<? extends LivingEntity>... nativePrefilterTypes) {
         final AABB area = self.getBoundingBox().inflate(range);
         if (NativeEntityQuery.isAvailable()) {
             final List<LivingEntity> candidates = level.getEntitiesOfClass(LivingEntity.class, area, entity -> true);
@@ -102,28 +102,28 @@ final class PredatoryAnimalAiSupport {
         return nearest;
     }
 
-    static @Nullable LivingEntity cachedPrey(Mob self,
-                                             @Nullable LivingEntity cached,
-                                             double range,
-                                             Predicate<LivingEntity> predicate) {
+    public static @Nullable LivingEntity cachedPrey(Mob self,
+                                                    @Nullable LivingEntity cached,
+                                                    double range,
+                                                    Predicate<LivingEntity> predicate) {
         if (cached == null || !cached.isAlive() || cached.isSpectator() || !predicate.test(cached)) return null;
         return self.distanceToSqr(cached) <= range * range ? cached : null;
     }
 
-    static boolean shouldRefreshPreyScan(Mob self, int interval) {
+    public static boolean shouldRefreshPreyScan(Mob self, int interval) {
         return interval <= 1 || (self.tickCount + self.getId()) % interval == 0;
     }
 
-    static boolean applyDecision(Mob mob,
-                                 NativeBiologicalAi.Decision decision,
-                                 @Nullable LivingEntity threat,
-                                 @Nullable LivingEntity prey,
-                                 @Nullable Player temptingPlayer,
-                                 int threatIndex,
-                                 int preyIndex,
-                                 int foodIndex,
-                                 double minPreyPursueSpeed,
-                                 double minFoodPursueSpeed) {
+    public static boolean applyDecision(Mob mob,
+                                        NativeBiologicalAi.Decision decision,
+                                        @Nullable LivingEntity threat,
+                                        @Nullable LivingEntity prey,
+                                        @Nullable Player temptingPlayer,
+                                        int threatIndex,
+                                        int preyIndex,
+                                        int foodIndex,
+                                        double minPreyPursueSpeed,
+                                        double minFoodPursueSpeed) {
         try {
             return applyDecisionInner(mob, decision, threat, prey, temptingPlayer,
                     threatIndex, preyIndex, foodIndex, minPreyPursueSpeed, minFoodPursueSpeed);

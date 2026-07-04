@@ -11,7 +11,7 @@ public final class PathfinderBuffers {
     private int[] targetZ = new int[0];
     private int[] outPath = new int[0];
 
-    int copyTargets(Set<BlockPos> source) {
+    public int copyTargets(Set<BlockPos> source) {
         if (this.targets.length < source.size()) {
             this.targets = new BlockPos[source.size()];
         }
@@ -22,39 +22,39 @@ public final class PathfinderBuffers {
         return index;
     }
 
-    BlockPos target(int index) {
+    public BlockPos target(int index) {
         return this.targets[index];
     }
 
-    byte[] pathTypes(int required) {
+    public byte[] pathTypes(int required) {
         if (this.pathTypes.length < required) {
             this.pathTypes = new byte[required];
         }
         return this.pathTypes;
     }
 
-    int[] targetX(int required) {
+    public int[] targetX(int required) {
         if (this.targetX.length < required) {
             this.targetX = new int[required];
         }
         return this.targetX;
     }
 
-    int[] targetY(int required) {
+    public int[] targetY(int required) {
         if (this.targetY.length < required) {
             this.targetY = new int[required];
         }
         return this.targetY;
     }
 
-    int[] targetZ(int required) {
+    public int[] targetZ(int required) {
         if (this.targetZ.length < required) {
             this.targetZ = new int[required];
         }
         return this.targetZ;
     }
 
-    int[] outPath(int maxVisitedNodes) {
+    public int[] outPath(int maxVisitedNodes) {
         int required = Math.addExact(3, Math.multiplyExact(maxVisitedNodes, 3));
         if (this.outPath.length < required) {
             this.outPath = new int[required];

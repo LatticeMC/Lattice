@@ -9,15 +9,15 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import org.jspecify.annotations.Nullable;
 
-final class AquaticAiSupport {
+public final class AquaticAiSupport {
     private AquaticAiSupport() {}
 
-    static boolean applyDecision(Mob mob,
-                                 NativeBiologicalAi.Decision decision,
-                                 @Nullable LivingEntity threat,
-                                 @Nullable Player temptingPlayer,
-                                 double minPursueSpeed,
-                                 boolean prefersWater) {
+    public static boolean applyDecision(Mob mob,
+                                        NativeBiologicalAi.Decision decision,
+                                        @Nullable LivingEntity threat,
+                                        @Nullable Player temptingPlayer,
+                                        double minPursueSpeed,
+                                        boolean prefersWater) {
         if (decision.action() == NativeBiologicalAi.Action.FLEE && threat != null && threat.isAlive()) {
             final double dx = mob.getX() - threat.getX();
             final double dz = mob.getZ() - threat.getZ();

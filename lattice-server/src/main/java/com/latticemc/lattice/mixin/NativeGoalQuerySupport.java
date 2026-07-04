@@ -17,30 +17,30 @@ import net.minecraft.world.level.EntityGetter;
 import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 
-final class NativeGoalQuerySupport {
+public final class NativeGoalQuerySupport {
     private static final int MIN_NATIVE_CANDIDATES = 8;
 
     private NativeGoalQuerySupport() {}
 
-    static <T extends LivingEntity> @Nullable T findNearestEntity(LivingEntity source,
-                                                                  ServerLevel level,
-                                                                  List<? extends T> candidates,
-                                                                  TargetingConditions targetingConditions,
-                                                                  AABB area,
-                                                                  double x,
-                                                                  double y,
-                                                                  double z) {
+    public static <T extends LivingEntity> @Nullable T findNearestEntity(LivingEntity source,
+                                                                         ServerLevel level,
+                                                                         List<? extends T> candidates,
+                                                                         TargetingConditions targetingConditions,
+                                                                         AABB area,
+                                                                         double x,
+                                                                         double y,
+                                                                         double z) {
         return findNearestEntityNullableSource(source, level, candidates, targetingConditions, area, x, y, z);
     }
 
-    static <T extends LivingEntity> @Nullable T findNearestEntityNullableSource(@Nullable LivingEntity source,
-                                                                                ServerLevel level,
-                                                                                List<? extends T> candidates,
-                                                                                TargetingConditions targetingConditions,
-                                                                                AABB area,
-                                                                                double x,
-                                                                                double y,
-                                                                                double z) {
+    public static <T extends LivingEntity> @Nullable T findNearestEntityNullableSource(@Nullable LivingEntity source,
+                                                                                       ServerLevel level,
+                                                                                       List<? extends T> candidates,
+                                                                                       TargetingConditions targetingConditions,
+                                                                                       AABB area,
+                                                                                       double x,
+                                                                                       double y,
+                                                                                       double z) {
         if (!NativeEntityQuery.isAvailable() || candidates.size() < MIN_NATIVE_CANDIDATES) {
             return lattice$findNearestEntityFallback(level, source, candidates, targetingConditions, x, y, z);
         }
@@ -81,14 +81,14 @@ final class NativeGoalQuerySupport {
         return null;
     }
 
-    static <T extends LivingEntity> List<T> sortByDistance(LivingEntity source,
-                                                           List<? extends T> candidates,
-                                                           AABB area,
-                                                           double x,
-                                                           double y,
-                                                           double z,
-                                                           Predicate<? super T> filter,
-                                                           NativeEntityQuery.PredicateKind predicateKind) {
+    public static <T extends LivingEntity> List<T> sortByDistance(LivingEntity source,
+                                                                  List<? extends T> candidates,
+                                                                  AABB area,
+                                                                  double x,
+                                                                  double y,
+                                                                  double z,
+                                                                  Predicate<? super T> filter,
+                                                                  NativeEntityQuery.PredicateKind predicateKind) {
         if (!NativeEntityQuery.isAvailable() || candidates.size() < MIN_NATIVE_CANDIDATES) {
             return lattice$sortByDistanceFallback(candidates, x, y, z, filter);
         }
@@ -130,12 +130,12 @@ final class NativeGoalQuerySupport {
         return sorted;
     }
 
-    static @Nullable Player findNearestPlayer(EntityGetter level,
-                                              double x,
-                                              double y,
-                                              double z,
-                                              double range,
-                                              Predicate<? super Player> filter) {
+    public static @Nullable Player findNearestPlayer(EntityGetter level,
+                                                     double x,
+                                                     double y,
+                                                     double z,
+                                                     double range,
+                                                     Predicate<? super Player> filter) {
         final List<? extends Player> players = level.players();
         if (!NativeEntityQuery.isAvailable() || players.size() < MIN_NATIVE_CANDIDATES) {
             return lattice$findNearestPlayerFallback(players, x, y, z, range, filter);
