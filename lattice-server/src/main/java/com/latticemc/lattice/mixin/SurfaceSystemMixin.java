@@ -226,8 +226,8 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         int minSurfaceLevel = lattice$minSurfaceLevel(noiseChunk, x, z, surfaceDepth);
         BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
         int fluidHeight = lattice$fluidHeight(chunk, x, y, z, surfaceTop, scanPos);
-        int stoneDepthFloor = lattice$stoneDepthFloor(chunk, x, y, z, this, scanPos);
-        int stoneDepthCeiling = lattice$stoneDepthCeiling(chunk, x, y, z, this, scanPos);
+        int stoneDepthFloor = lattice$stoneDepthFloor(chunk, x, y, z, scanPos);
+        int stoneDepthCeiling = lattice$stoneDepthCeiling(chunk, x, y, z, scanPos);
         int[] ints = new int[10];
         byte[] bools = new byte[2];
         double[] namedNoiseValues = new double[compiled.getDoublesLength() - 3];
@@ -300,26 +300,30 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         return fluidHeight;
     }
 
-    private static int lattice$stoneDepthFloor(ChunkAccess chunk, int x, int y, int z, SurfaceSystem self, BlockPos.MutableBlockPos pos) {
+    private static int lattice$stoneDepthFloor(ChunkAccess chunk, int x, int y, int z, BlockPos.MutableBlockPos pos) {
         int depth = 0;
         int maxY = chunk.getMaxY();
         for (int scan = y; scan <= maxY; ++scan) {
             BlockState state = chunk.getBlockState(pos.set(x, scan, z));
-            if (state.isAir() || !state.getFluidState().isEmpty() || !self.isStone(state)) break;
+            if (!lattice$isStoneBlock(state)) break;
             depth++;
         }
         return depth;
     }
 
-    private static int lattice$stoneDepthCeiling(ChunkAccess chunk, int x, int y, int z, SurfaceSystem self, BlockPos.MutableBlockPos pos) {
+    private static int lattice$stoneDepthCeiling(ChunkAccess chunk, int x, int y, int z, BlockPos.MutableBlockPos pos) {
         int depth = 0;
         int minY = chunk.getMinY();
         for (int scan = y; scan >= minY; --scan) {
             BlockState state = chunk.getBlockState(pos.set(x, scan, z));
-            if (state.isAir() || !state.getFluidState().isEmpty() || !self.isStone(state)) break;
+            if (!lattice$isStoneBlock(state)) break;
             depth++;
         }
         return depth;
+    }
+
+    private static boolean lattice$isStoneBlock(BlockState state) {
+        return !state.isAir() && state.getFluidState().isEmpty();
     }
 
     private static int lattice$minSurfaceLevel(NoiseChunk noiseChunk, int blockX, int blockZ, int surfaceDepth) {
