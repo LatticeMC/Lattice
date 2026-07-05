@@ -4,11 +4,15 @@ import com.latticemc.lattice.nativelib.NativeDensityFunction;
 import java.lang.reflect.Method;
 import java.util.List;
 import org.bukkit.Bukkit;
+import org.bukkit.Server;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandMap;
 import org.bukkit.command.CommandSender;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class LatticeDensityCommand extends Command {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
     private static boolean registered;
 
     private LatticeDensityCommand() {
@@ -19,12 +23,14 @@ public final class LatticeDensityCommand extends Command {
     public static void registerBukkit() {
         if (registered) return;
         try {
-            Method method = Bukkit.getServer().getClass().getMethod("getCommandMap");
-            CommandMap commandMap = (CommandMap) method.invoke(Bukkit.getServer());
+            Server server = Bukkit.getServer();
+            if (server == null) return;
+            Method method = server.getClass().getMethod("getCommandMap");
+            CommandMap commandMap = (CommandMap) method.invoke(server);
             commandMap.register("lattice", new LatticeDensityCommand());
             registered = true;
         } catch (ReflectiveOperationException | RuntimeException e) {
-            Bukkit.getLogger().warning("[Lattice] Failed to register /lattice command: " + e.getMessage());
+            LOGGER.warn("Failed to register /lattice command", e);
         }
     }
 
