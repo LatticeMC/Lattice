@@ -63,7 +63,7 @@ public final class LatticeDensityCommand extends Command {
             sender.sendMessage("Lattice density " + args[1] + '=' + value);
             return true;
         }
-        sender.sendMessage("Usage: /lattice density <status|reset|enabled|cell|directCell|spline|multipointSpline|stats|profiling> [true|false]");
+        sender.sendMessage("Usage: /lattice density <status|reset|enabled|cell|directCell|shiftedNoise|spline|multipointSpline|stats|profiling|parity> [true|false]");
         return true;
     }
 

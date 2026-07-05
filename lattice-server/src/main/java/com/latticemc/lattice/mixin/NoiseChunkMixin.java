@@ -36,6 +36,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
 
     @Inject(method = "fillAllDirectly", at = @At("HEAD"), cancellable = true)
     private void lattice$fillCellNative(double[] values, DensityFunction function, CallbackInfo ci) {
+        if (!this.fillingCell) return;
         int cellX = Math.floorDiv(this.cellStartBlockX, this.cellWidth);
         int cellZ = Math.floorDiv(this.cellStartBlockZ, this.cellWidth);
         if (NativeDensityFunction.tryFillCellDirect(
@@ -52,6 +53,11 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 cellZ,
                 Math.floorDiv(this.cellStartBlockY, this.cellHeight) - this.cellNoiseMinY,
                 cellZ - this.firstCellZ)) {
+            if (NativeDensityFunction.parityEnabled()) {
+                double[] javaValues = new double[values.length];
+                function.fillArray(javaValues, (DensityFunction.ContextProvider) (Object) this);
+                NativeDensityFunction.recordParity("directCell", function, values, javaValues);
+            }
             ci.cancel();
         }
     }
@@ -75,6 +81,11 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 this.cellHeight,
                 Math.floorDiv(this.cellStartBlockX, this.cellWidth),
                 Math.floorDiv(this.cellStartBlockZ, this.cellWidth))) {
+            if (NativeDensityFunction.parityEnabled()) {
+                double[] javaValues = new double[values.length];
+                interpolator.fillArray(javaValues, contextProvider);
+                NativeDensityFunction.recordParity("slice", interpolator.wrapped(), values, javaValues);
+            }
             return;
         }
         interpolator.fillArray(values, contextProvider);
