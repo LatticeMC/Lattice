@@ -419,8 +419,10 @@ public final class NativeDensityFunction {
         if (syncedCellStartBlockX == cellStartBlockX) return;
 
         long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
+        int zRows = cellCountXZ + 1;
+        int yRows = cellCountY + 1;
         for (InterpolatorBinding binding : interpolators) {
-            nativeSetInterpolatorColumn(cacheHandle, binding.slot(), binding.function().lattice$slice0(), binding.function().lattice$slice1(), cellCountXZ + 1, cellCountY + 1);
+            nativeSetInterpolatorColumnFlat(cacheHandle, binding.slot(), binding.function().lattice$flatSlice0(), binding.function().lattice$flatSlice1(), zRows, yRows);
         }
         if (PROFILING_ENABLED) {
             SYNC_NANOS.add(System.nanoTime() - start);
@@ -867,6 +869,7 @@ public final class NativeDensityFunction {
     private static native int nativeCacheSlot(long handle, int nodeRef);
     private static native void nativePrepareInterpolators(long cacheHandle, int horizontalCellCount, int verticalCellCount);
     private static native void nativeSetInterpolatorColumn(long cacheHandle, int slot, double[][] startSlice, double[][] endSlice, int zRows, int yRows);
+    private static native void nativeSetInterpolatorColumnFlat(long cacheHandle, int slot, double[] startSlice, double[] endSlice, int zRows, int yRows);
     private static native void nativeSetDensityRow(long cacheHandle, int slot, int cellZ, boolean toEndBuffer, double[] values);
 
 }

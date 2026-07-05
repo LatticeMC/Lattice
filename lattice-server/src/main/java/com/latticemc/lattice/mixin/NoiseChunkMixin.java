@@ -70,8 +70,10 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
             )
     )
     private void lattice$fillInterpolatorSliceNative(NoiseChunk.NoiseInterpolator interpolator,
-                                                      double[] values,
-                                                      DensityFunction.ContextProvider contextProvider) {
+                                                       double[] values,
+                                                       DensityFunction.ContextProvider contextProvider) {
+        NativeNoiseInterpolatorAccess access = (NativeNoiseInterpolatorAccess) (Object) interpolator;
+        int zRow = Math.floorDiv(this.cellStartBlockZ, this.cellWidth) - this.firstCellZ;
         if (NativeDensityFunction.tryFillSlice(
                 values,
                 interpolator.wrapped(),
@@ -86,9 +88,23 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 interpolator.fillArray(javaValues, contextProvider);
                 NativeDensityFunction.recordParity("slice", interpolator.wrapped(), values, javaValues);
             }
+            lattice$copyInterpolatorFlatRow(access, values, zRow);
             return;
         }
         interpolator.fillArray(values, contextProvider);
+        lattice$copyInterpolatorFlatRow(access, values, zRow);
+    }
+
+    private void lattice$copyInterpolatorFlatRow(NativeNoiseInterpolatorAccess access, double[] values, int zRow) {
+        double[][] slice0 = access.lattice$slice0();
+        if (zRow >= 0 && zRow < slice0.length && slice0[zRow] == values) {
+            access.lattice$copyFlatRow(true, zRow, values, this.cellCountY + 1);
+            return;
+        }
+        double[][] slice1 = access.lattice$slice1();
+        if (zRow >= 0 && zRow < slice1.length && slice1[zRow] == values) {
+            access.lattice$copyFlatRow(false, zRow, values, this.cellCountY + 1);
+        }
     }
 
     /**

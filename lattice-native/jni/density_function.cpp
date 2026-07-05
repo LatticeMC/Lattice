@@ -1052,6 +1052,81 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetInterpolator
 }
 
 JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetInterpolatorColumnFlat(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle,
+        jint slot, jdoubleArray startSlice, jdoubleArray endSlice,
+        jint zRows, jint yRows) {
+    auto* c = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!c) return;
+    if (slot < 0 || slot >= static_cast<jint>(c->interpolators.size())) return;
+    if (!startSlice || !endSlice) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: null flat interpolator slice");
+        return;
+    }
+    if (zRows <= 0 || yRows <= 0) return;
+
+    auto& it = c->interpolators[static_cast<std::size_t>(slot)];
+    const std::size_t required = static_cast<std::size_t>(zRows) * static_cast<std::size_t>(yRows);
+    if (it.start_density_buffer.size() < required || it.end_density_buffer.size() < required) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: interpolator native buffers too short");
+        return;
+    }
+
+    lattice::jni::CriticalDoubleArray start{env, startSlice};
+    lattice::jni::CriticalDoubleArray end{env, endSlice};
+    if (!start || !end) {
+        lattice::jni::throw_illegal_state(env, "lattice df: flat interpolator slice pin failed");
+        return;
+    }
+    if (start.size() < required || end.size() < required) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: flat interpolator slice too short");
+        return;
+    }
+
+    std::copy_n(start.data(), required, it.start_density_buffer.data());
+    std::copy_n(end.data(), required, it.end_density_buffer.data());
+    start.release_ro();
+    end.release_ro();
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetInterpolatorColumnPacked(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle,
+        jint slot, jdoubleArray packedSlices,
+        jint zRows, jint yRows) {
+    auto* c = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!c) return;
+    if (slot < 0 || slot >= static_cast<jint>(c->interpolators.size())) return;
+    if (!packedSlices) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: null packed interpolator slice");
+        return;
+    }
+    if (zRows <= 0 || yRows <= 0) return;
+
+    auto& it = c->interpolators[static_cast<std::size_t>(slot)];
+    const std::size_t required = static_cast<std::size_t>(zRows) * static_cast<std::size_t>(yRows);
+    if (it.start_density_buffer.size() < required || it.end_density_buffer.size() < required) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: interpolator native buffers too short");
+        return;
+    }
+
+    lattice::jni::CriticalDoubleArray packed{env, packedSlices};
+    if (!packed) {
+        lattice::jni::throw_illegal_state(env, "lattice df: packed interpolator slice pin failed");
+        return;
+    }
+    if (packed.size() < required * 2) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: packed interpolator slice too short");
+        return;
+    }
+
+    const double* data = packed.data();
+    std::copy_n(data, required, it.start_density_buffer.data());
+    std::copy_n(data + required, required, it.end_density_buffer.data());
+    packed.release_ro();
+}
+
+JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSwapBuffers(
         JNIEnv*, jclass /*cls*/, jlong cacheHandle) {
     auto* c = reinterpret_cast<df::CacheState*>(cacheHandle);
