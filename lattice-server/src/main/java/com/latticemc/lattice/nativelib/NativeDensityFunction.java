@@ -21,13 +21,12 @@ import org.slf4j.LoggerFactory;
 
 public final class NativeDensityFunction {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
-    private static volatile boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "false"));
-    private static volatile boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "false"))
-            && Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCellUnsafe", "false"));
-    private static volatile boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "false"));
-    private static volatile boolean SHIFTED_NOISE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionShiftedNoise", "false"));
-    private static volatile boolean SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionSpline", "false"));
-    private static volatile boolean MULTIPOINT_SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionMultipointSpline", "false"));
+    private static volatile boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "true"));
+    private static volatile boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "true"));
+    private static volatile boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "true"));
+    private static volatile boolean SHIFTED_NOISE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionShiftedNoise", "true"));
+    private static volatile boolean SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionSpline", "true"));
+    private static volatile boolean MULTIPOINT_SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionMultipointSpline", "true"));
     private static volatile boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
     private static volatile boolean PROFILING_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionProfiling");
     private static volatile boolean PARITY_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionParity");
@@ -285,10 +284,25 @@ public final class NativeDensityFunction {
                 LAST_COMPILE.set(new LastCompile(function, null));
                 return null;
             }
-            if (STATS_ENABLED) COMPILE_ATTEMPTS.increment();
-            long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
-            NativeDensityFunction compiled = compileNew(function);
-            if (PROFILING_ENABLED) COMPILE_NANOS.add(System.nanoTime() - start);
+        }
+
+        if (STATS_ENABLED) COMPILE_ATTEMPTS.increment();
+        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
+        NativeDensityFunction compiled = compileNew(function);
+        if (PROFILING_ENABLED) COMPILE_NANOS.add(System.nanoTime() - start);
+
+        synchronized (CACHE) {
+            NativeDensityFunction cached = CACHE.get(function);
+            if (cached != null) {
+                if (compiled != null) compiled.destroyNow();
+                LAST_COMPILE.set(new LastCompile(function, cached));
+                return cached;
+            }
+            if (FAILED_COMPILES.containsKey(function)) {
+                if (compiled != null) compiled.destroyNow();
+                LAST_COMPILE.set(new LastCompile(function, null));
+                return null;
+            }
             if (compiled != null) {
                 if (STATS_ENABLED) COMPILE_SUCCESS.increment();
                 CACHE.put(function, compiled);
@@ -298,6 +312,10 @@ public final class NativeDensityFunction {
             LAST_COMPILE.set(new LastCompile(function, compiled));
             return compiled;
         }
+    }
+
+    private void destroyNow() {
+        this.cleanable.clean();
     }
 
     private static NativeDensityFunction tryCompileCell(DensityFunction function) {
@@ -654,6 +672,9 @@ public final class NativeDensityFunction {
             String name = function.getClass().getName();
             if (name.endsWith("DensityFunctions$Constant")) {
                 return nativeAddConstant(handle, (Double) invoke(function, "value"));
+            }
+            if (name.endsWith("DensityFunctions$BeardifierMarker")) {
+                return nativeAddConstant(handle, 0.0);
             }
             if (name.endsWith("DensityFunctions$Noise")) {
                 NativeDoublePerlinNoise noise = nativeNoiseHolderNoise(invoke(function, "noise"));

@@ -130,7 +130,10 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
             NativeCacheAllInCellAccess access = (NativeCacheAllInCellAccess) cache;
             double[] column = access.lattice$columnValues();
             if (access.lattice$columnCellX() != cellX) {
-                column = new double[columnValueCount];
+                if (column == null || column.length < columnValueCount) {
+                    column = new double[columnValueCount];
+                    access.lattice$setColumnValues(column);
+                }
                 if (NativeDensityFunction.tryFillCellColumn(
                         column,
                         access.lattice$noiseFiller(),
@@ -142,10 +145,9 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                         this.cellCountXZ,
                         this.cellCountY,
                         cellX)) {
-                    access.lattice$setColumnValues(column);
                     access.lattice$setColumnCellX(cellX);
                 } else {
-                    access.lattice$setColumnValues(new double[0]);
+                    access.lattice$setColumnValues(column);
                     access.lattice$setColumnCellX(cellX);
                     access.lattice$noiseFiller().fillArray(access.lattice$values(), (DensityFunction.ContextProvider) (Object) this);
                     continue;
