@@ -2,6 +2,7 @@ package com.latticemc.lattice.mixin;
 
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeHeightmap;
+import com.latticemc.lattice.nativelib.NativeWorldgenToggle;
 import java.util.Set;
 import java.util.function.Predicate;
 import net.minecraft.util.BitStorage;
@@ -21,6 +22,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class HeightmapMixin {
     @Inject(method = "primeHeightmaps", at = @At("HEAD"), cancellable = true)
     private static void lattice$primeHeightmaps(ChunkAccess chunk, Set<Heightmap.Types> types, CallbackInfo ci) {
+        if (!NativeWorldgenToggle.heightmapEnabled()) return;
         if (types.isEmpty() || !LatticeNative.isLoaded()) {
             return;
         }

@@ -3,6 +3,7 @@ package com.latticemc.lattice.mixin;
 import com.latticemc.lattice.nativelib.CompiledSurfaceRules;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeMaterialRules;
+import com.latticemc.lattice.nativelib.NativeWorldgenToggle;
 import com.latticemc.lattice.nativelib.SurfaceRuleCompiler;
 import com.latticemc.lattice.nativelib.WorldStateSnapshot;
 import java.util.Map;
@@ -75,6 +76,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                                       NoiseChunk noiseChunk,
                                       SurfaceRules.RuleSource ruleSource,
                                       CallbackInfo ci) {
+        if (!NativeWorldgenToggle.surfaceEnabled()) return;
         if (!LatticeNative.isLoaded()) return;
         if (lattice$nativeSurfaceDisabled) return;
         CompiledSurfaceRules compiled = lattice$compile(ruleSource, randomState, biomes, context);
@@ -205,6 +207,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                                      BlockPos pos,
                                      boolean hasFluid,
                                      CallbackInfoReturnable<Optional<BlockState>> cir) {
+        if (!NativeWorldgenToggle.surfaceEnabled()) return;
         if (!LatticeNative.isLoaded()) return;
         if (lattice$nativeSurfaceDisabled) return;
         Registry<Biome> biomes = context.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.BIOME);
@@ -218,8 +221,13 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         int x = pos.getX();
         int y = pos.getY();
         int z = pos.getZ();
+        int surfaceTop = chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x & 15, z & 15) + 1;
         int surfaceDepth = this.getSurfaceDepth(x, z);
         int minSurfaceLevel = lattice$minSurfaceLevel(noiseChunk, x, z, surfaceDepth);
+        BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
+        int fluidHeight = lattice$fluidHeight(chunk, x, y, z, surfaceTop, scanPos);
+        int stoneDepthFloor = lattice$stoneDepthFloor(chunk, x, y, z, this, scanPos);
+        int stoneDepthCeiling = lattice$stoneDepthCeiling(chunk, x, y, z, this, scanPos);
         int[] ints = new int[10];
         byte[] bools = new byte[2];
         double[] namedNoiseValues = new double[compiled.getDoublesLength() - 3];
@@ -229,14 +237,14 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         }
         BlockState out = compiled.tryApply(
                 sa,
-                chunk,
                 biome,
                 x,
                 y,
                 z,
-                hasFluid ? y + 1 : Integer.MIN_VALUE,
-                1,
-                1,
+                surfaceTop,
+                fluidHeight,
+                stoneDepthFloor,
+                stoneDepthCeiling,
                 surfaceDepth,
                 minSurfaceLevel,
                 surfaceDepth <= 0,
@@ -277,6 +285,41 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         int h2 = chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, maxX, localZ);
         int h3 = chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, minX, localZ);
         return h2 >= h3 + 4;
+    }
+
+    private static int lattice$fluidHeight(ChunkAccess chunk, int x, int y, int z, int surfaceTop, BlockPos.MutableBlockPos pos) {
+        int fluidHeight = Integer.MIN_VALUE;
+        for (int scan = surfaceTop; scan > y; --scan) {
+            BlockState state = chunk.getBlockState(pos.set(x, scan, z));
+            if (state.isAir()) {
+                fluidHeight = Integer.MIN_VALUE;
+            } else if (!state.getFluidState().isEmpty() && fluidHeight == Integer.MIN_VALUE) {
+                fluidHeight = scan + 1;
+            }
+        }
+        return fluidHeight;
+    }
+
+    private static int lattice$stoneDepthFloor(ChunkAccess chunk, int x, int y, int z, SurfaceSystemMixin self, BlockPos.MutableBlockPos pos) {
+        int depth = 0;
+        int maxY = chunk.getMaxY();
+        for (int scan = y; scan <= maxY; ++scan) {
+            BlockState state = chunk.getBlockState(pos.set(x, scan, z));
+            if (state.isAir() || !state.getFluidState().isEmpty() || !self.isStone(state)) break;
+            depth++;
+        }
+        return depth;
+    }
+
+    private static int lattice$stoneDepthCeiling(ChunkAccess chunk, int x, int y, int z, SurfaceSystemMixin self, BlockPos.MutableBlockPos pos) {
+        int depth = 0;
+        int minY = chunk.getMinY();
+        for (int scan = y; scan >= minY; --scan) {
+            BlockState state = chunk.getBlockState(pos.set(x, scan, z));
+            if (state.isAir() || !state.getFluidState().isEmpty() || !self.isStone(state)) break;
+            depth++;
+        }
+        return depth;
     }
 
     private static int lattice$minSurfaceLevel(NoiseChunk noiseChunk, int blockX, int blockZ, int surfaceDepth) {

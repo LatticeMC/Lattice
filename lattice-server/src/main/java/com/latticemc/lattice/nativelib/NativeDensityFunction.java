@@ -440,7 +440,9 @@ public final class NativeDensityFunction {
             case "stats" -> STATS_ENABLED = value;
             case "profiling" -> PROFILING_ENABLED = value;
             case "parity" -> PARITY_ENABLED = value;
-            default -> { return false; }
+            default -> {
+                return NativeWorldgenToggle.setOption(option, value);
+            }
         }
         clearCompiledCaches();
         return true;
@@ -456,6 +458,7 @@ public final class NativeDensityFunction {
                 + " stats=" + STATS_ENABLED
                 + " profiling=" + PROFILING_ENABLED
                 + " parity=" + PARITY_ENABLED
+                + NativeWorldgenToggle.status()
                 + " compile=" + COMPILE_SUCCESS.sum() + '/' + COMPILE_ATTEMPTS.sum()
                 + " slice=" + SLICE_SUCCESS.sum() + '/' + SLICE_ATTEMPTS.sum()
                 + " cell=" + CELL_SUCCESS.sum() + '/' + CELL_ATTEMPTS.sum()

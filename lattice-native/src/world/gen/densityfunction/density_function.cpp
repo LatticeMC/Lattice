@@ -27,6 +27,10 @@ inline double clamp_d(double v, double lo, double hi) noexcept {
     return std::max(lo, std::min(hi, v));
 }
 
+inline int floor_to_int(double v) noexcept {
+    return static_cast<int>(std::floor(v));
+}
+
 // Vanilla's `method_40484 mapRange` (linearly remap from
 // [fromMin, fromMax] to [toMin, toMax], NOT clamped):
 //
@@ -291,15 +295,15 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
         }
 
         case NodeKind::kCache2D: {
-            // Key by truncated (x, z). When no CacheState is supplied
+            // Key by floored (x, z). When no CacheState is supplied
             // (e.g. unit tests), the node degrades to passthrough.
             if (!ctx.cache || n.cache_slot_id < 0
                 || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_2d.size())) {
                 return evaluate(arena, n.a, ctx);
             }
             auto& slot = ctx.cache->cache_2d[n.cache_slot_id];
-            const int kx = static_cast<int>(ctx.x);
-            const int kz = static_cast<int>(ctx.z);
+            const int kx = floor_to_int(ctx.x);
+            const int kz = floor_to_int(ctx.z);
             if (slot.valid && slot.x == kx && slot.z == kz) {
                 return slot.value;
             }

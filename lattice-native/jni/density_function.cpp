@@ -621,6 +621,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
             }
         }
     }
+    df::stop_interpolation(*cache);
     unbind_cache_all_in_cell_arrays(*cache);
 }
 
@@ -764,6 +765,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
                     }
                 }
             }
+            df::stop_interpolation(*cache);
         }
     }
     unbind_cache_all_in_cell_arrays(*cache);

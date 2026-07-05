@@ -7,8 +7,6 @@ import net.minecraft.core.Holder;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.chunk.ChunkAccess;
-import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.synth.NormalNoise;
 
 public final class CompiledSurfaceRules implements AutoCloseable {
@@ -33,11 +31,11 @@ public final class CompiledSurfaceRules implements AutoCloseable {
     }
 
     public BlockState tryApply(SurfaceSystemAccess system,
-                               ChunkAccess chunk,
                                Holder<Biome> biome,
                                int x,
                                int y,
                                int z,
+                               int surfaceTop,
                                int fluidHeight,
                                int stoneDepthFloor,
                                int stoneDepthCeiling,
@@ -53,7 +51,7 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         ints[0] = x;
         ints[1] = y;
         ints[2] = z;
-        ints[3] = chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x & 15, z & 15) + 1;
+        ints[3] = surfaceTop;
         ints[4] = fluidHeight;
         ints[5] = stoneDepthFloor;
         ints[6] = stoneDepthCeiling;

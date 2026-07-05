@@ -267,6 +267,33 @@ TEST_CASE("density: Cache2D returns cached value on (x,z) hit") {
     CHECK(cs.cache_2d[0].valid == true);
 }
 
+TEST_CASE("density: Cache2D uses floor coordinates for negative positions") {
+    NodeArena a;
+    Node leaf{}; leaf.kind = NodeKind::kConstant; leaf.d0 = 11.0;
+    NodeRef leaf_ref = a.push(leaf);
+    Node c2d{}; c2d.kind = NodeKind::kCache2D; c2d.a = leaf_ref;
+    a.root = a.push(c2d);
+
+    CacheState cs;
+    cs.resize_for(a);
+
+    Context ctx{};
+    ctx.cache = &cs;
+    ctx.x = -0.2;
+    ctx.y = 0.0;
+    ctx.z = -0.8;
+
+    CHECK(evaluate(a, ctx) == 11.0);
+
+    a.nodes[leaf_ref].d0 = 37.0;
+    ctx.x = -0.9;
+    ctx.z = -0.1;
+    CHECK(evaluate(a, ctx) == 11.0);
+
+    ctx.x = 0.1;
+    CHECK(evaluate(a, ctx) == 37.0);
+}
+
 TEST_CASE("density: CacheAllInCell stores and retrieves per key") {
     NodeArena arena;
     Node leaf{}; leaf.kind = NodeKind::kConstant; leaf.d0 = 11.0;
