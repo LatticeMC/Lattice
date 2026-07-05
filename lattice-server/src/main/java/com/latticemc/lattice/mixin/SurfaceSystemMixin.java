@@ -300,7 +300,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         return fluidHeight;
     }
 
-    private static int lattice$stoneDepthFloor(ChunkAccess chunk, int x, int y, int z, SurfaceSystemMixin self, BlockPos.MutableBlockPos pos) {
+    private static int lattice$stoneDepthFloor(ChunkAccess chunk, int x, int y, int z, SurfaceSystem self, BlockPos.MutableBlockPos pos) {
         int depth = 0;
         int maxY = chunk.getMaxY();
         for (int scan = y; scan <= maxY; ++scan) {
@@ -311,7 +311,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         return depth;
     }
 
-    private static int lattice$stoneDepthCeiling(ChunkAccess chunk, int x, int y, int z, SurfaceSystemMixin self, BlockPos.MutableBlockPos pos) {
+    private static int lattice$stoneDepthCeiling(ChunkAccess chunk, int x, int y, int z, SurfaceSystem self, BlockPos.MutableBlockPos pos) {
         int depth = 0;
         int minY = chunk.getMinY();
         for (int scan = y; scan >= minY; --scan) {
