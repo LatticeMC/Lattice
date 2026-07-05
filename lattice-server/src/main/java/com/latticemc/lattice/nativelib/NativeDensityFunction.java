@@ -31,6 +31,7 @@ public final class NativeDensityFunction {
     private static volatile boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
     private static volatile boolean PROFILING_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionProfiling");
     private static volatile boolean PARITY_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionParity");
+    private static volatile int PARITY_INTERVAL = Integer.getInteger("lattice.nativeDensityFunctionParityInterval", 1024);
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, Boolean> FAILED_COMPILES = new WeakHashMap<>();
@@ -55,6 +56,7 @@ public final class NativeDensityFunction {
     private static final LongAdder PARITY_CHECKS = new LongAdder();
     private static final LongAdder PARITY_FAILURES = new LongAdder();
     private static final AtomicLong PARITY_MAX_ERROR_BITS = new AtomicLong(Double.doubleToRawLongBits(0.0));
+    private static final AtomicLong PARITY_SAMPLE_COUNTER = new AtomicLong();
     private static final ConcurrentHashMap<String, LongAdder> UNSUPPORTED = new ConcurrentHashMap<>();
     private static final int LOG_INTERVAL = 4096;
     private static final AtomicBoolean STATUS_LOGGED = new AtomicBoolean(false);
@@ -450,6 +452,16 @@ public final class NativeDensityFunction {
         return true;
     }
 
+    public static boolean setIntOption(String option, int value) {
+        switch (option) {
+            case "parityInterval" -> PARITY_INTERVAL = Math.max(1, value);
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static String status() {
         return "enabled=" + ENABLED
                 + " cell=" + CELL_ENABLED
@@ -460,6 +472,7 @@ public final class NativeDensityFunction {
                 + " stats=" + STATS_ENABLED
                 + " profiling=" + PROFILING_ENABLED
                 + " parity=" + PARITY_ENABLED
+                + " parityInterval=" + PARITY_INTERVAL
                 + NativeWorldgenToggle.status()
                 + " compile=" + COMPILE_SUCCESS.sum() + '/' + COMPILE_ATTEMPTS.sum()
                 + " slice=" + SLICE_SUCCESS.sum() + '/' + SLICE_ATTEMPTS.sum()
@@ -494,11 +507,18 @@ public final class NativeDensityFunction {
         PARITY_CHECKS.reset();
         PARITY_FAILURES.reset();
         PARITY_MAX_ERROR_BITS.set(Double.doubleToRawLongBits(0.0));
+        PARITY_SAMPLE_COUNTER.set(0L);
         UNSUPPORTED.clear();
     }
 
     public static boolean parityEnabled() {
         return PARITY_ENABLED;
+    }
+
+    public static boolean shouldCheckParity() {
+        if (!PARITY_ENABLED) return false;
+        int interval = Math.max(1, PARITY_INTERVAL);
+        return PARITY_SAMPLE_COUNTER.incrementAndGet() % interval == 0L;
     }
 
     public static void recordParity(String path, DensityFunction function, double[] nativeValues, double[] javaValues) {

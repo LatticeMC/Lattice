@@ -53,7 +53,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 cellZ,
                 Math.floorDiv(this.cellStartBlockY, this.cellHeight) - this.cellNoiseMinY,
                 cellZ - this.firstCellZ)) {
-            if (NativeDensityFunction.parityEnabled()) {
+            if (NativeDensityFunction.shouldCheckParity()) {
                 double[] javaValues = new double[values.length];
                 function.fillArray(javaValues, (DensityFunction.ContextProvider) (Object) this);
                 NativeDensityFunction.recordParity("directCell", function, values, javaValues);
@@ -83,7 +83,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 this.cellHeight,
                 Math.floorDiv(this.cellStartBlockX, this.cellWidth),
                 Math.floorDiv(this.cellStartBlockZ, this.cellWidth))) {
-            if (NativeDensityFunction.parityEnabled()) {
+            if (NativeDensityFunction.shouldCheckParity()) {
                 double[] javaValues = new double[values.length];
                 interpolator.fillArray(javaValues, contextProvider);
                 NativeDensityFunction.recordParity("slice", interpolator.wrapped(), values, javaValues);

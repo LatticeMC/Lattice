@@ -51,6 +51,19 @@ public final class LatticeDensityCommand extends Command {
             return true;
         }
         if (args.length == 3) {
+            if ("parityInterval".equalsIgnoreCase(args[1])) {
+                try {
+                    int value = Integer.parseInt(args[2]);
+                    if (!NativeDensityFunction.setIntOption(args[1], value)) {
+                        sender.sendMessage("Unknown density option: " + args[1]);
+                        return true;
+                    }
+                    sender.sendMessage("Lattice density " + args[1] + '=' + Math.max(1, value));
+                } catch (NumberFormatException e) {
+                    sender.sendMessage("Expected integer >= 1");
+                }
+                return true;
+            }
             Boolean value = parseBoolean(args[2]);
             if (value == null) {
                 sender.sendMessage("Expected true or false");
@@ -63,7 +76,7 @@ public final class LatticeDensityCommand extends Command {
             sender.sendMessage("Lattice density " + args[1] + '=' + value);
             return true;
         }
-        sender.sendMessage("Usage: /lattice density <status|reset|enabled|cell|directCell|shiftedNoise|spline|multipointSpline|stats|profiling|parity|surface|heightmap> [true|false]");
+        sender.sendMessage("Usage: /lattice density <status|reset|enabled|cell|directCell|shiftedNoise|spline|multipointSpline|stats|profiling|parity|surface|heightmap> [true|false], or parityInterval <n>");
         return true;
     }
 

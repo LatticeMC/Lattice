@@ -94,7 +94,7 @@ public abstract class HeightmapMixin {
             );
 
             for (int column = 0; column < highestTaken.length; ++column) {
-                firstAvailable[column] = highestTaken[column] + 1;
+                firstAvailable[column] = highestTaken[column] + 1 - minY;
             }
 
             int bits = net.minecraft.util.Mth.ceillog2(chunk.getHeight() + 1);
