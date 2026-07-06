@@ -38,6 +38,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     private void lattice$fillCellNative(double[] values, DensityFunction function, CallbackInfo ci) {
         if (NativeDensityFunction.bypassFillAllDirectly()) return;
         if (!this.fillingCell) return;
+        if (!NativeDensityFunction.shouldTryFillCellDirect()) return;
         int startX = this.cellStartBlockX;
         int startZ = this.cellStartBlockZ;
         int cellX = Math.floorDiv(startX, this.cellWidth);

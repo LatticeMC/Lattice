@@ -14,6 +14,8 @@
 
 #include <algorithm>
 #include <new>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include "jni_helper.hpp"
@@ -75,6 +77,52 @@ struct PinnedDoubleArray {
     PinnedDoubleArray& operator=(PinnedDoubleArray&&) = delete;
 };
 
+struct BoundCacheArrays {
+    std::vector<jdoubleArray> arrays;
+};
+
+struct BoundInterpolatorColumns {
+    std::vector<jint> slots;
+    std::vector<jdoubleArray> starts;
+    std::vector<jdoubleArray> ends;
+};
+
+std::mutex g_bindings_mutex;
+std::unordered_map<df::CacheState*, BoundCacheArrays> g_cache_array_bindings;
+std::unordered_map<df::CacheState*, BoundInterpolatorColumns> g_interpolator_bindings;
+
+void delete_global_refs(JNIEnv* env, BoundCacheArrays& binding) {
+    for (jdoubleArray array : binding.arrays) {
+        if (array) env->DeleteGlobalRef(array);
+    }
+    binding.arrays.clear();
+}
+
+void delete_global_refs(JNIEnv* env, BoundInterpolatorColumns& binding) {
+    for (jdoubleArray array : binding.starts) {
+        if (array) env->DeleteGlobalRef(array);
+    }
+    for (jdoubleArray array : binding.ends) {
+        if (array) env->DeleteGlobalRef(array);
+    }
+    binding.slots.clear();
+    binding.starts.clear();
+    binding.ends.clear();
+}
+
+void clear_bindings(JNIEnv* env, df::CacheState* cache) {
+    if (!env || !cache) return;
+    std::lock_guard<std::mutex> lock(g_bindings_mutex);
+    if (auto it = g_cache_array_bindings.find(cache); it != g_cache_array_bindings.end()) {
+        delete_global_refs(env, it->second);
+        g_cache_array_bindings.erase(it);
+    }
+    if (auto it = g_interpolator_bindings.find(cache); it != g_interpolator_bindings.end()) {
+        delete_global_refs(env, it->second);
+        g_interpolator_bindings.erase(it);
+    }
+}
+
 std::vector<PinnedDoubleArray> bind_cache_all_in_cell_arrays(JNIEnv* env, df::CacheState& cache, jobjectArray arrays) {
     std::vector<PinnedDoubleArray> pinned;
     if (!arrays) return pinned;
@@ -85,6 +133,30 @@ std::vector<PinnedDoubleArray> bind_cache_all_in_cell_arrays(JNIEnv* env, df::Ca
         auto* array = static_cast<jdoubleArray>(env->GetObjectArrayElement(arrays, static_cast<jsize>(i)));
         if (!array) continue;
         pinned.emplace_back(env, array);
+        if (env->ExceptionCheck()) return pinned;
+        auto& guard = pinned.back();
+        if (!guard.data) continue;
+        cache.cache_all_in_cell_arrays[i] = reinterpret_cast<const double*>(guard.data);
+        cache.cache_all_in_cell_array_lengths[i] = guard.length;
+    }
+    return pinned;
+}
+
+std::vector<PinnedDoubleArray> bind_bound_cache_all_in_cell_arrays(JNIEnv* env, df::CacheState& cache) {
+    std::vector<jdoubleArray> refs;
+    {
+        std::lock_guard<std::mutex> lock(g_bindings_mutex);
+        if (auto it = g_cache_array_bindings.find(&cache); it != g_cache_array_bindings.end()) {
+            refs = it->second.arrays;
+        }
+    }
+
+    std::vector<PinnedDoubleArray> pinned;
+    const std::size_t slots = std::min<std::size_t>(refs.size(), cache.cache_all_in_cell_arrays.size());
+    pinned.reserve(slots);
+    for (std::size_t i = 0; i < slots; ++i) {
+        if (!refs[i]) continue;
+        pinned.emplace_back(env, refs[i]);
         if (env->ExceptionCheck()) return pinned;
         auto& guard = pinned.back();
         if (!guard.data) continue;
@@ -175,8 +247,44 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeCreateCache(
 
 JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeDestroyCache(
-        JNIEnv* /*env*/, jclass /*cls*/, jlong cacheHandle) {
-    delete reinterpret_cast<df::CacheState*>(cacheHandle);
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle) {
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    clear_bindings(env, cache);
+    delete cache;
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeBindCacheAllInCellArrays(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle, jobjectArray arrays) {
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!cache) return;
+
+    BoundCacheArrays next;
+    if (arrays) {
+        const jsize count = env->GetArrayLength(arrays);
+        const std::size_t slots = std::min<std::size_t>(static_cast<std::size_t>(count), cache->cache_all_in_cell_arrays.size());
+        next.arrays.reserve(slots);
+        for (std::size_t i = 0; i < slots; ++i) {
+            auto* array = static_cast<jdoubleArray>(env->GetObjectArrayElement(arrays, static_cast<jsize>(i)));
+            if (!array) {
+                next.arrays.push_back(nullptr);
+                continue;
+            }
+            auto* global = static_cast<jdoubleArray>(env->NewGlobalRef(array));
+            env->DeleteLocalRef(array);
+            if (!global) {
+                delete_global_refs(env, next);
+                lattice::jni::throw_oom(env, "lattice density: cache array global ref");
+                return;
+            }
+            next.arrays.push_back(global);
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(g_bindings_mutex);
+    auto& current = g_cache_array_bindings[cache];
+    delete_global_refs(env, current);
+    current = std::move(next);
 }
 
 JNIEXPORT void JNICALL
@@ -622,7 +730,9 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
     const long long required = static_cast<long long>(cellWidth)
                              * static_cast<long long>(cellHeight)
                              * static_cast<long long>(cellWidth);
-    auto pinned_cache_arrays = bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues);
+    auto pinned_cache_arrays = cacheAllInCellValues
+        ? bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues)
+        : bind_bound_cache_all_in_cell_arrays(env, *cache);
     if (env->ExceptionCheck()) return;
     lattice::jni::CriticalDoubleArray buf{env, out};
     if (!buf) {
@@ -693,7 +803,12 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateCell(
                              * static_cast<long long>(cellHeight)
                              * static_cast<long long>(cellWidth);
     auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
-    auto pinned_cache_arrays = cache ? bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues) : std::vector<PinnedDoubleArray>{};
+    if (cache) cache->clear();
+    auto pinned_cache_arrays = cache
+        ? (cacheAllInCellValues
+                ? bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues)
+                : bind_bound_cache_all_in_cell_arrays(env, *cache))
+        : std::vector<PinnedDoubleArray>{};
     if (env->ExceptionCheck()) return;
     lattice::jni::CriticalDoubleArray buf{env, out};
     if (!buf) {
@@ -760,7 +875,9 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
     const long long required = static_cast<long long>(cellCountXZ)
                              * static_cast<long long>(cellCountY)
                              * cell_value_count;
-    auto pinned_cache_arrays = bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues);
+    auto pinned_cache_arrays = cacheAllInCellValues
+        ? bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues)
+        : bind_bound_cache_all_in_cell_arrays(env, *cache);
     if (env->ExceptionCheck()) return;
     lattice::jni::CriticalDoubleArray buf{env, out};
     if (!buf) {
@@ -1131,6 +1248,174 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetInterpolator
     std::copy_n(end.data(), required, it.end_density_buffer.data());
     start.release_ro();
     end.release_ro();
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetInterpolatorColumnsFlat(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle,
+        jintArray slots, jobjectArray startSlices, jobjectArray endSlices,
+        jint zRows, jint yRows) {
+    auto* c = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!c) return;
+    if (!slots || !startSlices || !endSlices) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: null interpolator column arrays");
+        return;
+    }
+    if (zRows <= 0 || yRows <= 0) return;
+
+    const jsize count = env->GetArrayLength(slots);
+    if (env->GetArrayLength(startSlices) < count || env->GetArrayLength(endSlices) < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: interpolator column array length mismatch");
+        return;
+    }
+    const std::size_t required = static_cast<std::size_t>(zRows) * static_cast<std::size_t>(yRows);
+
+    lattice::jni::CriticalIntArray slot_data{env, slots};
+    if (!slot_data) {
+        lattice::jni::throw_illegal_state(env, "lattice df: interpolator slots pin failed");
+        return;
+    }
+
+    for (jsize i = 0; i < count; ++i) {
+        const jint slot = slot_data.data()[i];
+        if (slot < 0 || slot >= static_cast<jint>(c->interpolators.size())) continue;
+        auto* startArray = static_cast<jdoubleArray>(env->GetObjectArrayElement(startSlices, i));
+        auto* endArray = static_cast<jdoubleArray>(env->GetObjectArrayElement(endSlices, i));
+        if (!startArray || !endArray) {
+            if (startArray) env->DeleteLocalRef(startArray);
+            if (endArray) env->DeleteLocalRef(endArray);
+            lattice::jni::throw_illegal_arg(env, "lattice df: null flat interpolator column");
+            return;
+        }
+
+        auto& it = c->interpolators[static_cast<std::size_t>(slot)];
+        if (it.start_density_buffer.size() < required || it.end_density_buffer.size() < required) {
+            env->DeleteLocalRef(startArray);
+            env->DeleteLocalRef(endArray);
+            lattice::jni::throw_illegal_arg(env, "lattice df: interpolator native buffers too short");
+            return;
+        }
+
+        lattice::jni::CriticalDoubleArray start{env, startArray};
+        lattice::jni::CriticalDoubleArray end{env, endArray};
+        if (!start || !end) {
+            env->DeleteLocalRef(startArray);
+            env->DeleteLocalRef(endArray);
+            lattice::jni::throw_illegal_state(env, "lattice df: flat interpolator column pin failed");
+            return;
+        }
+        if (start.size() < required || end.size() < required) {
+            env->DeleteLocalRef(startArray);
+            env->DeleteLocalRef(endArray);
+            lattice::jni::throw_illegal_arg(env, "lattice df: flat interpolator column too short");
+            return;
+        }
+
+        std::copy_n(start.data(), required, it.start_density_buffer.data());
+        std::copy_n(end.data(), required, it.end_density_buffer.data());
+        start.release_ro();
+        end.release_ro();
+        env->DeleteLocalRef(startArray);
+        env->DeleteLocalRef(endArray);
+        if (env->ExceptionCheck()) return;
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeBindInterpolatorColumnsFlat(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle,
+        jintArray slots, jobjectArray startSlices, jobjectArray endSlices) {
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!cache) return;
+    if (!slots || !startSlices || !endSlices) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: null interpolator binding arrays");
+        return;
+    }
+
+    const jsize count = env->GetArrayLength(slots);
+    if (env->GetArrayLength(startSlices) < count || env->GetArrayLength(endSlices) < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice df: interpolator binding length mismatch");
+        return;
+    }
+
+    lattice::jni::CriticalIntArray slot_data{env, slots};
+    if (!slot_data) {
+        lattice::jni::throw_illegal_state(env, "lattice df: interpolator binding slots pin failed");
+        return;
+    }
+
+    BoundInterpolatorColumns next;
+    next.slots.reserve(static_cast<std::size_t>(count));
+    next.starts.reserve(static_cast<std::size_t>(count));
+    next.ends.reserve(static_cast<std::size_t>(count));
+    for (jsize i = 0; i < count; ++i) {
+        auto* startArray = static_cast<jdoubleArray>(env->GetObjectArrayElement(startSlices, i));
+        auto* endArray = static_cast<jdoubleArray>(env->GetObjectArrayElement(endSlices, i));
+        if (!startArray || !endArray) {
+            if (startArray) env->DeleteLocalRef(startArray);
+            if (endArray) env->DeleteLocalRef(endArray);
+            delete_global_refs(env, next);
+            lattice::jni::throw_illegal_arg(env, "lattice df: null interpolator binding column");
+            return;
+        }
+        auto* startGlobal = static_cast<jdoubleArray>(env->NewGlobalRef(startArray));
+        auto* endGlobal = static_cast<jdoubleArray>(env->NewGlobalRef(endArray));
+        env->DeleteLocalRef(startArray);
+        env->DeleteLocalRef(endArray);
+        if (!startGlobal || !endGlobal) {
+            if (startGlobal) env->DeleteGlobalRef(startGlobal);
+            if (endGlobal) env->DeleteGlobalRef(endGlobal);
+            delete_global_refs(env, next);
+            lattice::jni::throw_oom(env, "lattice density: interpolator column global ref");
+            return;
+        }
+        next.slots.push_back(slot_data.data()[i]);
+        next.starts.push_back(startGlobal);
+        next.ends.push_back(endGlobal);
+    }
+
+    std::lock_guard<std::mutex> lock(g_bindings_mutex);
+    auto& current = g_interpolator_bindings[cache];
+    delete_global_refs(env, current);
+    current = std::move(next);
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSyncBoundInterpolatorColumnsFlat(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle,
+        jint zRows, jint yRows) {
+    auto* c = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!c) return;
+    if (zRows <= 0 || yRows <= 0) return;
+
+    std::lock_guard<std::mutex> lock(g_bindings_mutex);
+    auto found = g_interpolator_bindings.find(c);
+    if (found == g_interpolator_bindings.end()) return;
+    const BoundInterpolatorColumns& binding = found->second;
+    const std::size_t required = static_cast<std::size_t>(zRows) * static_cast<std::size_t>(yRows);
+    for (std::size_t i = 0; i < binding.slots.size(); ++i) {
+        const jint slot = binding.slots[i];
+        if (slot < 0 || slot >= static_cast<jint>(c->interpolators.size())) continue;
+        auto& it = c->interpolators[static_cast<std::size_t>(slot)];
+        if (it.start_density_buffer.size() < required || it.end_density_buffer.size() < required) {
+            lattice::jni::throw_illegal_arg(env, "lattice df: bound interpolator native buffers too short");
+            return;
+        }
+        lattice::jni::CriticalDoubleArray start{env, binding.starts[i]};
+        lattice::jni::CriticalDoubleArray end{env, binding.ends[i]};
+        if (!start || !end) {
+            lattice::jni::throw_illegal_state(env, "lattice df: bound interpolator column pin failed");
+            return;
+        }
+        if (start.size() < required || end.size() < required) {
+            lattice::jni::throw_illegal_arg(env, "lattice df: bound interpolator column too short");
+            return;
+        }
+        std::copy_n(start.data(), required, it.start_density_buffer.data());
+        std::copy_n(end.data(), required, it.end_density_buffer.data());
+        start.release_ro();
+        end.release_ro();
+    }
 }
 
 JNIEXPORT void JNICALL

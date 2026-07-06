@@ -82,11 +82,16 @@ public final class NativeDensityFunction {
     private final long handle;
     private final long cacheHandle;
     private final List<InterpolatorBinding> interpolators;
+    private final int[] interpolatorSlots;
+    private final NativeNoiseInterpolatorAccess[] interpolatorAccesses;
+    private final double[][] interpolatorStartSlices;
+    private final double[][] interpolatorEndSlices;
     private final double[][] cacheAllInCellValues;
     private final boolean clearsCachePerCell;
     private int preparedHorizontalCellCount = -1;
     private int preparedVerticalCellCount = -1;
     private int syncedCellStartBlockX = Integer.MIN_VALUE;
+    private boolean interpolatorColumnsBound;
     @SuppressWarnings("unused")
     private final Cleaner.Cleanable cleanable;
 
@@ -94,6 +99,15 @@ public final class NativeDensityFunction {
         this.handle = handle;
         this.cacheHandle = cacheHandle;
         this.interpolators = List.copyOf(interpolators);
+        this.interpolatorSlots = new int[interpolators.size()];
+        this.interpolatorAccesses = new NativeNoiseInterpolatorAccess[interpolators.size()];
+        this.interpolatorStartSlices = new double[interpolators.size()][];
+        this.interpolatorEndSlices = new double[interpolators.size()][];
+        for (int i = 0; i < interpolators.size(); i++) {
+            InterpolatorBinding binding = interpolators.get(i);
+            this.interpolatorSlots[i] = binding.slot();
+            this.interpolatorAccesses[i] = binding.function();
+        }
         this.cacheAllInCellValues = cacheAllInCellValues;
         this.clearsCachePerCell = clearsCachePerCell;
         this.cleanable = CLEANER.register(this, new Destroy(handle, cacheHandle));
@@ -163,6 +177,10 @@ public final class NativeDensityFunction {
         return tryFillCell(values, function, cellStartBlockX, cellStartBlockY, cellStartBlockZ, cellWidth, cellHeight, cellCountXZ, cellCountY, cellX, cellZ, localCellY, localCellZ, false);
     }
 
+    public static boolean shouldTryFillCellDirect() {
+        return ENABLED && CELL_ENABLED && DIRECT_CELL_ENABLED;
+    }
+
     public static boolean bypassFillAllDirectly() {
         return BYPASS_FILL_ALL_DIRECTLY.get().booleanValue();
     }
@@ -214,7 +232,7 @@ public final class NativeDensityFunction {
                     cellHeight,
                     cellCountXZ,
                     cellCountY,
-                    compiled.cacheAllInCellValues,
+                    null,
                     values);
             if (profiling) {
                 COLUMN_NANOS.add(System.nanoTime() - start);
@@ -295,10 +313,9 @@ public final class NativeDensityFunction {
                         localCellZ,
                         cellWidth,
                         cellHeight,
-                        compiled.cacheAllInCellValues,
+                        null,
                         values);
             } else {
-                nativeClearCache(compiled.cacheHandle);
                 nativeEvaluateCell(
                         compiled.handle,
                         compiled.cacheHandle,
@@ -309,7 +326,7 @@ public final class NativeDensityFunction {
                         cellZ,
                         cellWidth,
                         cellHeight,
-                        compiled.cacheAllInCellValues,
+                        null,
                         values);
             }
             if (stats) {
@@ -525,10 +542,13 @@ public final class NativeDensityFunction {
             Compiler compiler = new Compiler(handle, function, directCell);
             int root = compiler.compile(function);
             if (root < 0) return null;
+            if (directCell && !compiler.directCellCandidate()) return null;
             nativeSetRoot(handle, root);
             cacheHandle = nativeCreateCache(handle);
             if (cacheHandle == 0L) return null;
-            return new NativeDensityFunction(handle, cacheHandle, compiler.interpolators(), compiler.cacheAllInCellValues(), compiler.clearsCachePerCell());
+            NativeDensityFunction compiled = new NativeDensityFunction(handle, cacheHandle, compiler.interpolators(), compiler.cacheAllInCellValues(), compiler.clearsCachePerCell());
+            compiled.bindCacheAllInCellArrays();
+            return compiled;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_compile", e.getMessage());
             return null;
@@ -564,18 +584,40 @@ public final class NativeDensityFunction {
             syncedCellStartBlockX = Integer.MIN_VALUE;
         }
         if (syncedCellStartBlockX == cellStartBlockX) return;
+        if (interpolatorAccesses.length == 0) {
+            syncedCellStartBlockX = cellStartBlockX;
+            return;
+        }
 
         long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
         int zRows = cellCountXZ + 1;
         int yRows = cellCountY + 1;
-        for (InterpolatorBinding binding : interpolators) {
-            nativeSetInterpolatorColumnFlat(cacheHandle, binding.slot(), binding.function().lattice$flatSlice0(), binding.function().lattice$flatSlice1(), zRows, yRows);
+        for (int i = 0; i < interpolatorAccesses.length; i++) {
+            NativeNoiseInterpolatorAccess access = interpolatorAccesses[i];
+            double[] startSlice = access.lattice$flatSlice0();
+            double[] endSlice = access.lattice$flatSlice1();
+            if (interpolatorStartSlices[i] != startSlice || interpolatorEndSlices[i] != endSlice) {
+                interpolatorColumnsBound = false;
+                interpolatorStartSlices[i] = startSlice;
+                interpolatorEndSlices[i] = endSlice;
+            }
         }
+        if (!interpolatorColumnsBound) {
+            nativeBindInterpolatorColumnsFlat(cacheHandle, interpolatorSlots, interpolatorStartSlices, interpolatorEndSlices);
+            interpolatorColumnsBound = true;
+        }
+        nativeSyncBoundInterpolatorColumnsFlat(cacheHandle, zRows, yRows);
         if (PROFILING_ENABLED) {
             SYNC_NANOS.add(System.nanoTime() - start);
             SYNC_COUNT.increment();
         }
         syncedCellStartBlockX = cellStartBlockX;
+    }
+
+    private void bindCacheAllInCellArrays() {
+        if (cacheAllInCellValues != null) {
+            nativeBindCacheAllInCellArrays(cacheHandle, cacheAllInCellValues);
+        }
     }
 
     public static boolean setOption(String option, boolean value) {
@@ -774,6 +816,8 @@ public final class NativeDensityFunction {
         private final List<InterpolatorBinding> interpolators = new ArrayList<>();
         private final List<CacheAllInCellBinding> cacheAllInCellBindings = new ArrayList<>();
         private boolean clearsCachePerCell;
+        private int directNodeCount;
+        private int directExpensiveNodeCount;
 
         private Compiler(long handle, DensityFunction root, boolean directCell) {
             this.handle = handle;
@@ -786,7 +830,10 @@ public final class NativeDensityFunction {
             if (cached != null) return cached.intValue();
 
             int ref = compileUncached(function);
-            if (ref >= 0) refs.put(function, ref);
+            if (ref >= 0) {
+                refs.put(function, ref);
+                if (directCell) recordDirectCost(function);
+            }
             return ref;
         }
 
@@ -809,6 +856,25 @@ public final class NativeDensityFunction {
 
         private boolean clearsCachePerCell() {
             return clearsCachePerCell;
+        }
+
+        private boolean directCellCandidate() {
+            return !directCell || (directExpensiveNodeCount > 0 && directNodeCount >= 4);
+        }
+
+        private void recordDirectCost(DensityFunction function) {
+            directNodeCount++;
+            String name = function.getClass().getName();
+            if (name.endsWith("DensityFunctions$Noise")
+                    || name.endsWith("DensityFunctions$ShiftedNoise")
+                    || name.endsWith("DensityFunctions$ShiftA")
+                    || name.endsWith("DensityFunctions$ShiftB")
+                    || name.endsWith("DensityFunctions$Shift")
+                    || name.endsWith("DensityFunctions$WeirdScaledSampler")
+                    || name.endsWith("DensityFunctions$Spline")
+                    || name.contains("InterpolatedNoise")) {
+                directExpensiveNodeCount++;
+            }
         }
 
         private int compileUncached(DensityFunction function) {
@@ -1024,6 +1090,7 @@ public final class NativeDensityFunction {
     private static native void nativeSetRoot(long handle, int nodeRef);
     private static native long nativeCreateCache(long handle);
     private static native void nativeDestroyCache(long cacheHandle);
+    private static native void nativeBindCacheAllInCellArrays(long cacheHandle, double[][] arrays);
     private static native void nativeClearCache(long cacheHandle);
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateYColumn(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] out);
@@ -1070,6 +1137,9 @@ public final class NativeDensityFunction {
     private static native void nativePrepareInterpolators(long cacheHandle, int horizontalCellCount, int verticalCellCount);
     private static native void nativeSetInterpolatorColumn(long cacheHandle, int slot, double[][] startSlice, double[][] endSlice, int zRows, int yRows);
     private static native void nativeSetInterpolatorColumnFlat(long cacheHandle, int slot, double[] startSlice, double[] endSlice, int zRows, int yRows);
+    private static native void nativeSetInterpolatorColumnsFlat(long cacheHandle, int[] slots, double[][] startSlices, double[][] endSlices, int zRows, int yRows);
+    private static native void nativeBindInterpolatorColumnsFlat(long cacheHandle, int[] slots, double[][] startSlices, double[][] endSlices);
+    private static native void nativeSyncBoundInterpolatorColumnsFlat(long cacheHandle, int zRows, int yRows);
     private static native void nativeSetDensityRow(long cacheHandle, int slot, int cellZ, boolean toEndBuffer, double[] values);
 
 }
