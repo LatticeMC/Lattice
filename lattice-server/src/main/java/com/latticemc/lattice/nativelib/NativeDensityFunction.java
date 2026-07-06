@@ -274,7 +274,8 @@ public final class NativeDensityFunction {
                         values);
             } else {
                 nativeClearCache(compiled.cacheHandle);
-                nativeEvaluateCell(
+                compiled.syncInterpolatorColumn(cellStartBlockX, cellCountXZ, cellCountY);
+                nativeEvaluateInterpolatedCell(
                         compiled.handle,
                         compiled.cacheHandle,
                         cellStartBlockX,
@@ -282,6 +283,8 @@ public final class NativeDensityFunction {
                         cellStartBlockZ,
                         cellX,
                         cellZ,
+                        localCellY,
+                        localCellZ,
                         cellWidth,
                         cellHeight,
                         compiled.cacheAllInCellValues,
@@ -839,6 +842,8 @@ public final class NativeDensityFunction {
             }
             if (name.endsWith("DensityFunctions$BlendAlpha")) return nativeAddBlendAlpha(handle);
             if (name.endsWith("DensityFunctions$BlendOffset")) return nativeAddBlendOffset(handle);
+            if (name.contains("NoiseChunk$BlendAlpha")) return nativeAddBlendAlpha(handle);
+            if (name.contains("NoiseChunk$BlendOffset")) return nativeAddBlendOffset(handle);
             if (name.endsWith("DensityFunctions$BlendDensity")) {
                 int input = compile((DensityFunction) invoke(function, "input"));
                 return input < 0 ? -1 : nativeAddBlendDensity(handle, input);
