@@ -1,6 +1,8 @@
 package com.latticemc.lattice.command;
 
 import com.latticemc.lattice.nativelib.NativeDensityFunction;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.lang.reflect.Method;
 import java.util.List;
 import org.bukkit.Bukkit;
@@ -13,6 +15,16 @@ import org.slf4j.LoggerFactory;
 
 public final class LatticeDensityCommand extends Command {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
+    private static final List<String> DENSITY_ACTIONS = List.of(
+            "status", "reset", "all", "profile", "enabled", "cell", "directCell",
+            "shiftedNoise", "spline", "multipointSpline", "stats", "profiling",
+            "parity", "parityInterval", "surface", "heightmap");
+    private static final List<String> BOOLEAN_VALUES = List.of("true", "false", "on", "off");
+    private static final List<String> FULL_OPTIONS = List.of(
+            "enabled", "cell", "directCell", "shiftedNoise", "spline",
+            "multipointSpline", "surface", "heightmap");
+    private static final List<String> PROFILE_OPTIONS = List.of(
+            "stats", "profiling", "parity");
     private static boolean registered;
 
     private LatticeDensityCommand() {
@@ -38,7 +50,7 @@ public final class LatticeDensityCommand extends Command {
     public boolean execute(CommandSender sender, String commandLabel, String[] args) {
         if (!testPermission(sender)) return true;
         if (args.length < 1 || !"density".equalsIgnoreCase(args[0])) {
-            sender.sendMessage("Usage: /lattice density <status|reset|option> [true|false]");
+            sendUsage(sender);
             return true;
         }
         if (args.length == 2 && "status".equalsIgnoreCase(args[1])) {
@@ -51,6 +63,16 @@ public final class LatticeDensityCommand extends Command {
             return true;
         }
         if (args.length == 3) {
+            if ("all".equalsIgnoreCase(args[1]) || "profile".equalsIgnoreCase(args[1])) {
+                Boolean value = parseBoolean(args[2]);
+                if (value == null) {
+                    sender.sendMessage("Expected true or false");
+                    return true;
+                }
+                applyPreset(args[1], value.booleanValue());
+                sender.sendMessage("Lattice density " + args[1] + '=' + value);
+                return true;
+            }
             if ("parityInterval".equalsIgnoreCase(args[1])) {
                 try {
                     int value = Integer.parseInt(args[2]);
@@ -76,8 +98,47 @@ public final class LatticeDensityCommand extends Command {
             sender.sendMessage("Lattice density " + args[1] + '=' + value);
             return true;
         }
-        sender.sendMessage("Usage: /lattice density <status|reset|enabled|cell|directCell|shiftedNoise|spline|multipointSpline|stats|profiling|parity|surface|heightmap> [true|false], or parityInterval <n>");
+        sendUsage(sender);
         return true;
+    }
+
+    @Override
+    public List<String> tabComplete(CommandSender sender, String alias, String[] args) {
+        if (!testPermissionSilent(sender)) return Collections.emptyList();
+        if (args.length == 1) return filter(List.of("density"), args[0]);
+        if (args.length == 2 && "density".equalsIgnoreCase(args[0])) {
+            return filter(DENSITY_ACTIONS, args[1]);
+        }
+        if (args.length == 3 && "density".equalsIgnoreCase(args[0])) {
+            if ("parityInterval".equalsIgnoreCase(args[1])) return filter(List.of("1", "128", "1024", "4096"), args[2]);
+            if (!"status".equalsIgnoreCase(args[1]) && !"reset".equalsIgnoreCase(args[1])) {
+                return filter(BOOLEAN_VALUES, args[2]);
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    private static void applyPreset(String preset, boolean value) {
+        if ("all".equalsIgnoreCase(preset)) {
+            for (String option : FULL_OPTIONS) NativeDensityFunction.setOption(option, value);
+        } else if ("profile".equalsIgnoreCase(preset)) {
+            for (String option : PROFILE_OPTIONS) NativeDensityFunction.setOption(option, value);
+        }
+    }
+
+    private static void sendUsage(CommandSender sender) {
+        sender.sendMessage("Usage: /lattice density <status|reset|all|profile|option> [true|false]");
+        sender.sendMessage("Options: " + String.join(", ", DENSITY_ACTIONS));
+    }
+
+    private static List<String> filter(List<String> values, String prefix) {
+        if (prefix == null || prefix.isEmpty()) return values;
+        String lower = prefix.toLowerCase(java.util.Locale.ROOT);
+        List<String> out = new ArrayList<>();
+        for (String value : values) {
+            if (value.toLowerCase(java.util.Locale.ROOT).startsWith(lower)) out.add(value);
+        }
+        return out;
     }
 
     private static Boolean parseBoolean(String value) {

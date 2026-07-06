@@ -45,6 +45,15 @@ public final class NativeDensityFunction {
     private static final LongAdder CELL_ATTEMPTS = new LongAdder();
     private static final LongAdder CELL_SUCCESS = new LongAdder();
     private static final LongAdder CELL_INTERPOLATED = new LongAdder();
+    private static final LongAdder CELL_DIRECT_ATTEMPTS = new LongAdder();
+    private static final LongAdder CELL_DIRECT_SUCCESS = new LongAdder();
+    private static final LongAdder CELL_HIGH_ATTEMPTS = new LongAdder();
+    private static final LongAdder CELL_HIGH_SUCCESS = new LongAdder();
+    private static final LongAdder CELL_SKIP_DISABLED = new LongAdder();
+    private static final LongAdder CELL_SKIP_ROOT_BYPASS = new LongAdder();
+    private static final LongAdder CELL_SKIP_CELL_BYPASS = new LongAdder();
+    private static final LongAdder CELL_SKIP_COMPILE_NULL = new LongAdder();
+    private static final LongAdder CELL_SKIP_OUTPUT_TOO_SMALL = new LongAdder();
     private static final LongAdder COMPILE_NANOS = new LongAdder();
     private static final LongAdder SLICE_NANOS = new LongAdder();
     private static final LongAdder CELL_NANOS = new LongAdder();
@@ -214,18 +223,35 @@ public final class NativeDensityFunction {
             LOGGER.info("NativeDensityFunction first cell attempt");
         }
         if (!ENABLED) return false;
-        if (!CELL_ENABLED) return false;
-        if (bypassRootNative(function)) return false;
-        if (bypassCellNative(function)) return false;
+        if (!CELL_ENABLED) {
+            if (STATS_ENABLED) CELL_SKIP_DISABLED.increment();
+            return false;
+        }
+        if (bypassRootNative(function)) {
+            if (STATS_ENABLED) CELL_SKIP_ROOT_BYPASS.increment();
+            return false;
+        }
+        if (bypassCellNative(function)) {
+            if (STATS_ENABLED) CELL_SKIP_CELL_BYPASS.increment();
+            return false;
+        }
         if (STATS_ENABLED) {
             CELL_ATTEMPTS.increment();
+            if (highLevel) CELL_HIGH_ATTEMPTS.increment();
+            else CELL_DIRECT_ATTEMPTS.increment();
             maybeLogStats();
         }
         long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompileCell(function);
-        if (compiled == null) return false;
+        if (compiled == null) {
+            if (STATS_ENABLED) CELL_SKIP_COMPILE_NULL.increment();
+            return false;
+        }
         int expected = cellWidth * cellHeight * cellWidth;
-        if (values.length < expected) return false;
+        if (values.length < expected) {
+            if (STATS_ENABLED) CELL_SKIP_OUTPUT_TOO_SMALL.increment();
+            return false;
+        }
 
         try {
             if (highLevel) {
@@ -262,6 +288,10 @@ public final class NativeDensityFunction {
                         values);
             }
             if (STATS_ENABLED) CELL_SUCCESS.increment();
+            if (STATS_ENABLED) {
+                if (highLevel) CELL_HIGH_SUCCESS.increment();
+                else CELL_DIRECT_SUCCESS.increment();
+            }
             if (PROFILING_ENABLED) CELL_NANOS.add(System.nanoTime() - start);
             return true;
         } catch (RuntimeException | LinkageError e) {
@@ -495,7 +525,14 @@ public final class NativeDensityFunction {
                 + " compile=" + COMPILE_SUCCESS.sum() + '/' + COMPILE_ATTEMPTS.sum()
                 + " slice=" + SLICE_SUCCESS.sum() + '/' + SLICE_ATTEMPTS.sum()
                 + " cell=" + CELL_SUCCESS.sum() + '/' + CELL_ATTEMPTS.sum()
+                + " cellDirect=" + CELL_DIRECT_SUCCESS.sum() + '/' + CELL_DIRECT_ATTEMPTS.sum()
+                + " cellHigh=" + CELL_HIGH_SUCCESS.sum() + '/' + CELL_HIGH_ATTEMPTS.sum()
                 + " interpolatedCell=" + CELL_INTERPOLATED.sum()
+                + " cellSkip={disabled=" + CELL_SKIP_DISABLED.sum()
+                + ", root=" + CELL_SKIP_ROOT_BYPASS.sum()
+                + ", cell=" + CELL_SKIP_CELL_BYPASS.sum()
+                + ", compile=" + CELL_SKIP_COMPILE_NULL.sum()
+                + ", output=" + CELL_SKIP_OUTPUT_TOO_SMALL.sum() + '}'
                 + " timingsUs={compile=" + avgMicros(COMPILE_NANOS.sum(), COMPILE_ATTEMPTS.sum())
                 + ", slice=" + avgMicros(SLICE_NANOS.sum(), SLICE_SUCCESS.sum())
                 + ", cell=" + avgMicros(CELL_NANOS.sum(), CELL_SUCCESS.sum())
@@ -515,6 +552,15 @@ public final class NativeDensityFunction {
         CELL_ATTEMPTS.reset();
         CELL_SUCCESS.reset();
         CELL_INTERPOLATED.reset();
+        CELL_DIRECT_ATTEMPTS.reset();
+        CELL_DIRECT_SUCCESS.reset();
+        CELL_HIGH_ATTEMPTS.reset();
+        CELL_HIGH_SUCCESS.reset();
+        CELL_SKIP_DISABLED.reset();
+        CELL_SKIP_ROOT_BYPASS.reset();
+        CELL_SKIP_CELL_BYPASS.reset();
+        CELL_SKIP_COMPILE_NULL.reset();
+        CELL_SKIP_OUTPUT_TOO_SMALL.reset();
         COMPILE_NANOS.reset();
         SLICE_NANOS.reset();
         CELL_NANOS.reset();

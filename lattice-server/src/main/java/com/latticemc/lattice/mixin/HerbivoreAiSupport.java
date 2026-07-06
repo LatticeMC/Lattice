@@ -3,7 +3,6 @@ package com.latticemc.lattice.mixin;
 import com.latticemc.lattice.nativelib.NativeApproachTargetSampler;
 import com.latticemc.lattice.nativelib.NativeBiologicalAi;
 import com.latticemc.lattice.nativelib.NativeEntityQuery;
-import com.latticemc.lattice.nativelib.NativeFleeTargetSampler;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -22,6 +21,7 @@ import org.jspecify.annotations.Nullable;
 
 public final class HerbivoreAiSupport {
     private static final NativeBiologicalAi.Stimulus[] NO_STIMULI = new NativeBiologicalAi.Stimulus[0];
+    private static final int HURT_PANIC_TICKS = 100;
 
     private HerbivoreAiSupport() {}
 
@@ -181,35 +181,12 @@ public final class HerbivoreAiSupport {
                                               @Nullable LivingEntity threat,
                                               @Nullable Player temptingPlayer,
                                               double minPursueSpeed) {
+        if (isRecentHurtThreat(mob, threat)) {
+            return fleeDirectlyFrom(mob, threat, 7.0, 1.35);
+        }
+
         if (decision.action() == NativeBiologicalAi.Action.FLEE && threat != null && threat.isAlive()) {
-            double[] candidates = buildFleeCandidates(mob, threat, 4.0);
-            int candidate = NativeFleeTargetSampler.sampleFleeTarget(
-                    candidates,
-                    candidates.length / 3,
-                    mob.getX(), mob.getY(), mob.getZ(),
-                    threat.getX(), threat.getY(), threat.getZ(),
-                    null, 0,
-                    0.5);
-            if (candidate >= 0) {
-                mob.getNavigation().moveTo(
-                        candidates[candidate * 3],
-                        candidates[candidate * 3 + 1],
-                        candidates[candidate * 3 + 2],
-                        Math.max(1.0, decision.moveSpeed()));
-            } else {
-                final double dx = mob.getX() - threat.getX();
-                final double dz = mob.getZ() - threat.getZ();
-                final double horizontal = Math.sqrt(dx * dx + dz * dz);
-                if (horizontal > 1.0E-4) {
-                    final double scale = 4.0 / horizontal;
-                    mob.getNavigation().moveTo(
-                            mob.getX() + dx * scale,
-                            mob.getY(),
-                            mob.getZ() + dz * scale,
-                            Math.max(1.0, decision.moveSpeed()));
-                }
-            }
-            return true;
+            return fleeDirectlyFrom(mob, threat, 6.0, Math.max(1.25, decision.moveSpeed()));
         }
 
         if (decision.action() == NativeBiologicalAi.Action.REST) {
@@ -263,6 +240,31 @@ public final class HerbivoreAiSupport {
         }
 
         return false;
+    }
+
+    private static boolean isRecentHurtThreat(Mob mob, @Nullable LivingEntity threat) {
+        return threat != null
+                && threat.isAlive()
+                && mob.getLastHurtByMob() == threat
+                && mob.tickCount - mob.getLastHurtByMobTimestamp() <= HURT_PANIC_TICKS;
+    }
+
+    private static boolean fleeDirectlyFrom(Mob mob, LivingEntity threat, double radius, double speed) {
+        double dx = mob.getX() - threat.getX();
+        double dz = mob.getZ() - threat.getZ();
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        if (horizontal < 1.0E-4) {
+            dx = 1.0;
+            dz = 0.0;
+            horizontal = 1.0;
+        }
+        final double scale = radius / horizontal;
+        mob.getNavigation().moveTo(
+                mob.getX() + dx * scale,
+                mob.getY(),
+                mob.getZ() + dz * scale,
+                speed);
+        return true;
     }
 
     private static double[] buildApproachCandidates(Mob mob, LivingEntity target, double preferredDistance) {
