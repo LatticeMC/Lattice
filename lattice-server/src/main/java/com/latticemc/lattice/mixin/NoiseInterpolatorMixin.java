@@ -1,22 +1,53 @@
 package com.latticemc.lattice.mixin;
 
 import com.latticemc.lattice.nativelib.NativeNoiseInterpolatorAccess;
+import com.latticemc.lattice.nativelib.NativeNoiseChunkAccess;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import net.minecraft.util.Mth;
+import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.NoiseChunk;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(NoiseChunk.NoiseInterpolator.class)
 public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorAccess {
+    @Shadow @Final private DensityFunction noiseFiller;
     @Shadow double[][] slice0;
     @Shadow double[][] slice1;
+    @Shadow private double noise000;
+    @Shadow private double noise001;
+    @Shadow private double noise100;
+    @Shadow private double noise101;
+    @Shadow private double noise010;
+    @Shadow private double noise011;
+    @Shadow private double noise110;
+    @Shadow private double noise111;
+    @Shadow private double valueXZ00;
+    @Shadow private double valueXZ10;
+    @Shadow private double valueXZ01;
+    @Shadow private double valueXZ11;
+    @Shadow private double valueZ0;
+    @Shadow private double valueZ1;
+    @Shadow private double value;
+    @Shadow @Final private NoiseChunk this$0;
     @Unique private int lattice$nativeSlot = -1;
     @Unique private double[] lattice$flatSlice0;
     @Unique private double[] lattice$flatSlice1;
+    @Unique private boolean lattice$flatReadable;
+    @Unique private Arena lattice$nativeArena;
+    @Unique private MemorySegment lattice$nativeFlatSlice0 = MemorySegment.NULL;
+    @Unique private MemorySegment lattice$nativeFlatSlice1 = MemorySegment.NULL;
+    @Unique private int lattice$nativeFlatSize;
+    @Unique private boolean lattice$nativeFlatReadable;
 
     @Override
     public void lattice$setNativeSlot(int slot) {
@@ -42,6 +73,29 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
     public void lattice$copyFlatRow(boolean slice0, int zRow, double[] values, int yRows, int zRows) {
         double[] flat = this.lattice$ensureFlatSlice(slice0, yRows * zRows);
         System.arraycopy(values, 0, flat, zRow * yRows, yRows);
+        this.lattice$flatReadable = true;
+    }
+
+    @Override
+    public MemorySegment lattice$nativeFlatRow(boolean slice0, int zRow, int yRows, int zRows) {
+        MemorySegment flat = this.lattice$ensureNativeFlatSlice(slice0, yRows * zRows);
+        return flat.asSlice((long) zRow * yRows * Double.BYTES, (long) yRows * Double.BYTES);
+    }
+
+    @Override
+    public boolean lattice$nativeFlatReadable() {
+        return this.lattice$nativeFlatReadable;
+    }
+
+    @Override
+    public void lattice$markNativeFlatReadable() {
+        this.lattice$nativeFlatReadable = true;
+    }
+
+    @Override
+    public double[] lattice$sliceRow(boolean slice0, int zRow) {
+        double[][] slice = slice0 ? this.slice0 : this.slice1;
+        return zRow >= 0 && zRow < slice.length ? slice[zRow] : null;
     }
 
     @Override
@@ -57,6 +111,104 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         double[] flat = this.lattice$flatSlice0;
         this.lattice$flatSlice0 = this.lattice$flatSlice1;
         this.lattice$flatSlice1 = flat;
+        MemorySegment nativeFlat = this.lattice$nativeFlatSlice0;
+        this.lattice$nativeFlatSlice0 = this.lattice$nativeFlatSlice1;
+        this.lattice$nativeFlatSlice1 = nativeFlat;
+    }
+
+    @Inject(method = "selectCellYZ", at = @At("HEAD"), cancellable = true)
+    private void lattice$selectCellYZFlat(int y, int z, CallbackInfo ci) {
+        if (!this.lattice$flatReadable && !this.lattice$nativeFlatReadable) return;
+        NativeNoiseChunkAccess chunk = (NativeNoiseChunkAccess) (Object) this.this$0;
+        int yRows = chunk.lattice$cellCountY() + 1;
+        int zRows = chunk.lattice$cellCountXZ() + 1;
+        double[] start = this.lattice$flatReadable ? this.lattice$ensureFlatSlice(true, yRows * zRows) : null;
+        double[] end = this.lattice$flatReadable ? this.lattice$ensureFlatSlice(false, yRows * zRows) : null;
+        MemorySegment nativeStart = this.lattice$nativeFlatReadable ? this.lattice$ensureNativeFlatSlice(true, yRows * zRows) : MemorySegment.NULL;
+        MemorySegment nativeEnd = this.lattice$nativeFlatReadable ? this.lattice$ensureNativeFlatSlice(false, yRows * zRows) : MemorySegment.NULL;
+        int i00 = z * yRows + y;
+        int i10 = (z + 1) * yRows + y;
+        int i01 = z * yRows + y + 1;
+        int i11 = (z + 1) * yRows + y + 1;
+        if (this.lattice$nativeFlatReadable) {
+            long offset00 = (long) i00 * Double.BYTES;
+            long offset10 = (long) i10 * Double.BYTES;
+            long offset01 = (long) i01 * Double.BYTES;
+            long offset11 = (long) i11 * Double.BYTES;
+            this.noise000 = nativeStart.get(ValueLayout.JAVA_DOUBLE, offset00);
+            this.noise001 = nativeStart.get(ValueLayout.JAVA_DOUBLE, offset10);
+            this.noise100 = nativeEnd.get(ValueLayout.JAVA_DOUBLE, offset00);
+            this.noise101 = nativeEnd.get(ValueLayout.JAVA_DOUBLE, offset10);
+            this.noise010 = nativeStart.get(ValueLayout.JAVA_DOUBLE, offset01);
+            this.noise011 = nativeStart.get(ValueLayout.JAVA_DOUBLE, offset11);
+            this.noise110 = nativeEnd.get(ValueLayout.JAVA_DOUBLE, offset01);
+            this.noise111 = nativeEnd.get(ValueLayout.JAVA_DOUBLE, offset11);
+        } else {
+            if (i11 >= start.length || i11 >= end.length) return;
+            this.noise000 = start[i00];
+            this.noise001 = start[i10];
+            this.noise100 = end[i00];
+            this.noise101 = end[i10];
+            this.noise010 = start[i01];
+            this.noise011 = start[i11];
+            this.noise110 = end[i01];
+            this.noise111 = end[i11];
+        }
+        ci.cancel();
+    }
+
+    @Inject(method = "updateForY", at = @At("HEAD"), cancellable = true)
+    private void lattice$updateForYFlat(double y, CallbackInfo ci) {
+        if (!this.lattice$flatReadable) return;
+        this.valueXZ00 = Mth.lerp(y, this.noise000, this.noise010);
+        this.valueXZ10 = Mth.lerp(y, this.noise100, this.noise110);
+        this.valueXZ01 = Mth.lerp(y, this.noise001, this.noise011);
+        this.valueXZ11 = Mth.lerp(y, this.noise101, this.noise111);
+        ci.cancel();
+    }
+
+    @Inject(method = "updateForX", at = @At("HEAD"), cancellable = true)
+    private void lattice$updateForXFlat(double x, CallbackInfo ci) {
+        if (!this.lattice$flatReadable) return;
+        this.valueZ0 = Mth.lerp(x, this.valueXZ00, this.valueXZ10);
+        this.valueZ1 = Mth.lerp(x, this.valueXZ01, this.valueXZ11);
+        ci.cancel();
+    }
+
+    @Inject(method = "updateForZ", at = @At("HEAD"), cancellable = true)
+    private void lattice$updateForZFlat(double z, CallbackInfo ci) {
+        if (!this.lattice$flatReadable) return;
+        this.value = Mth.lerp(z, this.valueZ0, this.valueZ1);
+        ci.cancel();
+    }
+
+    @Inject(method = "compute", at = @At("HEAD"), cancellable = true)
+    private void lattice$computeFlat(DensityFunction.FunctionContext context, CallbackInfoReturnable<Double> cir) {
+        if (!this.lattice$flatReadable) return;
+        if (context != this.this$0) {
+            cir.setReturnValue(this.noiseFiller.compute(context));
+            return;
+        }
+        NativeNoiseChunkAccess chunk = (NativeNoiseChunkAccess) (Object) this.this$0;
+        if (!chunk.lattice$interpolating()) {
+            throw new IllegalStateException("Trying to sample interpolator outside the interpolation loop");
+        }
+        if (chunk.lattice$fillingCell()) {
+            cir.setReturnValue(Mth.lerp3(
+                    (double)chunk.lattice$inCellX() / chunk.lattice$cellWidth(),
+                    (double)chunk.lattice$inCellY() / chunk.lattice$cellHeight(),
+                    (double)chunk.lattice$inCellZ() / chunk.lattice$cellWidth(),
+                    this.noise000,
+                    this.noise100,
+                    this.noise010,
+                    this.noise110,
+                    this.noise001,
+                    this.noise101,
+                    this.noise011,
+                    this.noise111));
+        } else {
+            cir.setReturnValue(this.value);
+        }
     }
 
     @Unique
@@ -80,4 +232,18 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         }
         return flat;
     }
+
+    @Unique
+    private MemorySegment lattice$ensureNativeFlatSlice(boolean slice0, int required) {
+        if (this.lattice$nativeArena == null || this.lattice$nativeFlatSize < required) {
+            if (this.lattice$nativeArena != null) this.lattice$nativeArena.close();
+            this.lattice$nativeArena = Arena.ofShared();
+            this.lattice$nativeFlatSlice0 = this.lattice$nativeArena.allocate(ValueLayout.JAVA_DOUBLE, required);
+            this.lattice$nativeFlatSlice1 = this.lattice$nativeArena.allocate(ValueLayout.JAVA_DOUBLE, required);
+            this.lattice$nativeFlatSize = required;
+            this.lattice$nativeFlatReadable = false;
+        }
+        return slice0 ? this.lattice$nativeFlatSlice0 : this.lattice$nativeFlatSlice1;
+    }
+
 }

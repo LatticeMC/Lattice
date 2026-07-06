@@ -32,6 +32,10 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     @Shadow int cellStartBlockY;
     @Shadow private int cellStartBlockZ;
     @Shadow boolean fillingCell;
+    @Shadow boolean interpolating;
+    @Shadow private int inCellX;
+    @Shadow private int inCellY;
+    @Shadow private int inCellZ;
     @Shadow long arrayInterpolationCounter;
 
     @Inject(method = "fillAllDirectly", at = @At("HEAD"), cancellable = true)
@@ -86,6 +90,19 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
         int zRow = cellZ - this.firstCellZ;
         int yRows = this.cellCountY + 1;
         int zRows = this.cellCountXZ + 1;
+        if (NativeDensityFunction.tryFillSliceNativeRow(
+                access.lattice$nativeFlatRow(isSlice0, zRow, yRows, zRows),
+                yRows,
+                interpolator.wrapped(),
+                startX,
+                this.cellNoiseMinY * this.cellHeight,
+                startZ,
+                this.cellHeight,
+                cellX,
+                cellZ)) {
+            access.lattice$markNativeFlatReadable();
+            return;
+        }
         if (NativeDensityFunction.tryFillSlice(
                 values,
                 interpolator.wrapped(),
@@ -107,6 +124,32 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
         access.lattice$copyFlatRow(isSlice0, zRow, values, yRows, zRows);
     }
 
+    @Inject(method = "fillSlice", at = @At("HEAD"), cancellable = true)
+    private void lattice$fillSliceBatchNative(boolean isSlice0, int start, CallbackInfo ci) {
+        int startX = this.cellStartBlockX;
+        int startZ = this.cellStartBlockZ;
+        int cellX = Math.floorDiv(startX, this.cellWidth);
+        int cellZ = Math.floorDiv(startZ, this.cellWidth);
+        int zRow = cellZ - this.firstCellZ;
+        int yRows = this.cellCountY + 1;
+        int zRows = this.cellCountXZ + 1;
+        if (NativeDensityFunction.tryFillSlices(
+                this.interpolators,
+                (DensityFunction.ContextProvider) (Object) this,
+                isSlice0,
+                zRow,
+                startX,
+                this.cellNoiseMinY * this.cellHeight,
+                startZ,
+                this.cellHeight,
+                cellX,
+                cellZ,
+                yRows,
+                zRows)) {
+            ci.cancel();
+        }
+    }
+
     /**
      * @author Lattice
      * @reason Fill CacheAllInCell columns through one native call per cache/X column.
@@ -126,6 +169,22 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
         int cellValueCount = this.cellWidth * this.cellHeight * this.cellWidth;
         int columnValueCount = this.cellCountXZ * this.cellCountY * cellValueCount;
         int cellOffset = (z * this.cellCountY + y) * cellValueCount;
+        if (NativeDensityFunction.tryFillCellColumns(
+                this.cellCaches,
+                (DensityFunction.ContextProvider) (Object) this,
+                this.cellStartBlockX,
+                this.firstCellZ,
+                this.cellNoiseMinY,
+                this.cellWidth,
+                this.cellHeight,
+                this.cellCountXZ,
+                this.cellCountY,
+                cellX,
+                cellOffset)) {
+            this.arrayInterpolationCounter++;
+            this.fillingCell = false;
+            return;
+        }
         for (Object cache : this.cellCaches) {
             NativeCacheAllInCellAccess access = (NativeCacheAllInCellAccess) cache;
             double[] column = access.lattice$columnValues();
@@ -213,5 +272,40 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     @Override
     public int lattice$firstCellZ() {
         return this.firstCellZ;
+    }
+
+    @Override
+    public int lattice$cellCountY() {
+        return this.cellCountY;
+    }
+
+    @Override
+    public int lattice$cellCountXZ() {
+        return this.cellCountXZ;
+    }
+
+    @Override
+    public int lattice$inCellX() {
+        return this.inCellX;
+    }
+
+    @Override
+    public int lattice$inCellY() {
+        return this.inCellY;
+    }
+
+    @Override
+    public int lattice$inCellZ() {
+        return this.inCellZ;
+    }
+
+    @Override
+    public boolean lattice$interpolating() {
+        return this.interpolating;
+    }
+
+    @Override
+    public boolean lattice$fillingCell() {
+        return this.fillingCell;
     }
 }

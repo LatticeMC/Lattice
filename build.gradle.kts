@@ -61,7 +61,7 @@ subprojects {
         options.encoding = Charsets.UTF_8.name()
         options.release = 21
         options.isFork = true
-        options.compilerArgs.addAll(listOf("-Xlint:-deprecation", "-Xlint:-removal"))
+        options.compilerArgs.addAll(listOf("-Xlint:-deprecation", "-Xlint:-removal", "--enable-preview"))
     }
     tasks.withType<Javadoc> {
         options.encoding = Charsets.UTF_8.name()
@@ -70,6 +70,7 @@ subprojects {
         filteringCharset = Charsets.UTF_8.name()
     }
     tasks.withType<Test> {
+        jvmArgs("--enable-preview", "--enable-native-access=ALL-UNNAMED")
         testLogging {
             showStackTraces = true
             exceptionFormat = TestExceptionFormat.FULL

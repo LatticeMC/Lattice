@@ -16,12 +16,12 @@ import org.slf4j.LoggerFactory;
 public final class LatticeDensityCommand extends Command {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
     private static final List<String> DENSITY_ACTIONS = List.of(
-            "status", "reset", "all", "profile", "enabled", "cell", "directCell",
+            "status", "reset", "all", "fast", "profile", "enabled", "cell", "directCell",
             "shiftedNoise", "spline", "multipointSpline", "stats", "profiling",
             "parity", "parityInterval", "surface", "heightmap");
     private static final List<String> BOOLEAN_VALUES = List.of("true", "false", "on", "off");
     private static final List<String> FULL_OPTIONS = List.of(
-            "enabled", "cell", "shiftedNoise", "spline",
+            "enabled", "cell", "directCell", "shiftedNoise", "spline",
             "multipointSpline", "surface", "heightmap");
     private static final List<String> PROFILE_OPTIONS = List.of(
             "stats", "profiling", "parity");
@@ -63,7 +63,7 @@ public final class LatticeDensityCommand extends Command {
             return true;
         }
         if (args.length == 3) {
-            if ("all".equalsIgnoreCase(args[1]) || "profile".equalsIgnoreCase(args[1])) {
+            if ("all".equalsIgnoreCase(args[1]) || "fast".equalsIgnoreCase(args[1]) || "profile".equalsIgnoreCase(args[1])) {
                 Boolean value = parseBoolean(args[2]);
                 if (value == null) {
                     sender.sendMessage("Expected true or false");
@@ -121,13 +121,26 @@ public final class LatticeDensityCommand extends Command {
     private static void applyPreset(String preset, boolean value) {
         if ("all".equalsIgnoreCase(preset)) {
             for (String option : FULL_OPTIONS) NativeDensityFunction.setOption(option, value);
+            if (value) {
+                for (String option : PROFILE_OPTIONS) NativeDensityFunction.setOption(option, false);
+            }
+        } else if ("fast".equalsIgnoreCase(preset)) {
+            NativeDensityFunction.setOption("enabled", false);
+            NativeDensityFunction.setOption("cell", false);
+            NativeDensityFunction.setOption("directCell", false);
+            NativeDensityFunction.setOption("shiftedNoise", false);
+            NativeDensityFunction.setOption("spline", false);
+            NativeDensityFunction.setOption("multipointSpline", false);
+            NativeDensityFunction.setOption("surface", value);
+            NativeDensityFunction.setOption("heightmap", value);
+            for (String option : PROFILE_OPTIONS) NativeDensityFunction.setOption(option, false);
         } else if ("profile".equalsIgnoreCase(preset)) {
             for (String option : PROFILE_OPTIONS) NativeDensityFunction.setOption(option, value);
         }
     }
 
     private static void sendUsage(CommandSender sender) {
-        sender.sendMessage("Usage: /lattice density <status|reset|all|profile|option> [true|false]");
+        sender.sendMessage("Usage: /lattice density <status|reset|all|fast|profile|option> [true|false]");
         sender.sendMessage("Options: " + String.join(", ", DENSITY_ACTIONS));
     }
 
