@@ -674,7 +674,12 @@ public final class NativeDensityFunction {
                 return nativeAddConstant(handle, (Double) invoke(function, "value"));
             }
             if (name.endsWith("DensityFunctions$BeardifierMarker")) {
-                return nativeAddConstant(handle, 0.0);
+                // This singleton is replaced by NoiseChunk.wrap(...) with the
+                // chunk-local Beardifier instance. Compiling it as constant 0
+                // is only correct before wrapping and corrupts structure terrain
+                // when it leaks into a compiled tree.
+                recordUnsupported(function);
+                return -1;
             }
             if (name.endsWith("DensityFunctions$Noise")) {
                 NativeDoublePerlinNoise noise = nativeNoiseHolderNoise(invoke(function, "noise"));
