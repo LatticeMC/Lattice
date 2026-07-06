@@ -15,9 +15,19 @@
 #include <algorithm>
 #include <cmath>
 
+#include "lattice/dispatch.hpp"
 #include "world/gen/noise/interpolated_noise.hpp"
 
 namespace lattice::world::gen::densityfunction {
+
+#if !defined(LATTICE_HAS_DENSITY_AVX2)
+bool evaluate_y_column_avx2(const NodeArena&, NodeRef,
+                            double, double, double, double,
+                            int, int, int,
+                            CacheState*, double*) noexcept {
+    return false;
+}
+#endif
 
 namespace {
 
@@ -81,6 +91,181 @@ inline double squeeze(double v) noexcept {
     // hard saturation).
     const double clamped = clamp_d(v, -1.0, 1.0);
     return clamped * 0.5 - clamped * clamped * clamped / 24.0;
+}
+
+bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
+                            const Context& base,
+                            double y0, double dy, int ny,
+                            double* out) {
+    if (root < 0 || root >= static_cast<NodeRef>(arena.nodes.size()) || !out) return false;
+    const Node& n = arena.nodes[root];
+
+    auto eval_child = [&](NodeRef child, double* dst) {
+        return evaluate_y_column_fast(arena, child, base, y0, dy, ny, dst);
+    };
+
+    switch (n.kind) {
+        case NodeKind::kConstant:
+            for (int i = 0; i < ny; ++i) out[i] = n.d0;
+            return true;
+
+        case NodeKind::kYClampedGradient:
+            for (int i = 0; i < ny; ++i) {
+                out[i] = y_clamped_gradient(n.i0, n.i1, n.d0, n.d1, y0 + static_cast<double>(i) * dy);
+            }
+            return true;
+
+        case NodeKind::kBlendAlpha:
+            for (int i = 0; i < ny; ++i) out[i] = 1.0;
+            return true;
+
+        case NodeKind::kBlendOffset:
+            for (int i = 0; i < ny; ++i) out[i] = 0.0;
+            return true;
+
+        case NodeKind::kNoise:
+            if (!n.noise_ptr) {
+                for (int i = 0; i < ny; ++i) out[i] = 0.0;
+                return true;
+            }
+            for (int i = 0; i < ny; ++i) {
+                const double y = y0 + static_cast<double>(i) * dy;
+                out[i] = noise::sample(*n.noise_ptr, base.x * n.d0, y * n.d1, base.z * n.d0);
+            }
+            return true;
+
+        case NodeKind::kShiftA: {
+            const double value = n.noise_ptr ? noise::sample(*n.noise_ptr, base.x * 0.25, 0.0, base.z * 0.25) * 4.0 : 0.0;
+            for (int i = 0; i < ny; ++i) out[i] = value;
+            return true;
+        }
+
+        case NodeKind::kShiftB: {
+            const double value = n.noise_ptr ? noise::sample(*n.noise_ptr, base.z * 0.25, base.x * 0.25, 0.0) * 4.0 : 0.0;
+            for (int i = 0; i < ny; ++i) out[i] = value;
+            return true;
+        }
+
+        case NodeKind::kShift:
+            if (!n.noise_ptr) {
+                for (int i = 0; i < ny; ++i) out[i] = 0.0;
+                return true;
+            }
+            for (int i = 0; i < ny; ++i) {
+                const double y = y0 + static_cast<double>(i) * dy;
+                out[i] = noise::sample(*n.noise_ptr, base.x * 0.25, y * 0.25, base.z * 0.25) * 4.0;
+            }
+            return true;
+
+        case NodeKind::kAbs:
+        case NodeKind::kSquare:
+        case NodeKind::kCube:
+        case NodeKind::kHalfNegative:
+        case NodeKind::kQuarterNegative:
+        case NodeKind::kInvert:
+        case NodeKind::kSqueeze:
+        case NodeKind::kClamp:
+        case NodeKind::kBlendDensity: {
+            std::vector<double> values(static_cast<std::size_t>(ny));
+            if (!eval_child(n.a, values.data())) return false;
+            for (int i = 0; i < ny; ++i) {
+                const double v = values[static_cast<std::size_t>(i)];
+                switch (n.kind) {
+                    case NodeKind::kAbs: out[i] = std::abs(v); break;
+                    case NodeKind::kSquare: out[i] = v * v; break;
+                    case NodeKind::kCube: out[i] = v * v * v; break;
+                    case NodeKind::kHalfNegative: out[i] = half_negative(v); break;
+                    case NodeKind::kQuarterNegative: out[i] = quarter_negative(v); break;
+                    case NodeKind::kInvert: out[i] = 1.0 / v; break;
+                    case NodeKind::kSqueeze: out[i] = squeeze(v); break;
+                    case NodeKind::kClamp: out[i] = clamp_d(v, n.d0, n.d1); break;
+                    case NodeKind::kBlendDensity: out[i] = v; break;
+                    default: return false;
+                }
+            }
+            return true;
+        }
+
+        case NodeKind::kAdd:
+        case NodeKind::kMul:
+        case NodeKind::kMin:
+        case NodeKind::kMax: {
+            std::vector<double> left(static_cast<std::size_t>(ny));
+            if (!eval_child(n.a, left.data())) return false;
+            if (n.a == n.b) {
+                for (int i = 0; i < ny; ++i) {
+                    const double v = left[static_cast<std::size_t>(i)];
+                    switch (n.kind) {
+                        case NodeKind::kAdd: out[i] = v + v; break;
+                        case NodeKind::kMul: out[i] = v * v; break;
+                        case NodeKind::kMin:
+                        case NodeKind::kMax: out[i] = v; break;
+                        default: return false;
+                    }
+                }
+                return true;
+            }
+            std::vector<double> right(static_cast<std::size_t>(ny));
+            if (!eval_child(n.b, right.data())) return false;
+            for (int i = 0; i < ny; ++i) {
+                const double a = left[static_cast<std::size_t>(i)];
+                const double b = right[static_cast<std::size_t>(i)];
+                switch (n.kind) {
+                    case NodeKind::kAdd: out[i] = a + b; break;
+                    case NodeKind::kMul: out[i] = a == 0.0 ? 0.0 : a * b; break;
+                    case NodeKind::kMin: out[i] = std::min(a, b); break;
+                    case NodeKind::kMax: out[i] = std::max(a, b); break;
+                    default: return false;
+                }
+            }
+            return true;
+        }
+
+        case NodeKind::kMapRange: {
+            std::vector<double> input(static_cast<std::size_t>(ny));
+            if (!eval_child(n.a, input.data())) return false;
+            for (int i = 0; i < ny; ++i) out[i] = map_range(input[static_cast<std::size_t>(i)], n.d0, n.d1, n.d2, n.d3);
+            return true;
+        }
+
+        case NodeKind::kRangeChoice: {
+            std::vector<double> input(static_cast<std::size_t>(ny));
+            std::vector<double> in_values(static_cast<std::size_t>(ny));
+            std::vector<double> out_values(static_cast<std::size_t>(ny));
+            if (!eval_child(n.a, input.data())) return false;
+            if (!eval_child(n.b, in_values.data())) return false;
+            if (!eval_child(n.c, out_values.data())) return false;
+            for (int i = 0; i < ny; ++i) {
+                const double value = input[static_cast<std::size_t>(i)];
+                out[i] = value >= n.d0 && value < n.d1 ? in_values[static_cast<std::size_t>(i)] : out_values[static_cast<std::size_t>(i)];
+            }
+            return true;
+        }
+
+        case NodeKind::kShiftedNoise: {
+            if (!n.noise_ptr) {
+                for (int i = 0; i < ny; ++i) out[i] = 0.0;
+                return true;
+            }
+            std::vector<double> sx(static_cast<std::size_t>(ny));
+            std::vector<double> sy(static_cast<std::size_t>(ny));
+            std::vector<double> sz(static_cast<std::size_t>(ny));
+            if (!eval_child(n.a, sx.data())) return false;
+            if (!eval_child(n.b, sy.data())) return false;
+            if (!eval_child(n.c, sz.data())) return false;
+            for (int i = 0; i < ny; ++i) {
+                const double y = y0 + static_cast<double>(i) * dy;
+                out[i] = noise::sample(*n.noise_ptr,
+                                       base.x * n.d0 + sx[static_cast<std::size_t>(i)],
+                                       y * n.d1 + sy[static_cast<std::size_t>(i)],
+                                       base.z * n.d0 + sz[static_cast<std::size_t>(i)]);
+            }
+            return true;
+        }
+
+        default:
+            return false;
+    }
 }
 
 // ---- Spline evaluation ----------------------------------------------------
@@ -602,6 +787,37 @@ void evaluate_grid(const NodeArena& arena, NodeRef root,
                 row[ix]   = evaluate(arena, root, ctx);
             }
         }
+    }
+}
+
+void evaluate_y_column(const NodeArena& arena, NodeRef root,
+                       double x, double y0, double z, double dy,
+                       int cellX, int cellZ,
+                       int ny,
+                       CacheState* cache,
+                       double* out) noexcept {
+    if (!out || ny <= 0) return;
+    if (root < 0) {
+        for (int i = 0; i < ny; ++i) out[i] = 0.0;
+        return;
+    }
+
+    Context ctx{};
+    ctx.cache = cache;
+    ctx.x = x;
+    ctx.z = z;
+    ctx.cellX = cellX;
+    ctx.cellZ = cellZ;
+#if defined(LATTICE_HAS_DENSITY_AVX2)
+    if (lattice::cpu::features().avx2
+        && evaluate_y_column_avx2(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) {
+        return;
+    }
+#endif
+    if (evaluate_y_column_fast(arena, root, ctx, y0, dy, ny, out)) return;
+    for (int iy = 0; iy < ny; ++iy) {
+        ctx.y = y0 + static_cast<double>(iy) * dy;
+        out[iy] = evaluate(arena, root, ctx);
     }
 }
 

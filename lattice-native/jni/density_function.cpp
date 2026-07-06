@@ -550,8 +550,51 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateGrid(
                       static_cast<int>(nx),
                       static_cast<int>(ny),
                       static_cast<int>(nz),
-                       cache,
-                       reinterpret_cast<double*>(buf.data()));
+                        cache,
+                        reinterpret_cast<double*>(buf.data()));
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle, jlong cacheHandle,
+        jdouble x, jdouble y0, jdouble z, jdouble dy,
+        jint cellX, jint cellZ,
+        jint ny,
+        jdoubleArray out) {
+    auto* a = arena_from(handle);
+    if (!a) {
+        lattice::jni::throw_illegal_state(env, "lattice density: null arena");
+        return;
+    }
+    if (!out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null column output array");
+        return;
+    }
+    if (ny <= 0) return;
+
+    lattice::jni::CriticalDoubleArray buf{env, out};
+    if (!buf) {
+        lattice::jni::throw_illegal_state(env, "lattice density: column array critical lock failed");
+        return;
+    }
+    if (static_cast<long long>(buf.size()) < static_cast<long long>(ny)) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: column output array too small");
+        return;
+    }
+
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (cache) cache->clear();
+    df::evaluate_y_column(*a, a->root,
+                          static_cast<double>(x),
+                          static_cast<double>(y0),
+                          static_cast<double>(z),
+                          static_cast<double>(dy),
+                          static_cast<int>(cellX),
+                          static_cast<int>(cellZ),
+                          static_cast<int>(ny),
+                          cache,
+                          reinterpret_cast<double*>(buf.data()));
 }
 
 JNIEXPORT void JNICALL

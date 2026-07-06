@@ -33,11 +33,15 @@ public final class NativeDensityFunction {
     private static volatile int PARITY_INTERVAL = Integer.getInteger("lattice.nativeDensityFunctionParityInterval", 1024);
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
+    private static final Map<DensityFunction, NativeDensityFunction> DIRECT_CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, Boolean> FAILED_COMPILES = new WeakHashMap<>();
+    private static final Map<DensityFunction, Boolean> FAILED_DIRECT_COMPILES = new WeakHashMap<>();
     private static final ConcurrentHashMap<Class<?>, Boolean> BYPASSED_ROOT_CLASSES = new ConcurrentHashMap<>();
     private static final ThreadLocal<LastCompile> LAST_COMPILE = new ThreadLocal<>();
+    private static final ThreadLocal<LastCompile> LAST_DIRECT_COMPILE = new ThreadLocal<>();
     private static final ThreadLocal<LastCompile> LAST_CELL_COMPILE = new ThreadLocal<>();
     private static final ThreadLocal<LastCellBypass> LAST_CELL_BYPASS = new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> BYPASS_FILL_ALL_DIRECTLY = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private static final Object FAILED_COMPILE_SENTINEL = new Object();
     private static final ThreadLocal<IdentityHashMap<DensityFunction, Object>> THREAD_COMPILE_CACHE = ThreadLocal.withInitial(IdentityHashMap::new);
     private static final ThreadLocal<Integer> THREAD_COMPILE_CACHE_EPOCH = ThreadLocal.withInitial(() -> -1);
@@ -116,7 +120,7 @@ public final class NativeDensityFunction {
         NativeDensityFunction compiled = tryCompile(function);
         if (compiled == null) return false;
         try {
-            nativeEvaluateGrid(compiled.handle, compiled.cacheHandle, x, y0, z, 1.0, dy, 1.0, cellX, cellZ, 1, values.length, 1, values);
+            nativeEvaluateYColumn(compiled.handle, compiled.cacheHandle, x, y0, z, dy, cellX, cellZ, values.length, values);
             if (stats) SLICE_SUCCESS.increment();
             if (profiling) SLICE_NANOS.add(System.nanoTime() - start);
             return true;
@@ -137,7 +141,7 @@ public final class NativeDensityFunction {
                                        int cellCountY,
                                        int cellX,
                                        int cellZ,
-                                      int localCellY,
+                                       int localCellY,
                                       int localCellZ) {
         return tryFillCell(values, function, cellStartBlockX, cellStartBlockY, cellStartBlockZ, cellWidth, cellHeight, cellCountXZ, cellCountY, cellX, cellZ, localCellY, localCellZ, true);
     }
@@ -157,6 +161,20 @@ public final class NativeDensityFunction {
                                             int localCellZ) {
         if (!DIRECT_CELL_ENABLED || !CELL_ENABLED) return false;
         return tryFillCell(values, function, cellStartBlockX, cellStartBlockY, cellStartBlockZ, cellWidth, cellHeight, cellCountXZ, cellCountY, cellX, cellZ, localCellY, localCellZ, false);
+    }
+
+    public static boolean bypassFillAllDirectly() {
+        return BYPASS_FILL_ALL_DIRECTLY.get().booleanValue();
+    }
+
+    public static void runWithFillAllDirectlyBypass(Runnable action) {
+        boolean previous = BYPASS_FILL_ALL_DIRECTLY.get().booleanValue();
+        BYPASS_FILL_ALL_DIRECTLY.set(Boolean.TRUE);
+        try {
+            action.run();
+        } finally {
+            BYPASS_FILL_ALL_DIRECTLY.set(Boolean.valueOf(previous));
+        }
     }
 
     public static boolean tryFillCellColumn(double[] values,
@@ -230,7 +248,7 @@ public final class NativeDensityFunction {
         if (!ENABLED) return false;
         boolean stats = STATS_ENABLED;
         boolean profiling = PROFILING_ENABLED;
-        if (!CELL_ENABLED) {
+        if (highLevel && !CELL_ENABLED) {
             if (stats) CELL_SKIP_DISABLED.increment();
             return false;
         }
@@ -249,7 +267,7 @@ public final class NativeDensityFunction {
             maybeLogStats();
         }
         long start = profiling ? System.nanoTime() : 0L;
-        NativeDensityFunction compiled = tryCompileCell(function);
+        NativeDensityFunction compiled = highLevel ? tryCompileCell(function) : tryCompileDirect(function);
         if (compiled == null) {
             if (stats) CELL_SKIP_COMPILE_NULL.increment();
             return false;
@@ -281,8 +299,7 @@ public final class NativeDensityFunction {
                         values);
             } else {
                 nativeClearCache(compiled.cacheHandle);
-                compiled.syncInterpolatorColumn(cellStartBlockX, cellCountXZ, cellCountY);
-                nativeEvaluateInterpolatedCell(
+                nativeEvaluateCell(
                         compiled.handle,
                         compiled.cacheHandle,
                         cellStartBlockX,
@@ -290,8 +307,6 @@ public final class NativeDensityFunction {
                         cellStartBlockZ,
                         cellX,
                         cellZ,
-                        localCellY,
-                        localCellZ,
                         cellWidth,
                         cellHeight,
                         compiled.cacheAllInCellValues,
@@ -361,6 +376,50 @@ public final class NativeDensityFunction {
             }
             LAST_COMPILE.set(new LastCompile(function, compiled));
             threadCache.put(function, compileCacheValue(compiled));
+            return compiled;
+        }
+    }
+
+    private static NativeDensityFunction tryCompileDirect(DensityFunction function) {
+        if (!LatticeNative.isLoaded() || function == null) return null;
+        LastCompile last = LAST_DIRECT_COMPILE.get();
+        if (last != null && last.function() == function) return last.compiled();
+        synchronized (DIRECT_CACHE) {
+            NativeDensityFunction cached = DIRECT_CACHE.get(function);
+            if (cached != null) {
+                LAST_DIRECT_COMPILE.set(new LastCompile(function, cached));
+                return cached;
+            }
+            if (FAILED_DIRECT_COMPILES.containsKey(function)) {
+                LAST_DIRECT_COMPILE.set(new LastCompile(function, null));
+                return null;
+            }
+        }
+
+        if (STATS_ENABLED) COMPILE_ATTEMPTS.increment();
+        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
+        NativeDensityFunction compiled = compileNew(function, true);
+        if (PROFILING_ENABLED) COMPILE_NANOS.add(System.nanoTime() - start);
+
+        synchronized (DIRECT_CACHE) {
+            NativeDensityFunction cached = DIRECT_CACHE.get(function);
+            if (cached != null) {
+                if (compiled != null) compiled.destroyNow();
+                LAST_DIRECT_COMPILE.set(new LastCompile(function, cached));
+                return cached;
+            }
+            if (FAILED_DIRECT_COMPILES.containsKey(function)) {
+                if (compiled != null) compiled.destroyNow();
+                LAST_DIRECT_COMPILE.set(new LastCompile(function, null));
+                return null;
+            }
+            if (compiled != null) {
+                if (STATS_ENABLED) COMPILE_SUCCESS.increment();
+                DIRECT_CACHE.put(function, compiled);
+            } else {
+                FAILED_DIRECT_COMPILES.put(function, Boolean.TRUE);
+            }
+            LAST_DIRECT_COMPILE.set(new LastCompile(function, compiled));
             return compiled;
         }
     }
@@ -454,12 +513,16 @@ public final class NativeDensityFunction {
     }
 
     private static NativeDensityFunction compileNew(DensityFunction function) {
+        return compileNew(function, false);
+    }
+
+    private static NativeDensityFunction compileNew(DensityFunction function, boolean directCell) {
         long handle = 0L;
         long cacheHandle = 0L;
         try {
             handle = nativeCreate();
             if (handle == 0L) return null;
-            Compiler compiler = new Compiler(handle, function);
+            Compiler compiler = new Compiler(handle, function, directCell);
             int root = compiler.compile(function);
             if (root < 0) return null;
             nativeSetRoot(handle, root);
@@ -706,14 +769,16 @@ public final class NativeDensityFunction {
     private static final class Compiler {
         private final long handle;
         private final DensityFunction root;
+        private final boolean directCell;
         private final Map<DensityFunction, Integer> refs = new IdentityHashMap<>();
         private final List<InterpolatorBinding> interpolators = new ArrayList<>();
         private final List<CacheAllInCellBinding> cacheAllInCellBindings = new ArrayList<>();
         private boolean clearsCachePerCell;
 
-        private Compiler(long handle, DensityFunction root) {
+        private Compiler(long handle, DensityFunction root, boolean directCell) {
             this.handle = handle;
             this.root = root;
+            this.directCell = directCell;
         }
 
         private int compile(DensityFunction function) {
@@ -800,6 +865,7 @@ public final class NativeDensityFunction {
             if (name.contains("NoiseChunk$NoiseInterpolator")) {
                 int input = compile((DensityFunction) invoke(function, "wrapped"));
                 if (input < 0) return -1;
+                if (directCell) return input;
                 if (!(function instanceof NativeNoiseInterpolatorAccess access)) return -1;
                 int ref = nativeAddInterpolated(handle, input);
                 if (ref >= 0) {
@@ -876,8 +942,10 @@ public final class NativeDensityFunction {
             }
             if (name.endsWith("DensityFunctions$BlendAlpha")) return nativeAddBlendAlpha(handle);
             if (name.endsWith("DensityFunctions$BlendOffset")) return nativeAddBlendOffset(handle);
-            if (name.contains("NoiseChunk$BlendAlpha")) return nativeAddBlendAlpha(handle);
-            if (name.contains("NoiseChunk$BlendOffset")) return nativeAddBlendOffset(handle);
+            if (name.contains("NoiseChunk$BlendAlpha") || name.contains("NoiseChunk$BlendOffset")) {
+                recordUnsupported(function);
+                return -1;
+            }
             if (name.endsWith("DensityFunctions$BlendDensity")) {
                 int input = compile((DensityFunction) invoke(function, "input"));
                 return input < 0 ? -1 : nativeAddBlendDensity(handle, input);
@@ -958,6 +1026,7 @@ public final class NativeDensityFunction {
     private static native void nativeDestroyCache(long cacheHandle);
     private static native void nativeClearCache(long cacheHandle);
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
+    private static native void nativeEvaluateYColumn(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] out);
     private static native void nativeEvaluateCell(long handle, long cacheHandle, double x0, double yTop, double z0, int cellX, int cellZ, int cellWidth, int cellHeight, double[][] cacheAllInCellValues, double[] out);
     private static native void nativeEvaluateInterpolatedCell(long handle, long cacheHandle, double x0, double yTop, double z0, int cellX, int cellZ, int localCellY, int localCellZ, int cellWidth, int cellHeight, double[][] cacheAllInCellValues, double[] out);
     private static native void nativeEvaluateInterpolatedColumn(long handle, long cacheHandle, double x0, double z0, double yMin, int cellX, int firstCellZ, int cellWidth, int cellHeight, int cellCountXZ, int cellCountY, double[][] cacheAllInCellValues, double[] out);

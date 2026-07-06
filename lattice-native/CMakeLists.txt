@@ -324,6 +324,19 @@ target_sources(lattice PRIVATE
     jni/beardifier.cpp
 )
 
+if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
+    target_compile_definitions(lattice PRIVATE LATTICE_HAS_DENSITY_AVX2=1)
+    if(MSVC)
+        lattice_add_simd_object(lattice_density_function_avx2
+            SOURCES src/world/gen/densityfunction/density_function_avx2.cpp
+            FLAGS   /arch:AVX2)
+    else()
+        lattice_add_simd_object(lattice_density_function_avx2
+            SOURCES src/world/gen/densityfunction/density_function_avx2.cpp
+            FLAGS   -mavx2)
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Module: MaterialRules evaluator (Worldgen-5): SurfaceBuilder's rule tree.
 # ---------------------------------------------------------------------------

@@ -578,6 +578,20 @@ void evaluate_grid(const NodeArena& arena, NodeRef root,
                    CacheState* cache,
                    double* out) noexcept;
 
+void evaluate_y_column(const NodeArena& arena, NodeRef root,
+                       double x, double y0, double z, double dy,
+                       int cellX, int cellZ,
+                       int ny,
+                       CacheState* cache,
+                       double* out) noexcept;
+
+bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
+                            double x, double y0, double z, double dy,
+                            int cellX, int cellZ,
+                            int ny,
+                            CacheState* cache,
+                            double* out) noexcept;
+
 // ---- Interpolator operations (Mojang's DensityInterpolator API) --------
 //
 // These mirror the ChunkNoiseSampler methods that drive the interpolation
