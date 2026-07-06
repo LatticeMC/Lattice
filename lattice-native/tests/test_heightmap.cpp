@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "lattice/dispatch.hpp"
 #include "world/heightmap/heightmap_scan.hpp"
 
 using namespace lattice::world::heightmap;
@@ -27,6 +28,19 @@ TEST_CASE("heightmap: single all-passing section tops out at section_top") {
     CHECK(n == kColumnCount);
     // Each column should report y = section_base_y + 15 = 15.
     for (int i = 0; i < kColumnCount; ++i) CHECK(out[i] == 15);
+}
+
+TEST_CASE("heightmap: dispatcher matches scalar for all-passing default section") {
+    std::uint64_t mask[1] = {1ULL};
+    SectionView sv{};
+    sv.passing_mask = mask;
+
+    std::int32_t scalar[kColumnCount];
+    std::int32_t dispatched[kColumnCount];
+    auto ns = populate_scalar(&sv, 1, -64, 1, -65, scalar);
+    auto nd = populate(&sv, 1, -64, 1, -65, dispatched);
+    CHECK(nd == ns);
+    for (int i = 0; i < kColumnCount; ++i) CHECK(dispatched[i] == scalar[i]);
 }
 
 TEST_CASE("heightmap: top section all-air, lower section all-passing") {
@@ -84,6 +98,98 @@ TEST_CASE("heightmap: explicit storage with mixed palette") {
         }
     }
 }
+
+TEST_CASE("heightmap: dispatcher matches scalar for mixed palette") {
+    constexpr int kBits = 4;
+    constexpr int kEpl = 64 / kBits;
+    constexpr int kCellsPerSection = 16 * 16 * 16;
+    constexpr int kLongs = kCellsPerSection / kEpl;
+    std::vector<std::uint64_t> storage(kLongs * 2, 0);
+
+    auto set_cell = [&](int section, int y, int z, int x, int palIdx) {
+        const int idx = (y * 16 + z) * 16 + x;
+        const int li = section * kLongs + idx / kEpl;
+        const int bi = (idx % kEpl) * kBits;
+        storage[li] &= ~(std::uint64_t{0xF} << bi);
+        storage[li] |= (std::uint64_t(palIdx & 0xF) << bi);
+    };
+
+    for (int section = 0; section < 2; ++section) {
+        for (int y = 0; y < 16; ++y) {
+            for (int z = 0; z < 16; ++z) {
+                for (int x = 0; x < 16; ++x) {
+                    set_cell(section, y, z, x, (x + z + y + section) & 3);
+                }
+            }
+        }
+    }
+
+    std::uint64_t mask[1] = {0b1010ULL};
+    SectionView sv[2]{};
+    sv[0].storage = storage.data();
+    sv[0].storage_longs = kLongs;
+    sv[0].element_bits = kBits;
+    sv[0].passing_mask = mask;
+    sv[1].storage = storage.data() + kLongs;
+    sv[1].storage_longs = kLongs;
+    sv[1].element_bits = kBits;
+    sv[1].passing_mask = mask;
+
+    std::int32_t scalar[kColumnCount];
+    std::int32_t dispatched[kColumnCount];
+    auto ns = populate_scalar(sv, 2, -64, 1, -65, scalar);
+    auto nd = populate(sv, 2, -64, 1, -65, dispatched);
+    CHECK(nd == ns);
+    for (int i = 0; i < kColumnCount; ++i) CHECK(dispatched[i] == scalar[i]);
+}
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+TEST_CASE("heightmap: avx2 4-bit path matches scalar for mixed palette") {
+    if (!lattice::cpu::initialize().avx2) return;
+
+    constexpr int kBits = 4;
+    constexpr int kEpl = 64 / kBits;
+    constexpr int kCellsPerSection = 16 * 16 * 16;
+    constexpr int kLongs = kCellsPerSection / kEpl;
+    std::vector<std::uint64_t> storage(kLongs * 3, 0);
+
+    auto set_cell = [&](int section, int y, int z, int x, int palIdx) {
+        const int idx = (y * 16 + z) * 16 + x;
+        const int li = section * kLongs + idx / kEpl;
+        const int bi = (idx % kEpl) * kBits;
+        storage[li] &= ~(std::uint64_t{0xF} << bi);
+        storage[li] |= (std::uint64_t(palIdx & 0xF) << bi);
+    };
+
+    for (int section = 0; section < 3; ++section) {
+        for (int y = 0; y < 16; ++y) {
+            for (int z = 0; z < 16; ++z) {
+                for (int x = 0; x < 16; ++x) {
+                    set_cell(section, y, z, x, (x * 3 + z * 5 + y + section) & 0xF);
+                }
+            }
+        }
+    }
+
+    std::uint64_t mask[1] = {0};
+    for (int pal : {1, 3, 6, 9, 12, 15}) mask[0] |= std::uint64_t{1} << pal;
+
+    SectionView sv[3]{};
+    for (int section = 0; section < 3; ++section) {
+        sv[section].storage = storage.data() + section * kLongs;
+        sv[section].storage_longs = kLongs;
+        sv[section].element_bits = kBits;
+        sv[section].passing_mask = mask;
+    }
+
+    std::int32_t scalar[kColumnCount];
+    std::int32_t avx2[kColumnCount];
+    auto ns = populate_scalar(sv, 3, -64, 1, -65, scalar);
+    auto na = populate_avx2(sv, 3, -64, 1, -65, avx2);
+    CHECK(na == ns);
+    for (int i = 0; i < kColumnCount; ++i) CHECK(avx2[i] == scalar[i]);
+}
+#endif
 
 TEST_CASE("heightmap: palette index above 255 is respected") {
     constexpr int kBits = 9;

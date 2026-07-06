@@ -537,6 +537,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateGrid(
     }
 
     auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (cache) cache->clear();
     df::evaluate_grid(*a, a->root,
                       static_cast<double>(x0),
                       static_cast<double>(y0),

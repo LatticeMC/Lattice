@@ -20,15 +20,17 @@ public abstract class NoiseChunkSliceProviderMixin {
         NativeNoiseChunkAccess chunk = (NativeNoiseChunkAccess) this.this$0;
         int cellWidth = chunk.lattice$cellWidth();
         int cellHeight = chunk.lattice$cellHeight();
+        int startX = chunk.lattice$cellStartBlockX();
+        int startZ = chunk.lattice$cellStartBlockZ();
         if (NativeDensityFunction.tryFillSlice(
                 values,
                 function,
-                chunk.lattice$cellStartBlockX(),
+                startX,
                 chunk.lattice$cellNoiseMinY() * cellHeight,
-                chunk.lattice$cellStartBlockZ(),
+                startZ,
                 cellHeight,
-                Math.floorDiv(chunk.lattice$cellStartBlockX(), cellWidth),
-                Math.floorDiv(chunk.lattice$cellStartBlockZ(), cellWidth))) {
+                Math.floorDiv(startX, cellWidth),
+                Math.floorDiv(startZ, cellWidth))) {
             ci.cancel();
         }
     }

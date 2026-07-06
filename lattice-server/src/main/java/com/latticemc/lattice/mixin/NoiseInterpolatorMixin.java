@@ -29,16 +29,6 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
     }
 
     @Override
-    public double[][] lattice$slice0() {
-        return this.slice0;
-    }
-
-    @Override
-    public double[][] lattice$slice1() {
-        return this.slice1;
-    }
-
-    @Override
     public double[] lattice$flatSlice0() {
         return this.lattice$ensureFlatSlice(true);
     }
@@ -49,8 +39,8 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
     }
 
     @Override
-    public void lattice$copyFlatRow(boolean slice0, int zRow, double[] values, int yRows) {
-        double[] flat = this.lattice$ensureFlatSlice(slice0);
+    public void lattice$copyFlatRow(boolean slice0, int zRow, double[] values, int yRows, int zRows) {
+        double[] flat = this.lattice$ensureFlatSlice(slice0, yRows * zRows);
         System.arraycopy(values, 0, flat, zRow * yRows, yRows);
     }
 
@@ -74,7 +64,11 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         double[][] slice = slice0 ? this.slice0 : this.slice1;
         int zRows = slice.length;
         int yRows = zRows == 0 ? 0 : slice[0].length;
-        int required = zRows * yRows;
+        return this.lattice$ensureFlatSlice(slice0, zRows * yRows);
+    }
+
+    @Unique
+    private double[] lattice$ensureFlatSlice(boolean slice0, int required) {
         double[] flat = slice0 ? this.lattice$flatSlice0 : this.lattice$flatSlice1;
         if (flat == null || flat.length < required) {
             flat = new double[required];

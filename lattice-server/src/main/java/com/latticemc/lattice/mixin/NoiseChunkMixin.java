@@ -37,14 +37,16 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     @Inject(method = "fillAllDirectly", at = @At("HEAD"), cancellable = true)
     private void lattice$fillCellNative(double[] values, DensityFunction function, CallbackInfo ci) {
         if (!this.fillingCell) return;
-        int cellX = Math.floorDiv(this.cellStartBlockX, this.cellWidth);
-        int cellZ = Math.floorDiv(this.cellStartBlockZ, this.cellWidth);
+        int startX = this.cellStartBlockX;
+        int startZ = this.cellStartBlockZ;
+        int cellX = Math.floorDiv(startX, this.cellWidth);
+        int cellZ = Math.floorDiv(startZ, this.cellWidth);
         if (NativeDensityFunction.tryFillCellDirect(
                 values,
                 function,
-                this.cellStartBlockX,
+                startX,
                 this.cellStartBlockY,
-                this.cellStartBlockZ,
+                startZ,
                 this.cellWidth,
                 this.cellHeight,
                 this.cellCountXZ,
@@ -70,41 +72,37 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
             )
     )
     private void lattice$fillInterpolatorSliceNative(NoiseChunk.NoiseInterpolator interpolator,
-                                                       double[] values,
-                                                       DensityFunction.ContextProvider contextProvider) {
+                                                        double[] values,
+                                                        DensityFunction.ContextProvider contextProvider,
+                                                        boolean isSlice0,
+                                                        int start) {
         NativeNoiseInterpolatorAccess access = (NativeNoiseInterpolatorAccess) (Object) interpolator;
-        int zRow = Math.floorDiv(this.cellStartBlockZ, this.cellWidth) - this.firstCellZ;
+        int startX = this.cellStartBlockX;
+        int startZ = this.cellStartBlockZ;
+        int cellX = Math.floorDiv(startX, this.cellWidth);
+        int cellZ = Math.floorDiv(startZ, this.cellWidth);
+        int zRow = cellZ - this.firstCellZ;
+        int yRows = this.cellCountY + 1;
+        int zRows = this.cellCountXZ + 1;
         if (NativeDensityFunction.tryFillSlice(
                 values,
                 interpolator.wrapped(),
-                this.cellStartBlockX,
+                startX,
                 this.cellNoiseMinY * this.cellHeight,
-                this.cellStartBlockZ,
+                startZ,
                 this.cellHeight,
-                Math.floorDiv(this.cellStartBlockX, this.cellWidth),
-                Math.floorDiv(this.cellStartBlockZ, this.cellWidth))) {
+                cellX,
+                cellZ)) {
             if (NativeDensityFunction.shouldCheckParity()) {
                 double[] javaValues = new double[values.length];
                 interpolator.fillArray(javaValues, contextProvider);
                 NativeDensityFunction.recordParity("slice", interpolator.wrapped(), values, javaValues);
             }
-            lattice$copyInterpolatorFlatRow(access, values, zRow);
+            access.lattice$copyFlatRow(isSlice0, zRow, values, yRows, zRows);
             return;
         }
         interpolator.fillArray(values, contextProvider);
-        lattice$copyInterpolatorFlatRow(access, values, zRow);
-    }
-
-    private void lattice$copyInterpolatorFlatRow(NativeNoiseInterpolatorAccess access, double[] values, int zRow) {
-        double[][] slice0 = access.lattice$slice0();
-        if (zRow >= 0 && zRow < slice0.length && slice0[zRow] == values) {
-            access.lattice$copyFlatRow(true, zRow, values, this.cellCountY + 1);
-            return;
-        }
-        double[][] slice1 = access.lattice$slice1();
-        if (zRow >= 0 && zRow < slice1.length && slice1[zRow] == values) {
-            access.lattice$copyFlatRow(false, zRow, values, this.cellCountY + 1);
-        }
+        access.lattice$copyFlatRow(isSlice0, zRow, values, yRows, zRows);
     }
 
     /**
@@ -147,8 +145,6 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                         cellX)) {
                     access.lattice$setColumnCellX(cellX);
                 } else {
-                    access.lattice$setColumnValues(column);
-                    access.lattice$setColumnCellX(cellX);
                     access.lattice$noiseFiller().fillArray(access.lattice$values(), (DensityFunction.ContextProvider) (Object) this);
                     continue;
                 }

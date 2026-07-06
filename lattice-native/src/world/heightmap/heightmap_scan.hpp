@@ -65,6 +65,29 @@ struct SectionView {
     const std::uint64_t* passing_mask = nullptr;
 };
 
+namespace detail {
+
+using MaskAnyFn = bool (*)(const std::uint64_t* mask, std::size_t mask_longs) noexcept;
+using FillDefaultSectionFn = std::size_t (*)(std::uint64_t* remaining,
+                                             std::int32_t* out_heights,
+                                             std::int32_t y) noexcept;
+
+bool mask_any_scalar(const std::uint64_t* mask, std::size_t mask_longs) noexcept;
+std::size_t fill_default_section_scalar(std::uint64_t* remaining,
+                                        std::int32_t* out_heights,
+                                        std::int32_t y) noexcept;
+
+std::size_t populate_with_mask_any(const SectionView* sections,
+                                   std::size_t section_count,
+                                   int section_base_y,
+                                   std::size_t mask_longs,
+                                   int default_height,
+                                   std::int32_t* out_heights,
+                                   MaskAnyFn mask_any_fn,
+                                   FillDefaultSectionFn fill_default_section_fn) noexcept;
+
+} // namespace detail
+
 /**
  * Scan a stack of sections from the topmost down, filling
  * `out_heights[0..256)` with the world-Y of the highest passing cell
@@ -83,11 +106,38 @@ struct SectionView {
  *
  * Returns the number of columns that found a passing cell (0..256).
  */
+std::size_t populate_scalar(const SectionView* sections,
+                            std::size_t section_count,
+                            int section_base_y,
+                            std::size_t mask_longs,
+                            int default_height,
+                            std::int32_t* out_heights) noexcept;
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+std::size_t populate_avx2(const SectionView* sections,
+                          std::size_t section_count,
+                          int section_base_y,
+                          std::size_t mask_longs,
+                          int default_height,
+                          std::int32_t* out_heights) noexcept;
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+std::size_t populate_neon(const SectionView* sections,
+                          std::size_t section_count,
+                          int section_base_y,
+                          std::size_t mask_longs,
+                          int default_height,
+                          std::int32_t* out_heights) noexcept;
+#endif
+
 std::size_t populate(const SectionView* sections,
                      std::size_t section_count,
                      int section_base_y,
                      std::size_t mask_longs,
                      int default_height,
                      std::int32_t* out_heights) noexcept;
+
+void init_heightmap_dispatch() noexcept;
 
 } // namespace lattice::world::heightmap

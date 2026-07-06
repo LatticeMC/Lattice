@@ -38,6 +38,10 @@ public final class NativeDensityFunction {
     private static final ThreadLocal<LastCompile> LAST_COMPILE = new ThreadLocal<>();
     private static final ThreadLocal<LastCompile> LAST_CELL_COMPILE = new ThreadLocal<>();
     private static final ThreadLocal<LastCellBypass> LAST_CELL_BYPASS = new ThreadLocal<>();
+    private static final Object FAILED_COMPILE_SENTINEL = new Object();
+    private static final ThreadLocal<IdentityHashMap<DensityFunction, Object>> THREAD_COMPILE_CACHE = ThreadLocal.withInitial(IdentityHashMap::new);
+    private static final ThreadLocal<Integer> THREAD_COMPILE_CACHE_EPOCH = ThreadLocal.withInitial(() -> -1);
+    private static volatile int COMPILE_CACHE_EPOCH = 0;
     private static final LongAdder COMPILE_ATTEMPTS = new LongAdder();
     private static final LongAdder COMPILE_SUCCESS = new LongAdder();
     private static final LongAdder SLICE_ATTEMPTS = new LongAdder();
@@ -100,20 +104,21 @@ public final class NativeDensityFunction {
                                        int cellX,
                                        int cellZ) {
         logStatusOnce();
-        if (FIRST_SLICE_LOGGED.compareAndSet(false, true)) {
+        if (!FIRST_SLICE_LOGGED.get() && FIRST_SLICE_LOGGED.compareAndSet(false, true)) {
             LOGGER.info("NativeDensityFunction first slice attempt");
         }
         if (!ENABLED) return false;
         if (bypassRootNative(function)) return false;
-        if (STATS_ENABLED) SLICE_ATTEMPTS.increment();
-        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
+        boolean stats = STATS_ENABLED;
+        boolean profiling = PROFILING_ENABLED;
+        if (stats) SLICE_ATTEMPTS.increment();
+        long start = profiling ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompile(function);
         if (compiled == null) return false;
         try {
-            nativeClearCache(compiled.cacheHandle);
             nativeEvaluateGrid(compiled.handle, compiled.cacheHandle, x, y0, z, 1.0, dy, 1.0, cellX, cellZ, 1, values.length, 1, values);
-            if (STATS_ENABLED) SLICE_SUCCESS.increment();
-            if (PROFILING_ENABLED) SLICE_NANOS.add(System.nanoTime() - start);
+            if (stats) SLICE_SUCCESS.increment();
+            if (profiling) SLICE_NANOS.add(System.nanoTime() - start);
             return true;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_grid", e.getMessage());
@@ -150,7 +155,7 @@ public final class NativeDensityFunction {
                                             int cellZ,
                                             int localCellY,
                                             int localCellZ) {
-        if (!DIRECT_CELL_ENABLED) return false;
+        if (!DIRECT_CELL_ENABLED || !CELL_ENABLED) return false;
         return tryFillCell(values, function, cellStartBlockX, cellStartBlockY, cellStartBlockZ, cellWidth, cellHeight, cellCountXZ, cellCountY, cellX, cellZ, localCellY, localCellZ, false);
     }
 
@@ -168,7 +173,8 @@ public final class NativeDensityFunction {
         if (!ENABLED || !CELL_ENABLED) return false;
         if (bypassRootNative(function)) return false;
         if (bypassCellNative(function)) return false;
-        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
+        boolean profiling = PROFILING_ENABLED;
+        long start = profiling ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompileCell(function);
         if (compiled == null) return false;
         if (compiled.clearsCachePerCell) return false;
@@ -177,7 +183,6 @@ public final class NativeDensityFunction {
         if (values.length < expected) return false;
 
         try {
-            if (compiled.clearsCachePerCell) nativeClearCache(compiled.cacheHandle);
             compiled.syncInterpolatorColumn(cellStartBlockX, cellCountXZ, cellCountY);
             nativeEvaluateInterpolatedColumn(
                     compiled.handle,
@@ -193,7 +198,7 @@ public final class NativeDensityFunction {
                     cellCountY,
                     compiled.cacheAllInCellValues,
                     values);
-            if (PROFILING_ENABLED) {
+            if (profiling) {
                 COLUMN_NANOS.add(System.nanoTime() - start);
                 COLUMN_COUNT.increment();
             }
@@ -219,44 +224,46 @@ public final class NativeDensityFunction {
                                        int localCellZ,
                                        boolean highLevel) {
         logStatusOnce();
-        if (FIRST_CELL_LOGGED.compareAndSet(false, true)) {
+        if (!FIRST_CELL_LOGGED.get() && FIRST_CELL_LOGGED.compareAndSet(false, true)) {
             LOGGER.info("NativeDensityFunction first cell attempt");
         }
         if (!ENABLED) return false;
+        boolean stats = STATS_ENABLED;
+        boolean profiling = PROFILING_ENABLED;
         if (!CELL_ENABLED) {
-            if (STATS_ENABLED) CELL_SKIP_DISABLED.increment();
+            if (stats) CELL_SKIP_DISABLED.increment();
             return false;
         }
         if (bypassRootNative(function)) {
-            if (STATS_ENABLED) CELL_SKIP_ROOT_BYPASS.increment();
+            if (stats) CELL_SKIP_ROOT_BYPASS.increment();
             return false;
         }
         if (bypassCellNative(function)) {
-            if (STATS_ENABLED) CELL_SKIP_CELL_BYPASS.increment();
+            if (stats) CELL_SKIP_CELL_BYPASS.increment();
             return false;
         }
-        if (STATS_ENABLED) {
+        if (stats) {
             CELL_ATTEMPTS.increment();
             if (highLevel) CELL_HIGH_ATTEMPTS.increment();
             else CELL_DIRECT_ATTEMPTS.increment();
             maybeLogStats();
         }
-        long start = PROFILING_ENABLED ? System.nanoTime() : 0L;
+        long start = profiling ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompileCell(function);
         if (compiled == null) {
-            if (STATS_ENABLED) CELL_SKIP_COMPILE_NULL.increment();
+            if (stats) CELL_SKIP_COMPILE_NULL.increment();
             return false;
         }
         int expected = cellWidth * cellHeight * cellWidth;
         if (values.length < expected) {
-            if (STATS_ENABLED) CELL_SKIP_OUTPUT_TOO_SMALL.increment();
+            if (stats) CELL_SKIP_OUTPUT_TOO_SMALL.increment();
             return false;
         }
 
         try {
             if (highLevel) {
                 if (compiled.clearsCachePerCell) nativeClearCache(compiled.cacheHandle);
-                if (STATS_ENABLED) CELL_INTERPOLATED.increment();
+                if (stats) CELL_INTERPOLATED.increment();
                 compiled.syncInterpolatorColumn(cellStartBlockX, cellCountXZ, cellCountY);
                 nativeEvaluateInterpolatedCell(
                         compiled.handle,
@@ -290,12 +297,12 @@ public final class NativeDensityFunction {
                         compiled.cacheAllInCellValues,
                         values);
             }
-            if (STATS_ENABLED) CELL_SUCCESS.increment();
-            if (STATS_ENABLED) {
+            if (stats) {
+                CELL_SUCCESS.increment();
                 if (highLevel) CELL_HIGH_SUCCESS.increment();
                 else CELL_DIRECT_SUCCESS.increment();
             }
-            if (PROFILING_ENABLED) CELL_NANOS.add(System.nanoTime() - start);
+            if (profiling) CELL_NANOS.add(System.nanoTime() - start);
             return true;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_cell_grid", e.getMessage());
@@ -305,16 +312,24 @@ public final class NativeDensityFunction {
 
     private static NativeDensityFunction tryCompile(DensityFunction function) {
         if (!LatticeNative.isLoaded() || function == null) return null;
+        IdentityHashMap<DensityFunction, Object> threadCache = threadCompileCache();
+        Object threadCached = threadCache.get(function);
+        if (threadCached != null) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
         LastCompile last = LAST_COMPILE.get();
-        if (last != null && last.function() == function) return last.compiled();
+        if (last != null && last.function() == function) {
+            threadCache.put(function, compileCacheValue(last.compiled()));
+            return last.compiled();
+        }
         synchronized (CACHE) {
             NativeDensityFunction cached = CACHE.get(function);
             if (cached != null) {
                 LAST_COMPILE.set(new LastCompile(function, cached));
+                threadCache.put(function, cached);
                 return cached;
             }
             if (FAILED_COMPILES.containsKey(function)) {
                 LAST_COMPILE.set(new LastCompile(function, null));
+                threadCache.put(function, FAILED_COMPILE_SENTINEL);
                 return null;
             }
         }
@@ -329,11 +344,13 @@ public final class NativeDensityFunction {
             if (cached != null) {
                 if (compiled != null) compiled.destroyNow();
                 LAST_COMPILE.set(new LastCompile(function, cached));
+                threadCache.put(function, cached);
                 return cached;
             }
             if (FAILED_COMPILES.containsKey(function)) {
                 if (compiled != null) compiled.destroyNow();
                 LAST_COMPILE.set(new LastCompile(function, null));
+                threadCache.put(function, FAILED_COMPILE_SENTINEL);
                 return null;
             }
             if (compiled != null) {
@@ -343,8 +360,22 @@ public final class NativeDensityFunction {
                 FAILED_COMPILES.put(function, Boolean.TRUE);
             }
             LAST_COMPILE.set(new LastCompile(function, compiled));
+            threadCache.put(function, compileCacheValue(compiled));
             return compiled;
         }
+    }
+
+    private static Object compileCacheValue(NativeDensityFunction compiled) {
+        return compiled == null ? FAILED_COMPILE_SENTINEL : compiled;
+    }
+
+    private static IdentityHashMap<DensityFunction, Object> threadCompileCache() {
+        IdentityHashMap<DensityFunction, Object> cache = THREAD_COMPILE_CACHE.get();
+        if (THREAD_COMPILE_CACHE_EPOCH.get() != COMPILE_CACHE_EPOCH) {
+            cache.clear();
+            THREAD_COMPILE_CACHE_EPOCH.set(COMPILE_CACHE_EPOCH);
+        }
+        return cache;
     }
 
     private void destroyNow() {
@@ -397,7 +428,7 @@ public final class NativeDensityFunction {
     }
 
     private static void logStatusOnce() {
-        if (STATUS_LOGGED.compareAndSet(false, true)) {
+        if (!STATUS_LOGGED.get() && STATUS_LOGGED.compareAndSet(false, true)) {
             LOGGER.info("NativeDensityFunction enabled={} cell={} directCell={} stats={}", ENABLED, CELL_ENABLED, DIRECT_CELL_ENABLED, STATS_ENABLED);
         }
     }
@@ -629,9 +660,12 @@ public final class NativeDensityFunction {
             FAILED_COMPILES.clear();
         }
         BYPASSED_ROOT_CLASSES.clear();
+        COMPILE_CACHE_EPOCH++;
         LAST_COMPILE.remove();
         LAST_CELL_COMPILE.remove();
         LAST_CELL_BYPASS.remove();
+        THREAD_COMPILE_CACHE.remove();
+        THREAD_COMPILE_CACHE_EPOCH.remove();
         STATUS_LOGGED.set(false);
         FIRST_SLICE_LOGGED.set(false);
         FIRST_CELL_LOGGED.set(false);

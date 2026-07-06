@@ -257,6 +257,29 @@ target_sources(lattice PRIVATE
     jni/heightmap.cpp
 )
 
+if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
+    if(MSVC)
+        lattice_add_simd_object(lattice_heightmap_avx2
+            SOURCES src/world/heightmap/heightmap_scan_avx2.cpp
+            FLAGS   /arch:AVX2)
+    else()
+        lattice_add_simd_object(lattice_heightmap_avx2
+            SOURCES src/world/heightmap/heightmap_scan_avx2.cpp
+            FLAGS   -mavx2)
+    endif()
+endif()
+
+if(LATTICE_ARCH_ARM64 AND LATTICE_ENABLE_SIMD)
+    if(MSVC)
+        lattice_add_simd_object(lattice_heightmap_neon
+            SOURCES src/world/heightmap/heightmap_scan_neon.cpp)
+    else()
+        lattice_add_simd_object(lattice_heightmap_neon
+            SOURCES src/world/heightmap/heightmap_scan_neon.cpp
+            FLAGS   -O3)
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Module: NativeRandomTickFilter (random-tick candidate mask filter)
 # ---------------------------------------------------------------------------

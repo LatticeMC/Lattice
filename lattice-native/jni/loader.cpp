@@ -16,6 +16,7 @@
 #include "world/entity/aabb_query.hpp"       // init_aabb_dispatch
 #include "world/entity/collision_sweep.hpp"  // init_collision_dispatch
 #include "world/entity/visibility_scan.hpp"  // init_visibility_dispatch
+#include "world/heightmap/heightmap_scan.hpp" // init_heightmap_dispatch
 #include "world/palette/packed_storage.hpp"  // init_palette_dispatch
 
 namespace lattice::runtime {
@@ -37,6 +38,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     // All these calls are idempotent and cheap (single atomic check
     // after the first call).
     lattice::world::palette::init_palette_dispatch();
+    lattice::world::heightmap::init_heightmap_dispatch();
     lattice::world::entity::init_visibility_dispatch();
     lattice::world::entity::init_aabb_dispatch();
     lattice::world::entity::init_collision_dispatch();

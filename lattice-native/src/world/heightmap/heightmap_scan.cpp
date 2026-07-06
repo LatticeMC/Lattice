@@ -25,6 +25,10 @@
 
 #include "world/heightmap/heightmap_scan.hpp"
 
+#include <atomic>
+
+#include "lattice/dispatch.hpp"
+
 #if defined(_MSC_VER)
 #  include <intrin.h>
 #endif
@@ -111,23 +115,47 @@ template <int ElementBits>
     return (mask[word] >> (bit_index % 64)) & 1ULL;
 }
 
-// Returns true if `mask` has any bit set.
-[[nodiscard]] inline bool mask_any(const std::uint64_t* mask,
-                                   std::size_t mask_longs) noexcept {
+} // namespace
+
+namespace detail {
+
+bool mask_any_scalar(const std::uint64_t* mask, std::size_t mask_longs) noexcept {
     for (std::size_t i = 0; i < mask_longs; ++i) {
         if (mask[i] != 0) return true;
     }
     return false;
 }
 
-} // namespace
+std::size_t fill_default_section_scalar(std::uint64_t* remaining,
+                                        std::int32_t* out_heights,
+                                        std::int32_t y) noexcept {
+    if (!remaining || !out_heights) return 0;
+    std::size_t filled = 0;
+    for (int w = 0; w < 4; ++w) {
+        std::uint64_t bits = remaining[w];
+        if (bits == 0) continue;
+        filled += static_cast<std::size_t>(popcount64(bits));
+        while (bits != 0) {
+            const int bit = ctz64(bits);
+            bits &= bits - 1;
+            out_heights[w * 64 + bit] = y;
+        }
+        remaining[w] = 0;
+    }
+    return filled;
+}
 
-std::size_t populate(const SectionView* sections,
-                     std::size_t section_count,
-                     int section_base_y,
-                     std::size_t mask_longs,
-                     int default_height,
-                     std::int32_t* out_heights) noexcept {
+std::size_t populate_with_mask_any(const SectionView* sections,
+                                   std::size_t section_count,
+                                   int section_base_y,
+                                   std::size_t mask_longs,
+                                   int default_height,
+                                   std::int32_t* out_heights,
+                                   MaskAnyFn mask_any_fn,
+                                   FillDefaultSectionFn fill_default_section_fn) noexcept {
+    if (!mask_any_fn) mask_any_fn = &mask_any_scalar;
+    if (!fill_default_section_fn) fill_default_section_fn = &fill_default_section_scalar;
+
     if (!out_heights) return 0;
     for (int i = 0; i < kColumnCount; ++i) out_heights[i] = default_height;
     if (!sections || section_count == 0 || mask_longs == 0) return 0;
@@ -147,7 +175,7 @@ std::size_t populate(const SectionView* sections,
         const SectionView& sv = sections[s];
 
         // Short-circuit: section's passing mask has no bits set.
-        if (!sv.passing_mask || !mask_any(sv.passing_mask, mask_longs)) continue;
+        if (!sv.passing_mask || !mask_any_fn(sv.passing_mask, mask_longs)) continue;
 
         const int section_world_y_floor = section_base_y +
             static_cast<int>(s) * kSectionHeight;
@@ -161,17 +189,7 @@ std::size_t populate(const SectionView* sections,
             // Every cell in this section passes. The topmost matching y
             // for each *still-remaining* column is y = section_world_y_floor + 15.
             const std::int32_t y = section_world_y_floor + kSectionHeight - 1;
-            for (int w = 0; w < kRemainingLongs; ++w) {
-                std::uint64_t bits = remaining[w];
-                if (bits == 0) continue;
-                while (bits != 0) {
-                    const int bit = ctz64(bits);
-                    bits &= bits - 1;
-                    out_heights[w * 64 + bit] = y;
-                }
-                remaining_count -= popcount64(remaining[w]);
-                remaining[w] = 0;
-            }
+            remaining_count -= fill_default_section_fn(remaining, out_heights, y);
             if (remaining_count == 0) break;
             continue;
         }
@@ -210,6 +228,58 @@ std::size_t populate(const SectionView* sections,
         if (remaining_count == 0) break;
     }
     return static_cast<std::size_t>(kColumnCount - remaining_count);
+}
+
+} // namespace detail
+
+std::size_t populate_scalar(const SectionView* sections,
+                            std::size_t section_count,
+                            int section_base_y,
+                            std::size_t mask_longs,
+                            int default_height,
+                            std::int32_t* out_heights) noexcept {
+    return detail::populate_with_mask_any(
+        sections, section_count, section_base_y, mask_longs, default_height, out_heights,
+        &detail::mask_any_scalar,
+        &detail::fill_default_section_scalar);
+}
+
+namespace {
+
+using PopulateFn = std::size_t (*)(const SectionView*, std::size_t, int, std::size_t, int, std::int32_t*) noexcept;
+
+std::atomic<PopulateFn> g_populate{&populate_scalar};
+std::atomic<bool> g_initialised{false};
+
+} // namespace
+
+void init_heightmap_dispatch() noexcept {
+    if (g_initialised.load(std::memory_order_acquire)) return;
+    PopulateFn fn = &populate_scalar;
+    const auto& f = lattice::cpu::features();
+    (void)f;
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    if (f.avx2) fn = &populate_avx2;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    if (f.neon) fn = &populate_neon;
+#endif
+
+    g_populate.store(fn, std::memory_order_release);
+    g_initialised.store(true, std::memory_order_release);
+}
+
+std::size_t populate(const SectionView* sections,
+                     std::size_t section_count,
+                     int section_base_y,
+                     std::size_t mask_longs,
+                     int default_height,
+                     std::int32_t* out_heights) noexcept {
+    if (!g_initialised.load(std::memory_order_acquire)) {
+        init_heightmap_dispatch();
+    }
+    return g_populate.load(std::memory_order_acquire)(
+        sections, section_count, section_base_y, mask_longs, default_height, out_heights);
 }
 
 } // namespace lattice::world::heightmap

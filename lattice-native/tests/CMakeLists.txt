@@ -61,9 +61,11 @@ endfunction()
 # must include the matching SIMD source.
 set(_palette_simd_srcs "")
 set(_entity_simd_srcs "")
+set(_heightmap_simd_srcs "")
 set(_pathfinder_simd_srcs "")
 if(LATTICE_ARCH_X86)
     list(APPEND _palette_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage_bmi2.cpp)
+    list(APPEND _heightmap_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan_avx2.cpp)
     list(APPEND _entity_simd_srcs
         ${CMAKE_SOURCE_DIR}/src/world/entity/visibility_scan_avx2.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query_avx2.cpp
@@ -71,6 +73,7 @@ if(LATTICE_ARCH_X86)
     list(APPEND _pathfinder_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder_avx2.cpp)
 elseif(LATTICE_ARCH_ARM64)
     list(APPEND _palette_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage_neon.cpp)
+    list(APPEND _heightmap_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan_neon.cpp)
     list(APPEND _entity_simd_srcs
         ${CMAKE_SOURCE_DIR}/src/world/entity/visibility_scan_neon.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query_neon.cpp
@@ -81,7 +84,7 @@ endif()
 # We compile the SIMD TUs into the test binary at the same per-source
 # flag level that the main library uses. CMake's source-file properties
 # carry the flag.
-foreach(s IN LISTS _palette_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs)
+foreach(s IN LISTS _palette_simd_srcs _heightmap_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs)
     if(MSVC)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     elseif(LATTICE_ARCH_X86)
@@ -105,7 +108,9 @@ lattice_add_test(nbt_parser
 
 lattice_add_test(heightmap
     SOURCES  test_heightmap.cpp
-    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan.cpp)
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan.cpp
+             ${_heightmap_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
 lattice_add_test(entity_visibility
     SOURCES  test_entity_visibility.cpp
