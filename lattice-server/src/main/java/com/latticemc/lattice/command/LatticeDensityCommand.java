@@ -21,7 +21,7 @@ public final class LatticeDensityCommand extends Command {
             "parity", "parityInterval", "surface", "heightmap");
     private static final List<String> BOOLEAN_VALUES = List.of("true", "false", "on", "off");
     private static final List<String> FULL_OPTIONS = List.of(
-            "enabled", "cell", "directCell", "shiftedNoise", "spline",
+            "enabled", "cell", "shiftedNoise", "spline",
             "multipointSpline", "surface", "heightmap");
     private static final List<String> PROFILE_OPTIONS = List.of(
             "stats", "profiling", "parity");
