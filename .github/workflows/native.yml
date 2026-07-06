@@ -50,8 +50,8 @@ jobs:
               -DCMAKE_SYSTEM_PROCESSOR=aarch64
               -DCMAKE_C_COMPILER_TARGET=aarch64-linux-gnu
               -DCMAKE_CXX_COMPILER_TARGET=aarch64-linux-gnu
-              -DCMAKE_SYSROOT=/usr/aarch64-linux-gnu
-              -DCMAKE_FIND_ROOT_PATH=/usr/aarch64-linux-gnu
+              -DCMAKE_C_COMPILER_EXTERNAL_TOOLCHAIN=/usr
+              -DCMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN=/usr
           - name: windows-x86_64-msvc
             runner: windows-latest
             cxx: cl
