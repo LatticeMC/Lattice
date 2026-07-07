@@ -12,12 +12,10 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(NoiseChunk.NoiseInterpolator.class)
 public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorAccess {
-    @Shadow @Final private DensityFunction noiseFiller;
     @Shadow double[][] slice0;
     @Shadow double[][] slice1;
     @Shadow private double noise000;
@@ -136,35 +134,6 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         if (!this.lattice$flatReadable) return;
         this.value = Mth.lerp(z, this.valueZ0, this.valueZ1);
         ci.cancel();
-    }
-
-    @Inject(method = "compute", at = @At("HEAD"), cancellable = true)
-    private void lattice$computeFlat(DensityFunction.FunctionContext context, CallbackInfoReturnable<Double> cir) {
-        if (!this.lattice$flatReadable) return;
-        if (context != this.this$0) {
-            cir.setReturnValue(this.noiseFiller.compute(context));
-            return;
-        }
-        NativeNoiseChunkAccess chunk = (NativeNoiseChunkAccess) (Object) this.this$0;
-        if (!chunk.lattice$interpolating()) {
-            throw new IllegalStateException("Trying to sample interpolator outside the interpolation loop");
-        }
-        if (chunk.lattice$fillingCell()) {
-            cir.setReturnValue(Mth.lerp3(
-                    (double)chunk.lattice$inCellX() / chunk.lattice$cellWidth(),
-                    (double)chunk.lattice$inCellY() / chunk.lattice$cellHeight(),
-                    (double)chunk.lattice$inCellZ() / chunk.lattice$cellWidth(),
-                    this.noise000,
-                    this.noise100,
-                    this.noise010,
-                    this.noise110,
-                    this.noise001,
-                    this.noise101,
-                    this.noise011,
-                    this.noise111));
-        } else {
-            cir.setReturnValue(this.value);
-        }
     }
 
     @Unique

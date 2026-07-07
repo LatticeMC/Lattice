@@ -746,6 +746,10 @@ public final class NativeDensityFunction {
 
     private static void recordUnsupported(DensityFunction function) {
         String name = function == null ? "<null>" : function.getClass().getName();
+        recordUnsupported(name);
+    }
+
+    private static void recordUnsupported(String name) {
         UNSUPPORTED.computeIfAbsent(name, ignored -> new LongAdder()).increment();
     }
 
@@ -758,7 +762,10 @@ public final class NativeDensityFunction {
         long cacheHandle = 0L;
         try {
             handle = createArena();
-            if (handle == 0L) return null;
+            if (handle == 0L) {
+                recordUnsupported("compile.createArena=0");
+                return null;
+            }
             Compiler compiler = new Compiler(handle, function, directCell);
             int root = compiler.compile(function);
             if (root < 0) {
@@ -771,11 +778,15 @@ public final class NativeDensityFunction {
             }
             setRoot(handle, root);
             cacheHandle = createCache(handle);
-            if (cacheHandle == 0L) return null;
+            if (cacheHandle == 0L) {
+                recordUnsupported("compile.createCache=0");
+                return null;
+            }
             NativeDensityFunction compiled = new NativeDensityFunction(handle, cacheHandle, compiler.interpolators(), compiler.cacheAllInCellValues(), compiler.clearsCachePerCell());
             compiled.bindCacheAllInCellArrays();
             return compiled;
         } catch (RuntimeException | LinkageError e) {
+            recordUnsupported("compile.exception." + e.getClass().getName());
             LatticeNative.logFallbackOnce("density_function_compile", e.getMessage());
             return null;
         } finally {
