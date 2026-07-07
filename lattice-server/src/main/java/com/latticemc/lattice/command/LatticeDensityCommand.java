@@ -1,6 +1,7 @@
 package com.latticemc.lattice.command;
 
 import com.latticemc.lattice.nativelib.NativeDensityFunction;
+import com.latticemc.lattice.nativelib.WorldgenProfiler;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.lang.reflect.Method;
@@ -18,7 +19,7 @@ public final class LatticeDensityCommand extends Command {
     private static final List<String> DENSITY_ACTIONS = List.of(
             "status", "reset", "all", "fast", "profile", "enabled", "cell", "directCell",
             "shiftedNoise", "spline", "multipointSpline", "stats", "profiling",
-            "parity", "parityInterval", "surface", "heightmap");
+            "parity", "parityInterval", "surface", "heightmap", "worldgenProfiler", "worldgenProfileStatus", "worldgenProfileReset");
     private static final List<String> BOOLEAN_VALUES = List.of("true", "false", "on", "off");
     private static final List<String> FULL_OPTIONS = List.of(
             "enabled", "cell", "directCell", "shiftedNoise", "spline",
@@ -62,6 +63,15 @@ public final class LatticeDensityCommand extends Command {
             sender.sendMessage("Lattice density stats reset");
             return true;
         }
+        if (args.length == 2 && "worldgenProfileStatus".equalsIgnoreCase(args[1])) {
+            sender.sendMessage(WorldgenProfiler.status());
+            return true;
+        }
+        if (args.length == 2 && "worldgenProfileReset".equalsIgnoreCase(args[1])) {
+            WorldgenProfiler.reset();
+            sender.sendMessage("Lattice worldgen profiler reset");
+            return true;
+        }
         if (args.length == 3) {
             if ("all".equalsIgnoreCase(args[1]) || "fast".equalsIgnoreCase(args[1]) || "profile".equalsIgnoreCase(args[1])) {
                 Boolean value = parseBoolean(args[2]);
@@ -92,8 +102,12 @@ public final class LatticeDensityCommand extends Command {
                 return true;
             }
             if (!NativeDensityFunction.setOption(args[1], value.booleanValue())) {
-                sender.sendMessage("Unknown density option: " + args[1]);
-                return true;
+                if ("worldgenProfiler".equalsIgnoreCase(args[1])) {
+                    WorldgenProfiler.setEnabled(value.booleanValue());
+                } else {
+                    sender.sendMessage("Unknown density option: " + args[1]);
+                    return true;
+                }
             }
             sender.sendMessage("Lattice density " + args[1] + '=' + value);
             return true;
@@ -140,7 +154,7 @@ public final class LatticeDensityCommand extends Command {
     }
 
     private static void sendUsage(CommandSender sender) {
-        sender.sendMessage("Usage: /lattice density <status|reset|all|fast|profile|option> [true|false]");
+        sender.sendMessage("Usage: /lattice density <status|reset|all|fast|profile|worldgenProfileStatus|worldgenProfileReset|option> [true|false]");
         sender.sendMessage("Options: " + String.join(", ", DENSITY_ACTIONS));
     }
 

@@ -5,6 +5,7 @@ import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeMaterialRules;
 import com.latticemc.lattice.nativelib.NativeWorldgenToggle;
 import com.latticemc.lattice.nativelib.SurfaceRuleCompiler;
+import com.latticemc.lattice.nativelib.WorldgenProfiler;
 import com.latticemc.lattice.nativelib.WorldStateSnapshot;
 import java.util.Map;
 import java.util.Optional;
@@ -47,6 +48,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
     @Unique private static final AtomicBoolean lattice$compileLogged = new AtomicBoolean(false);
     @Unique private static final AtomicBoolean lattice$nokLogged = new AtomicBoolean(false);
     @Unique private volatile boolean lattice$nativeSurfaceDisabled = false;
+    @Unique private final ThreadLocal<Long> lattice$buildSurfaceStart = ThreadLocal.withInitial(() -> 0L);
     private final Map<SurfaceRules.RuleSource, CompiledSurfaceRules> lattice$compiled = new ConcurrentHashMap<>();
 
     @Shadow protected abstract BlockState getBand(int x, int y, int z);
@@ -76,6 +78,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                                       NoiseChunk noiseChunk,
                                       SurfaceRules.RuleSource ruleSource,
                                       CallbackInfo ci) {
+        this.lattice$buildSurfaceStart.set(WorldgenProfiler.start());
         if (!NativeWorldgenToggle.surfaceEnabled()) return;
         if (!LatticeNative.isLoaded()) return;
         if (lattice$nativeSurfaceDisabled) return;
@@ -196,6 +199,19 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         }
 
         ci.cancel();
+    }
+
+    @Inject(method = "buildSurface", at = @At("RETURN"))
+    private void lattice$profileBuildSurfaceEnd(RandomState randomState,
+                                                BiomeManager biomeManager,
+                                                Registry<Biome> biomes,
+                                                boolean useLegacyRandomSource,
+                                                WorldGenerationContext context,
+                                                ChunkAccess chunk,
+                                                NoiseChunk noiseChunk,
+                                                SurfaceRules.RuleSource ruleSource,
+                                                CallbackInfo ci) {
+        WorldgenProfiler.end("surface.buildSurface", this.lattice$buildSurfaceStart.get().longValue());
     }
 
     @Inject(method = "topMaterial", at = @At("HEAD"), cancellable = true)
