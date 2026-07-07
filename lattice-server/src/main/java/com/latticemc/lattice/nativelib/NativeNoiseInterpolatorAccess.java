@@ -1,7 +1,5 @@
 package com.latticemc.lattice.nativelib;
 
-import java.lang.foreign.MemorySegment;
-
 public interface NativeNoiseInterpolatorAccess {
     void lattice$setNativeSlot(int slot);
 
@@ -12,12 +10,6 @@ public interface NativeNoiseInterpolatorAccess {
     double[] lattice$flatSlice1();
 
     void lattice$copyFlatRow(boolean slice0, int zRow, double[] values, int yRows, int zRows);
-
-    MemorySegment lattice$nativeFlatRow(boolean slice0, int zRow, int yRows, int zRows);
-
-    boolean lattice$nativeFlatReadable();
-
-    void lattice$markNativeFlatReadable();
 
     double[] lattice$sliceRow(boolean slice0, int zRow);
 

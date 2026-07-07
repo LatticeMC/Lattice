@@ -1,7 +1,5 @@
 package com.latticemc.lattice.nativelib;
 
-import java.lang.foreign.Arena;
-import java.lang.foreign.AddressLayout;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
@@ -17,7 +15,6 @@ public final class NativeFfm {
     public static final ValueLayout.OfFloat C_FLOAT = ValueLayout.JAVA_FLOAT;
     public static final ValueLayout.OfByte C_BYTE = ValueLayout.JAVA_BYTE;
     public static final ValueLayout.OfBoolean C_BOOL = ValueLayout.JAVA_BOOLEAN;
-    public static final AddressLayout C_POINTER = ValueLayout.ADDRESS;
 
     private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.ffm", "true"));
     private static final Linker LINKER;
@@ -59,65 +56,4 @@ public final class NativeFfm {
         }
     }
 
-    public static MemorySegment pin(Arena arena, double[] values) {
-        return MemorySegment.ofArray(values);
-    }
-
-    public static MemorySegment pin(Arena arena, int[] values) {
-        return MemorySegment.ofArray(values);
-    }
-
-    static final class DoubleBuffer implements AutoCloseable {
-        private Arena arena;
-        private MemorySegment segment;
-        private int capacity;
-
-        MemorySegment ensure(int length) {
-            if (length <= 0) return MemorySegment.NULL;
-            if (segment == null || capacity < length) {
-                close();
-                arena = Arena.ofConfined();
-                segment = arena.allocate(C_DOUBLE, length);
-                capacity = length;
-            }
-            return segment;
-        }
-
-        @Override
-        public void close() {
-            if (arena != null) {
-                arena.close();
-                arena = null;
-                segment = null;
-                capacity = 0;
-            }
-        }
-    }
-
-    static final class LongBuffer implements AutoCloseable {
-        private Arena arena;
-        private MemorySegment segment;
-        private int capacity;
-
-        MemorySegment ensure(int length) {
-            if (length <= 0) return MemorySegment.NULL;
-            if (segment == null || capacity < length) {
-                close();
-                arena = Arena.ofConfined();
-                segment = arena.allocate(C_LONG, length);
-                capacity = length;
-            }
-            return segment;
-        }
-
-        @Override
-        public void close() {
-            if (arena != null) {
-                arena.close();
-                arena = null;
-                segment = null;
-                capacity = 0;
-            }
-        }
-    }
 }

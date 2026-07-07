@@ -43,7 +43,7 @@ subprojects {
 
     extensions.configure<JavaPluginExtension> {
         toolchain {
-            languageVersion = JavaLanguageVersion.of(21)
+            languageVersion = JavaLanguageVersion.of(providers.gradleProperty("latticeJavaVersion").map(String::toInt).getOrElse(21))
         }
     }
 
@@ -59,9 +59,13 @@ subprojects {
     }
     tasks.withType<JavaCompile> {
         options.encoding = Charsets.UTF_8.name()
-        options.release = 21
+        val latticeJavaVersion = providers.gradleProperty("latticeJavaVersion").map(String::toInt).getOrElse(21)
+        options.release = latticeJavaVersion
         options.isFork = true
-        options.compilerArgs.addAll(listOf("-Xlint:-deprecation", "-Xlint:-removal", "--enable-preview"))
+        options.compilerArgs.addAll(listOf("-Xlint:-deprecation", "-Xlint:-removal"))
+        if (latticeJavaVersion == 21) {
+            options.compilerArgs.add("--enable-preview")
+        }
     }
     tasks.withType<Javadoc> {
         options.encoding = Charsets.UTF_8.name()

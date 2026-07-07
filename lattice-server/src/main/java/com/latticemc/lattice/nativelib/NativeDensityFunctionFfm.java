@@ -1,7 +1,6 @@
 package com.latticemc.lattice.nativelib;
 
 import java.lang.foreign.FunctionDescriptor;
-import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandle;
 
 import static com.latticemc.lattice.nativelib.NativeFfm.C_DOUBLE;
@@ -35,9 +34,6 @@ final class NativeDensityFunctionFfm {
     private static final FunctionDescriptor ADD_INTERPOLATED_NOISE_DESC = FunctionDescriptor.of(C_INT, C_LONG, C_LONG);
     private static final FunctionDescriptor ADD_SPLINE_DESC = FunctionDescriptor.of(C_INT, C_LONG, C_INT);
     private static final FunctionDescriptor ADD_BEARDIFIER_DESC = FunctionDescriptor.of(C_INT, C_LONG, C_LONG);
-    private static final FunctionDescriptor EVALUATE_Y_COLUMN_DESC = FunctionDescriptor.ofVoid(C_LONG, C_LONG, C_DOUBLE, C_DOUBLE, C_DOUBLE, C_DOUBLE, C_INT, C_INT, C_INT, NativeFfm.C_POINTER);
-    private static final FunctionDescriptor EVALUATE_Y_COLUMNS_DESC = FunctionDescriptor.ofVoid(NativeFfm.C_POINTER, NativeFfm.C_POINTER, C_INT, C_DOUBLE, C_DOUBLE, C_DOUBLE, C_DOUBLE, C_INT, C_INT, C_INT, NativeFfm.C_POINTER);
-    private static final FunctionDescriptor EVALUATE_INTERPOLATED_COLUMNS_DESC = FunctionDescriptor.ofVoid(NativeFfm.C_POINTER, NativeFfm.C_POINTER, C_INT, C_DOUBLE, C_DOUBLE, C_DOUBLE, C_INT, C_INT, C_INT, C_INT, C_INT, C_INT, NativeFfm.C_POINTER, NativeFfm.C_POINTER, NativeFfm.C_POINTER, NativeFfm.C_POINTER, C_INT);
 
     private static volatile MethodHandle create;
     private static volatile MethodHandle destroy;
@@ -65,12 +61,6 @@ final class NativeDensityFunctionFfm {
     private static volatile MethodHandle addInterpolatedNoise;
     private static volatile MethodHandle addSpline;
     private static volatile MethodHandle addBeardifier;
-    private static volatile MethodHandle evaluateYColumn;
-    private static volatile MethodHandle evaluateYColumns;
-    private static volatile MethodHandle evaluateInterpolatedColumns;
-    private static final ThreadLocal<NativeFfm.DoubleBuffer> Y_COLUMN_BUFFER = ThreadLocal.withInitial(NativeFfm.DoubleBuffer::new);
-    private static final ThreadLocal<BatchBuffers> Y_COLUMNS_BUFFERS = ThreadLocal.withInitial(BatchBuffers::new);
-    private static final ThreadLocal<BatchBuffers> INTERPOLATED_COLUMNS_BUFFERS = ThreadLocal.withInitial(BatchBuffers::new);
 
     private NativeDensityFunctionFfm() {}
 
@@ -301,120 +291,6 @@ final class NativeDensityFunctionFfm {
         }
     }
 
-    static boolean evaluateYColumn(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, double[] out) {
-        if (out == null) return false;
-        try {
-            MethodHandle method = evaluateYColumnHandle();
-            if (method == null) return false;
-            MemorySegment buffer = Y_COLUMN_BUFFER.get().ensure(out.length);
-            method.invokeExact(handle, cacheHandle, x, y0, z, dy, cellX, cellZ, out.length, buffer);
-            MemorySegment.copy(buffer, NativeFfm.C_DOUBLE, 0, out, 0, out.length);
-            return true;
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    static boolean evaluateYColumnToSegment(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, int length, MemorySegment out) {
-        if (out == null || out == MemorySegment.NULL) return false;
-        try {
-            MethodHandle method = evaluateYColumnHandle();
-            if (method == null) return false;
-            method.invokeExact(handle, cacheHandle, x, y0, z, dy, cellX, cellZ, length, out);
-            return true;
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    static boolean evaluateYColumns(long[] handles, long[] cacheHandles, int count, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[][] out) {
-        if (handles == null || cacheHandles == null || out == null || count <= 0 || ny <= 0) return false;
-        if (handles.length < count || cacheHandles.length < count || out.length < count) return false;
-        try {
-            MethodHandle method = evaluateYColumnsHandle();
-            if (method == null) return false;
-            BatchBuffers buffers = Y_COLUMNS_BUFFERS.get();
-            MemorySegment handlesSegment = buffers.handles.ensure(count);
-            MemorySegment cacheHandlesSegment = buffers.cacheHandles.ensure(count);
-            MemorySegment outSegment = buffers.outputs.ensure(count * ny);
-            MemorySegment.copy(handles, 0, handlesSegment, NativeFfm.C_LONG, 0, count);
-            MemorySegment.copy(cacheHandles, 0, cacheHandlesSegment, NativeFfm.C_LONG, 0, count);
-            method.invokeExact(handlesSegment, cacheHandlesSegment, count, x, y0, z, dy, cellX, cellZ, ny, outSegment);
-            for (int i = 0; i < count; i++) {
-                double[] row = out[i];
-                if (row == null || row.length < ny) return false;
-                MemorySegment.copy(outSegment, NativeFfm.C_DOUBLE, (long) i * (long) ny * NativeFfm.C_DOUBLE.byteSize(), row, 0, ny);
-            }
-            return true;
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    static boolean evaluateInterpolatedColumns(long[] handles,
-                                               long[] cacheHandles,
-                                               double[][][] cacheAllInCellValues,
-                                               int count,
-                                               double x0,
-                                               double z0,
-                                               double yMin,
-                                               int cellX,
-                                               int firstCellZ,
-                                               int cellWidth,
-                                               int cellHeight,
-                                               int cellCountXZ,
-                                               int cellCountY,
-                                               double[][] out) {
-        if (handles == null || cacheHandles == null || out == null || count <= 0) return false;
-        if (handles.length < count || cacheHandles.length < count || out.length < count) return false;
-        int cellValueCount = cellWidth * cellHeight * cellWidth;
-        int columnValueCount = cellCountXZ * cellCountY * cellValueCount;
-        try {
-            MethodHandle method = evaluateInterpolatedColumnsHandle();
-            if (method == null) return false;
-            BatchBuffers buffers = INTERPOLATED_COLUMNS_BUFFERS.get();
-            MemorySegment handlesSegment = buffers.handles.ensure(count);
-            MemorySegment cacheHandlesSegment = buffers.cacheHandles.ensure(count);
-            MemorySegment outSegment = buffers.outputs.ensure(count * columnValueCount);
-            MemorySegment.copy(handles, 0, handlesSegment, NativeFfm.C_LONG, 0, count);
-            MemorySegment.copy(cacheHandles, 0, cacheHandlesSegment, NativeFfm.C_LONG, 0, count);
-
-            int maxCacheSlots = maxCacheSlots(cacheAllInCellValues, count);
-            int slotCount = Math.max(1, maxCacheSlots) * count;
-            MemorySegment offsetsSegment = buffers.cacheOffsets.ensure(slotCount);
-            MemorySegment lengthsSegment = buffers.cacheLengths.ensure(slotCount);
-            long packedValueCount = prepareCacheValues(cacheAllInCellValues, count, maxCacheSlots, buffers.cacheValues, offsetsSegment, lengthsSegment);
-            MemorySegment cacheValuesSegment = packedValueCount == 0L ? MemorySegment.NULL : buffers.cacheValues.ensure((int) packedValueCount);
-
-            method.invokeExact(
-                    handlesSegment,
-                    cacheHandlesSegment,
-                    count,
-                    x0,
-                    z0,
-                    yMin,
-                    cellX,
-                    firstCellZ,
-                    cellWidth,
-                    cellHeight,
-                    cellCountXZ,
-                    cellCountY,
-                    outSegment,
-                    cacheValuesSegment,
-                    offsetsSegment,
-                    lengthsSegment,
-                    maxCacheSlots);
-            for (int i = 0; i < count; i++) {
-                double[] row = out[i];
-                if (row == null || row.length < columnValueCount) return false;
-                MemorySegment.copy(outSegment, NativeFfm.C_DOUBLE, (long) i * (long) columnValueCount * NativeFfm.C_DOUBLE.byteSize(), row, 0, columnValueCount);
-            }
-            return true;
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
     private static int invokeInt(MethodHandle method, long value) {
         try {
             return method == null ? -1 : (int) method.invokeExact(value);
@@ -449,58 +325,6 @@ final class NativeDensityFunctionFfm {
     private static MethodHandle addInterpolatedNoiseHandle() { return resolve(addInterpolatedNoise, "lattice_density_add_interpolated_noise", ADD_INTERPOLATED_NOISE_DESC, value -> addInterpolatedNoise = value); }
     private static MethodHandle addSplineHandle() { return resolve(addSpline, "lattice_density_add_spline", ADD_SPLINE_DESC, value -> addSpline = value); }
     private static MethodHandle addBeardifierHandle() { return resolve(addBeardifier, "lattice_density_add_beardifier", ADD_BEARDIFIER_DESC, value -> addBeardifier = value); }
-    private static MethodHandle evaluateYColumnHandle() { return resolve(evaluateYColumn, "lattice_density_evaluate_y_column", EVALUATE_Y_COLUMN_DESC, value -> evaluateYColumn = value); }
-    private static MethodHandle evaluateYColumnsHandle() { return resolve(evaluateYColumns, "lattice_density_evaluate_y_columns", EVALUATE_Y_COLUMNS_DESC, value -> evaluateYColumns = value); }
-    private static MethodHandle evaluateInterpolatedColumnsHandle() { return resolve(evaluateInterpolatedColumns, "lattice_density_evaluate_interpolated_columns", EVALUATE_INTERPOLATED_COLUMNS_DESC, value -> evaluateInterpolatedColumns = value); }
-
-    private static int maxCacheSlots(double[][][] cacheAllInCellValues, int count) {
-        int max = 0;
-        if (cacheAllInCellValues == null) return 0;
-        for (int i = 0; i < count && i < cacheAllInCellValues.length; i++) {
-            double[][] values = cacheAllInCellValues[i];
-            if (values != null) max = Math.max(max, values.length);
-        }
-        return max;
-    }
-
-    private static long prepareCacheValues(double[][][] cacheAllInCellValues,
-                                           int count,
-                                           int maxCacheSlots,
-                                           NativeFfm.DoubleBuffer cacheValueBuffer,
-                                           MemorySegment offsetsSegment,
-                                           MemorySegment lengthsSegment) {
-        int slots = Math.max(1, maxCacheSlots);
-        for (int i = 0; i < count * slots; i++) {
-            offsetsSegment.set(NativeFfm.C_LONG, (long) i * NativeFfm.C_LONG.byteSize(), 0L);
-            lengthsSegment.set(NativeFfm.C_LONG, (long) i * NativeFfm.C_LONG.byteSize(), 0L);
-        }
-        if (cacheAllInCellValues == null || maxCacheSlots <= 0) return 0L;
-        long total = 0L;
-        for (int i = 0; i < count && i < cacheAllInCellValues.length; i++) {
-            double[][] values = cacheAllInCellValues[i];
-            if (values == null) continue;
-            for (double[] value : values) {
-                if (value != null) total += value.length;
-            }
-        }
-        if (total <= 0L || total > Integer.MAX_VALUE) return 0L;
-        MemorySegment cacheValuesSegment = cacheValueBuffer.ensure((int) total);
-        long offset = 0L;
-        for (int i = 0; i < count && i < cacheAllInCellValues.length; i++) {
-            double[][] values = cacheAllInCellValues[i];
-            if (values == null) continue;
-            for (int slot = 0; slot < Math.min(values.length, maxCacheSlots); slot++) {
-                double[] value = values[slot];
-                if (value == null || value.length == 0) continue;
-                int index = i * maxCacheSlots + slot;
-                offsetsSegment.set(NativeFfm.C_LONG, (long) index * NativeFfm.C_LONG.byteSize(), offset);
-                lengthsSegment.set(NativeFfm.C_LONG, (long) index * NativeFfm.C_LONG.byteSize(), (long) value.length);
-                MemorySegment.copy(value, 0, cacheValuesSegment, NativeFfm.C_DOUBLE, offset * NativeFfm.C_DOUBLE.byteSize(), value.length);
-                offset += value.length;
-            }
-        }
-        return total;
-    }
 
     private static MethodHandle resolve(MethodHandle cached, String symbol, FunctionDescriptor descriptor, HandleSetter setter) {
         if (cached != null) return cached;
@@ -512,14 +336,5 @@ final class NativeDensityFunctionFfm {
     @FunctionalInterface
     private interface HandleSetter {
         void set(MethodHandle handle);
-    }
-
-    private static final class BatchBuffers {
-        private final NativeFfm.LongBuffer handles = new NativeFfm.LongBuffer();
-        private final NativeFfm.LongBuffer cacheHandles = new NativeFfm.LongBuffer();
-        private final NativeFfm.DoubleBuffer outputs = new NativeFfm.DoubleBuffer();
-        private final NativeFfm.DoubleBuffer cacheValues = new NativeFfm.DoubleBuffer();
-        private final NativeFfm.LongBuffer cacheOffsets = new NativeFfm.LongBuffer();
-        private final NativeFfm.LongBuffer cacheLengths = new NativeFfm.LongBuffer();
     }
 }

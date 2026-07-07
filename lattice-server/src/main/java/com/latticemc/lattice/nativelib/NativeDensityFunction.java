@@ -2,7 +2,6 @@ package com.latticemc.lattice.nativelib;
 
 import com.latticemc.lattice.mixin.NativeInterpolatedNoiseAccess;
 import com.latticemc.lattice.mixin.NativeNormalNoiseAccess;
-import java.lang.foreign.MemorySegment;
 import java.lang.ref.Cleaner;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -145,35 +144,12 @@ public final class NativeDensityFunction {
         NativeDensityFunction compiled = tryCompile(function);
         if (compiled == null) return false;
         try {
-            if (!NativeDensityFunctionFfm.evaluateYColumn(compiled.handle, compiled.cacheHandle, x, y0, z, dy, cellX, cellZ, values)) {
-                nativeEvaluateYColumn(compiled.handle, compiled.cacheHandle, x, y0, z, dy, cellX, cellZ, values.length, values);
-            }
+            nativeEvaluateYColumn(compiled.handle, compiled.cacheHandle, x, y0, z, dy, cellX, cellZ, values.length, values);
             if (stats) SLICE_SUCCESS.increment();
             if (profiling) SLICE_NANOS.add(System.nanoTime() - start);
             return true;
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_grid", e.getMessage());
-            return false;
-        }
-    }
-
-    public static boolean tryFillSliceNativeRow(MemorySegment out,
-                                                int length,
-                                                DensityFunction function,
-                                                double x,
-                                                double y0,
-                                                double z,
-                                                double dy,
-                                                int cellX,
-                                                int cellZ) {
-        if (!ENABLED || out == null || out == MemorySegment.NULL || length <= 0) return false;
-        if (bypassRootNative(function)) return false;
-        NativeDensityFunction compiled = tryCompile(function);
-        if (compiled == null) return false;
-        try {
-            return NativeDensityFunctionFfm.evaluateYColumnToSegment(compiled.handle, compiled.cacheHandle, x, y0, z, dy, cellX, cellZ, length, out);
-        } catch (RuntimeException | LinkageError e) {
-            LatticeNative.logFallbackOnce("density_function_native_row", e.getMessage());
             return false;
         }
     }
@@ -244,9 +220,7 @@ public final class NativeDensityFunction {
         }
         long start = profiling ? System.nanoTime() : 0L;
         try {
-            if (!NativeDensityFunctionFfm.evaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, yRows, outputs)) {
-                nativeEvaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, yRows, outputs);
-            }
+            nativeEvaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, yRows, outputs);
             for (int i = 0; i < count; i++) {
                 accesses[i].lattice$copyFlatRow(isSlice0, zRow, outputs[i], yRows, zRows);
             }
@@ -385,7 +359,6 @@ public final class NativeDensityFunction {
         long[] handles = buffers.handles;
         long[] cacheHandles = buffers.cacheHandles;
         double[][] outputs = buffers.outputs;
-        double[][][] cacheValues = buffers.cacheValues;
         NativeCacheAllInCellAccess[] nativeAccesses = buffers.nativeAccesses;
         NativeCacheAllInCellAccess[] javaAccesses = buffers.javaAccesses;
         int count = 0;
@@ -416,7 +389,6 @@ public final class NativeDensityFunction {
             handles[count] = compiled.handle;
             cacheHandles[count] = compiled.cacheHandle;
             outputs[count] = column;
-            cacheValues[count] = compiled.cacheAllInCellValues;
             nativeAccesses[count] = access;
             count++;
         }
@@ -425,10 +397,9 @@ public final class NativeDensityFunction {
         long start = profiling ? System.nanoTime() : 0L;
         try {
             if (count > 0) {
-                if (!NativeDensityFunctionFfm.evaluateInterpolatedColumns(
+                nativeEvaluateInterpolatedColumns(
                         handles,
                         cacheHandles,
-                        cacheValues,
                         count,
                         cellStartBlockX,
                         firstCellZ * cellWidth,
@@ -439,22 +410,7 @@ public final class NativeDensityFunction {
                         cellHeight,
                         cellCountXZ,
                         cellCountY,
-                        outputs)) {
-                    nativeEvaluateInterpolatedColumns(
-                            handles,
-                            cacheHandles,
-                            count,
-                            cellStartBlockX,
-                            firstCellZ * cellWidth,
-                            cellNoiseMinY * cellHeight,
-                            cellX,
-                            firstCellZ,
-                            cellWidth,
-                            cellHeight,
-                            cellCountXZ,
-                            cellCountY,
-                            outputs);
-                }
+                        outputs);
                 for (int i = 0; i < count; i++) {
                     nativeAccesses[i].lattice$setColumnCellX(cellX);
                 }
@@ -1113,7 +1069,6 @@ public final class NativeDensityFunction {
         private long[] handles = new long[0];
         private long[] cacheHandles = new long[0];
         private double[][] outputs = new double[0][];
-        private double[][][] cacheValues = new double[0][][];
         private NativeCacheAllInCellAccess[] nativeAccesses = new NativeCacheAllInCellAccess[0];
         private NativeCacheAllInCellAccess[] javaAccesses = new NativeCacheAllInCellAccess[0];
 
@@ -1122,7 +1077,6 @@ public final class NativeDensityFunction {
             handles = new long[size];
             cacheHandles = new long[size];
             outputs = new double[size][];
-            cacheValues = new double[size][][];
             nativeAccesses = new NativeCacheAllInCellAccess[size];
             javaAccesses = new NativeCacheAllInCellAccess[size];
         }

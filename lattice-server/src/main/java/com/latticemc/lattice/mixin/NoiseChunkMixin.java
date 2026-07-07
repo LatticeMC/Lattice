@@ -90,19 +90,6 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
         int zRow = cellZ - this.firstCellZ;
         int yRows = this.cellCountY + 1;
         int zRows = this.cellCountXZ + 1;
-        if (NativeDensityFunction.tryFillSliceNativeRow(
-                access.lattice$nativeFlatRow(isSlice0, zRow, yRows, zRows),
-                yRows,
-                interpolator.wrapped(),
-                startX,
-                this.cellNoiseMinY * this.cellHeight,
-                startZ,
-                this.cellHeight,
-                cellX,
-                cellZ)) {
-            access.lattice$markNativeFlatReadable();
-            return;
-        }
         if (NativeDensityFunction.tryFillSlice(
                 values,
                 interpolator.wrapped(),
