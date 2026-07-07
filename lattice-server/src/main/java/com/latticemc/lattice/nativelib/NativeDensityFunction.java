@@ -761,8 +761,14 @@ public final class NativeDensityFunction {
             if (handle == 0L) return null;
             Compiler compiler = new Compiler(handle, function, directCell);
             int root = compiler.compile(function);
-            if (root < 0) return null;
-            if (directCell && !compiler.directCellCandidate()) return null;
+            if (root < 0) {
+                recordUnsupported(function);
+                return null;
+            }
+            if (directCell && !compiler.directCellCandidate()) {
+                recordUnsupported(function);
+                return null;
+            }
             setRoot(handle, root);
             cacheHandle = createCache(handle);
             if (cacheHandle == 0L) return null;
@@ -794,21 +800,19 @@ public final class NativeDensityFunction {
     }
 
     private static long createArena() {
-        long handle = NativeDensityFunctionFfm.create();
-        return handle != 0L ? handle : nativeCreate();
+        return nativeCreate();
     }
 
     private static void destroyArena(long handle) {
-        if (!NativeDensityFunctionFfm.destroy(handle)) nativeDestroy(handle);
+        nativeDestroy(handle);
     }
 
     private static void setRoot(long handle, int root) {
-        if (!NativeDensityFunctionFfm.setRoot(handle, root)) nativeSetRoot(handle, root);
+        nativeSetRoot(handle, root);
     }
 
     private static long createCache(long handle) {
-        long cache = NativeDensityFunctionFfm.createCache(handle);
-        return cache != 0L ? cache : nativeCreateCache(handle);
+        return nativeCreateCache(handle);
     }
 
     private record LastCompile(DensityFunction function, NativeDensityFunction compiled) {}
@@ -1114,103 +1118,83 @@ public final class NativeDensityFunction {
     }
 
     private static int addConstant(long handle, double value) {
-        int ref = NativeDensityFunctionFfm.addConstant(handle, value);
-        return ref >= 0 ? ref : nativeAddConstant(handle, value);
+        return nativeAddConstant(handle, value);
     }
 
     private static int addUnary(long handle, int ffmKind, int input, UnaryNativeAdd fallback) {
-        int ref = NativeDensityFunctionFfm.addUnary(handle, ffmKind, input);
-        return ref >= 0 ? ref : fallback.add(handle, input);
+        return fallback.add(handle, input);
     }
 
     private static int addBinary(long handle, int ffmKind, int left, int right, BinaryNativeAdd fallback) {
-        int ref = NativeDensityFunctionFfm.addBinary(handle, ffmKind, left, right);
-        return ref >= 0 ? ref : fallback.add(handle, left, right);
+        return fallback.add(handle, left, right);
     }
 
     private static int addYClampedGradient(long handle, int fromY, int toY, double fromValue, double toValue) {
-        int ref = NativeDensityFunctionFfm.addYGradient(handle, fromY, toY, fromValue, toValue);
-        return ref >= 0 ? ref : nativeAddYClampedGradient(handle, fromY, toY, fromValue, toValue);
+        return nativeAddYClampedGradient(handle, fromY, toY, fromValue, toValue);
     }
 
     private static int addClamp(long handle, int input, double minValue, double maxValue) {
-        int ref = NativeDensityFunctionFfm.addClamp(handle, input, minValue, maxValue);
-        return ref >= 0 ? ref : nativeAddClamp(handle, input, minValue, maxValue);
+        return nativeAddClamp(handle, input, minValue, maxValue);
     }
 
     private static int addBlendAlpha(long handle) {
-        int ref = NativeDensityFunctionFfm.addBlendAlpha(handle);
-        return ref >= 0 ? ref : nativeAddBlendAlpha(handle);
+        return nativeAddBlendAlpha(handle);
     }
 
     private static int addBlendOffset(long handle) {
-        int ref = NativeDensityFunctionFfm.addBlendOffset(handle);
-        return ref >= 0 ? ref : nativeAddBlendOffset(handle);
+        return nativeAddBlendOffset(handle);
     }
 
     private static int addBlendDensity(long handle, int input) {
-        int ref = NativeDensityFunctionFfm.addBlendDensity(handle, input);
-        return ref >= 0 ? ref : nativeAddBlendDensity(handle, input);
+        return nativeAddBlendDensity(handle, input);
     }
 
     private static int addNoise(long handle, long noiseHandle, double scaleXZ, double scaleY) {
-        int ref = NativeDensityFunctionFfm.addNoise(handle, noiseHandle, scaleXZ, scaleY);
-        return ref >= 0 ? ref : nativeAddNoise(handle, noiseHandle, scaleXZ, scaleY);
+        return nativeAddNoise(handle, noiseHandle, scaleXZ, scaleY);
     }
 
     private static int addShiftedNoise(long handle, int shiftX, int shiftY, int shiftZ, long noiseHandle, double xzScale, double yScale) {
-        int ref = NativeDensityFunctionFfm.addShiftedNoise(handle, shiftX, shiftY, shiftZ, noiseHandle, xzScale, yScale);
-        return ref >= 0 ? ref : nativeAddShiftedNoise(handle, shiftX, shiftY, shiftZ, noiseHandle, xzScale, yScale);
+        return nativeAddShiftedNoise(handle, shiftX, shiftY, shiftZ, noiseHandle, xzScale, yScale);
     }
 
     private static int addShift(long handle, int ffmKind, long noiseHandle, NoiseShiftNativeAdd fallback) {
-        int ref = NativeDensityFunctionFfm.addShift(handle, ffmKind, noiseHandle);
-        return ref >= 0 ? ref : fallback.add(handle, noiseHandle);
+        return fallback.add(handle, noiseHandle);
     }
 
     private static int addRangeChoice(long handle, int input, double minInclusive, double maxExclusive, int whenIn, int whenOut) {
-        int ref = NativeDensityFunctionFfm.addRangeChoice(handle, input, minInclusive, maxExclusive, whenIn, whenOut);
-        return ref >= 0 ? ref : nativeAddRangeChoice(handle, input, minInclusive, maxExclusive, whenIn, whenOut);
+        return nativeAddRangeChoice(handle, input, minInclusive, maxExclusive, whenIn, whenOut);
     }
 
     private static int addMapRange(long handle, int input, double fromLow, double fromHigh, double toLow, double toHigh) {
-        int ref = NativeDensityFunctionFfm.addMapRange(handle, input, fromLow, fromHigh, toLow, toHigh);
-        return ref >= 0 ? ref : nativeAddMapRange(handle, input, fromLow, fromHigh, toLow, toHigh);
+        return nativeAddMapRange(handle, input, fromLow, fromHigh, toLow, toHigh);
     }
 
     private static int addCache(long handle, int ffmKind, int input, UnaryNativeAdd fallback) {
-        int ref = NativeDensityFunctionFfm.addCache(handle, ffmKind, input);
-        return ref >= 0 ? ref : fallback.add(handle, input);
+        return fallback.add(handle, input);
     }
 
     private static int addCacheAllInCellValue(long handle) {
-        int ref = NativeDensityFunctionFfm.addCacheAllInCellValue(handle);
-        return ref >= 0 ? ref : nativeAddCacheAllInCellValue(handle);
+        return nativeAddCacheAllInCellValue(handle);
     }
 
     private static int cacheSlot(long handle, int nodeRef) {
-        int slot = NativeDensityFunctionFfm.cacheSlot(handle, nodeRef);
-        return slot >= 0 ? slot : nativeCacheSlot(handle, nodeRef);
+        return nativeCacheSlot(handle, nodeRef);
     }
 
     private static int addWeirdScaledSampler(long handle, int input, long noiseHandle, int type) {
-        int ref = NativeDensityFunctionFfm.addWeirdScaledSampler(handle, input, noiseHandle, type);
-        return ref >= 0 ? ref : nativeAddWeirdScaledSampler(handle, input, noiseHandle, type);
+        return nativeAddWeirdScaledSampler(handle, input, noiseHandle, type);
     }
 
     private static int addInterpolatedNoise(long handle, long samplerHandle) {
-        int ref = NativeDensityFunctionFfm.addInterpolatedNoise(handle, samplerHandle);
-        return ref >= 0 ? ref : nativeAddInterpolatedNoise(handle, samplerHandle);
+        return nativeAddInterpolatedNoise(handle, samplerHandle);
     }
 
     private static int addSpline(long handle, int splineRef) {
-        int ref = NativeDensityFunctionFfm.addSpline(handle, splineRef);
-        return ref >= 0 ? ref : nativeAddSpline(handle, splineRef);
+        return nativeAddSpline(handle, splineRef);
     }
 
     private static int addBeardifier(long handle, long beardifierHandle) {
-        int ref = NativeDensityFunctionFfm.addBeardifier(handle, beardifierHandle);
-        return ref >= 0 ? ref : nativeAddBeardifier(handle, beardifierHandle);
+        return nativeAddBeardifier(handle, beardifierHandle);
     }
 
     private static final class Compiler {

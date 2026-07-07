@@ -16,7 +16,7 @@ public final class NativeFfm {
     public static final ValueLayout.OfByte C_BYTE = ValueLayout.JAVA_BYTE;
     public static final ValueLayout.OfBoolean C_BOOL = ValueLayout.JAVA_BOOLEAN;
 
-    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.ffm", "true"));
+    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.ffm", "false"));
     private static final Linker LINKER;
     private static final SymbolLookup LOOKUP;
     private static final boolean AVAILABLE;
