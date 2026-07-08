@@ -67,4 +67,9 @@ struct InterpolatedNoiseSampler {
                             double block_x, double block_y,
                             double block_z) noexcept;
 
+void sample_batch(const InterpolatedNoiseSampler& s,
+                  const double* block_x, const double* block_y,
+                  const double* block_z,
+                  std::size_t count, double* out) noexcept;
+
 } // namespace lattice::world::gen::noise

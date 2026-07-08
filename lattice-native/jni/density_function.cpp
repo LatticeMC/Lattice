@@ -1150,6 +1150,72 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
 }
 
 JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumnsPacked(
+        JNIEnv* env, jclass /*cls*/,
+        jlongArray handles, jlongArray cacheHandles, jint count,
+        jdouble x, jdouble y0, jdouble z, jdouble dy,
+        jint cellX, jint cellZ,
+        jint ny,
+        jdoubleArray outPacked) {
+    if (!handles || !cacheHandles || !outPacked) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null packed batch arrays");
+        return;
+    }
+    if (count <= 0 || ny <= 0) return;
+    const jsize handle_count = env->GetArrayLength(handles);
+    const jsize cache_count = env->GetArrayLength(cacheHandles);
+    const std::size_t required = static_cast<std::size_t>(count) * static_cast<std::size_t>(ny);
+    if (handle_count < count || cache_count < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: packed batch handle arrays too small");
+        return;
+    }
+
+    lattice::jni::CriticalLongArray handle_data{env, handles};
+    if (!handle_data) {
+        lattice::jni::throw_illegal_state(env, "lattice density: packed handles lock failed");
+        return;
+    }
+    lattice::jni::CriticalLongArray cache_data{env, cacheHandles};
+    if (!cache_data) {
+        lattice::jni::throw_illegal_state(env, "lattice density: packed cache handles lock failed");
+        return;
+    }
+    lattice::jni::CriticalDoubleArray out_data{env, outPacked};
+    if (!out_data) {
+        lattice::jni::throw_illegal_state(env, "lattice density: packed output lock failed");
+        return;
+    }
+    if (out_data.size() < required) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: packed output array too small");
+        return;
+    }
+
+    for (jint i = 0; i < count; ++i) {
+        auto* a = arena_from(handle_data.data()[i]);
+        if (!a) {
+            lattice::jni::throw_illegal_state(env, "lattice density: null arena in packed batch");
+            return;
+        }
+        auto* cache = reinterpret_cast<df::CacheState*>(cache_data.data()[i]);
+        if (cache) cache->clear();
+        df::evaluate_y_column(*a, a->root,
+                              static_cast<double>(x),
+                              static_cast<double>(y0),
+                              static_cast<double>(z),
+                              static_cast<double>(dy),
+                              static_cast<int>(cellX),
+                              static_cast<int>(cellZ),
+                              static_cast<int>(ny),
+                              cache,
+                              reinterpret_cast<double*>(out_data.data())
+                                      + static_cast<std::size_t>(i) * static_cast<std::size_t>(ny));
+    }
+
+    handle_data.release_ro();
+    cache_data.release_ro();
+}
+
+JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpolatedCell(
         JNIEnv* env, jclass /*cls*/,
         jlong handle, jlong cacheHandle,

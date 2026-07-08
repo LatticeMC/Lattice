@@ -297,6 +297,19 @@ target_sources(lattice PRIVATE
     jni/perlin_noise.cpp
 )
 
+if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
+    target_compile_definitions(lattice PRIVATE LATTICE_HAS_PERLIN_AVX2=1)
+    if(MSVC)
+        lattice_add_simd_object(lattice_perlin_avx2
+            SOURCES src/world/gen/noise/perlin_noise_avx2.cpp
+            FLAGS   /arch:AVX2)
+    else()
+        lattice_add_simd_object(lattice_perlin_avx2
+            SOURCES src/world/gen/noise/perlin_noise_avx2.cpp
+            FLAGS   -mavx2)
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Module: NativeOctavePerlinNoise (Worldgen-2): N-octave weighted sum.
 # ---------------------------------------------------------------------------
@@ -352,6 +365,19 @@ target_sources(lattice PRIVATE
     src/world/gen/noise/simplex_noise.cpp
     jni/simplex_noise.cpp
 )
+
+if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
+    target_compile_definitions(lattice PRIVATE LATTICE_HAS_SIMPLEX_AVX2=1)
+    if(MSVC)
+        lattice_add_simd_object(lattice_simplex_avx2
+            SOURCES src/world/gen/noise/simplex_noise_avx2.cpp
+            FLAGS   /arch:AVX2)
+    else()
+        lattice_add_simd_object(lattice_simplex_avx2
+            SOURCES src/world/gen/noise/simplex_noise_avx2.cpp
+            FLAGS   -mavx2)
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # Module: InterpolatedNoiseSampler (Worldgen-12): legacy 1.16-style

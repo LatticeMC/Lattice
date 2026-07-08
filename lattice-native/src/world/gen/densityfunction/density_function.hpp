@@ -468,6 +468,16 @@ struct CacheState {
     int horizontal_cell_count = 0;
     int vertical_cell_count   = 0;
 
+    /// Reusable Y-column scratch buffers for native batch leaf nodes.
+    /// These are per-cache/per-chunk, so hot density evaluation can avoid
+    /// repeatedly allocating temporary SoA coordinate arrays.
+    std::vector<double> scratch_x;
+    std::vector<double> scratch_y;
+    std::vector<double> scratch_z;
+    std::vector<double> scratch_value;
+    std::vector<std::vector<double>> scratch_columns;
+    std::size_t scratch_column_depth = 0;
+
     /// True between sample_start_density() and stop_interpolation().
     /// When true, kInterpolated returns interpolators[slot].result;
     /// when false, it passthrough-evaluates the wrapped input.
@@ -509,6 +519,11 @@ struct CacheState {
         for (auto& m : cache_all_in_cell) m.clear();
         for (auto& p : cache_all_in_cell_arrays) p = nullptr;
         for (auto& n : cache_all_in_cell_array_lengths) n = 0;
+        scratch_x.clear();
+        scratch_y.clear();
+        scratch_z.clear();
+        scratch_value.clear();
+        scratch_column_depth = 0;
         // Interpolator buffers retain their allocation; only the
         // logical loop state is reset.
         is_in_interpolation_loop = false;

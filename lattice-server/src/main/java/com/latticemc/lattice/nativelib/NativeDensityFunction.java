@@ -33,6 +33,7 @@ public final class NativeDensityFunction {
     private static volatile boolean PARITY_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionParity");
     private static volatile int PARITY_INTERVAL = Integer.getInteger("lattice.nativeDensityFunctionParityInterval", 1024);
     private static volatile boolean Y_COLUMN_NATIVE_AVAILABLE = true;
+    private static volatile boolean Y_COLUMNS_PACKED_NATIVE_AVAILABLE = true;
     private static volatile boolean Y_COLUMNS_NATIVE_AVAILABLE = true;
     private static volatile boolean INTERPOLATED_COLUMN_NATIVE_AVAILABLE = true;
     private static volatile boolean INTERPOLATED_COLUMNS_NATIVE_AVAILABLE = true;
@@ -224,7 +225,8 @@ public final class NativeDensityFunction {
         }
         long start = profiling ? System.nanoTime() : 0L;
         try {
-            evaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, yRows, outputs);
+            buffers.ensurePackedCapacity(count * yRows);
+            evaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, yRows, outputs, buffers.packedOutputs);
             for (int i = 0; i < count; i++) {
                 accesses[i].lattice$copyFlatRow(isSlice0, zRow, outputs[i], yRows, zRows);
             }
@@ -271,10 +273,23 @@ public final class NativeDensityFunction {
                                          double y0,
                                          double z,
                                          double dy,
-                                         int cellX,
-                                         int cellZ,
-                                         int ny,
-                                         double[][] out) {
+                                          int cellX,
+                                          int cellZ,
+                                          int ny,
+                                          double[][] out,
+                                          double[] packedOut) {
+        if (Y_COLUMNS_PACKED_NATIVE_AVAILABLE && packedOut.length >= count * ny) {
+            try {
+                nativeEvaluateYColumnsPacked(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, ny, packedOut);
+                for (int i = 0; i < count; i++) {
+                    System.arraycopy(packedOut, i * ny, out[i], 0, ny);
+                }
+                return;
+            } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
+                Y_COLUMNS_PACKED_NATIVE_AVAILABLE = false;
+                LatticeNative.logFallbackOnce("density_function_y_columns_packed_symbol", e.getMessage());
+            }
+        }
         if (Y_COLUMNS_NATIVE_AVAILABLE) {
             try {
                 nativeEvaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, ny, out);
@@ -1177,6 +1192,7 @@ public final class NativeDensityFunction {
         private long[] handles = new long[0];
         private long[] cacheHandles = new long[0];
         private double[][] outputs = new double[0][];
+        private double[] packedOutputs = new double[0];
         private NativeNoiseInterpolatorAccess[] accesses = new NativeNoiseInterpolatorAccess[0];
         private NoiseChunk.NoiseInterpolator[] javaInterpolators = new NoiseChunk.NoiseInterpolator[0];
         private double[][] javaOutputs = new double[0][];
@@ -1191,6 +1207,10 @@ public final class NativeDensityFunction {
             javaInterpolators = new NoiseChunk.NoiseInterpolator[size];
             javaOutputs = new double[size][];
             javaAccesses = new NativeNoiseInterpolatorAccess[size];
+        }
+
+        private void ensurePackedCapacity(int size) {
+            if (packedOutputs.length < size) packedOutputs = new double[size];
         }
     }
 
@@ -1608,6 +1628,7 @@ public final class NativeDensityFunction {
     private static native void nativeClearCache(long cacheHandle);
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateYColumn(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] out);
+    private static native void nativeEvaluateYColumnsPacked(long[] handles, long[] cacheHandles, int count, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] outPacked);
     private static native void nativeEvaluateYColumns(long[] handles, long[] cacheHandles, int count, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[][] out);
     private static native void nativeEvaluateCell(long handle, long cacheHandle, double x0, double yTop, double z0, int cellX, int cellZ, int cellWidth, int cellHeight, double[][] cacheAllInCellValues, double[] out);
     private static native void nativeEvaluateInterpolatedCell(long handle, long cacheHandle, double x0, double yTop, double z0, int cellX, int cellZ, int localCellY, int localCellZ, int cellWidth, int cellHeight, double[][] cacheAllInCellValues, double[] out);

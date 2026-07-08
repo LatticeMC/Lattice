@@ -2,7 +2,28 @@
 
 #include "world/gen/noise/double_perlin_noise.hpp"
 
+#include <cstddef>
+#include <vector>
+
 namespace lattice::world::gen::noise {
+
+namespace {
+struct DoublePerlinBatchScratch {
+    std::vector<double> scaled_x;
+    std::vector<double> scaled_y;
+    std::vector<double> scaled_z;
+    std::vector<double> second;
+
+    void resize(std::size_t count) {
+        scaled_x.resize(count);
+        scaled_y.resize(count);
+        scaled_z.resize(count);
+        second.resize(count);
+    }
+};
+
+thread_local DoublePerlinBatchScratch g_double_perlin_batch_scratch;
+} // namespace
 
 double sample(const DoublePerlinNoiseSampler& s,
               double x, double y, double z) noexcept {
@@ -12,6 +33,43 @@ double sample(const DoublePerlinNoiseSampler& s,
     const double v1 = sample(s.first,  x,  y,  z);
     const double v2 = sample(s.second, sx, sy, sz);
     return (v1 + v2) * s.amplitude;
+}
+
+void sample_batch(const DoublePerlinNoiseSampler& s,
+                  const double* x, const double* y, const double* z,
+                  std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+    if (count == 0) return;
+
+    DoublePerlinBatchScratch& scratch = g_double_perlin_batch_scratch;
+    scratch.resize(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        scratch.scaled_x[i] = x[i] * kDomainScale;
+        scratch.scaled_y[i] = y[i] * kDomainScale;
+        scratch.scaled_z[i] = z[i] * kDomainScale;
+    }
+    sample_batch(s.first, x, y, z, count, out);
+    sample_batch(s.second, scratch.scaled_x.data(), scratch.scaled_y.data(), scratch.scaled_z.data(), count, scratch.second.data());
+    for (std::size_t i = 0; i < count; ++i) out[i] = (out[i] + scratch.second[i]) * s.amplitude;
+}
+
+void sample_y_column(const DoublePerlinNoiseSampler& s,
+                     double x, double y0, double z, double dy,
+                     std::size_t count, double* out) noexcept {
+    if (!out) return;
+    if (count == 0) return;
+
+    DoublePerlinBatchScratch& scratch = g_double_perlin_batch_scratch;
+    scratch.resize(count);
+    sample_y_column(s.first, x, y0, z, dy, count, out);
+    sample_y_column(s.second,
+                    x * kDomainScale,
+                    y0 * kDomainScale,
+                    z * kDomainScale,
+                    dy * kDomainScale,
+                    count,
+                    scratch.second.data());
+    for (std::size_t i = 0; i < count; ++i) out[i] = (out[i] + scratch.second[i]) * s.amplitude;
 }
 
 } // namespace lattice::world::gen::noise

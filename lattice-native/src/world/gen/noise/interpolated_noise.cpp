@@ -107,4 +107,14 @@ double sample(const InterpolatedNoiseSampler& s,
     return clamped_lerp(q, l_acc / 512.0, m_acc / 512.0) / 128.0;
 }
 
+void sample_batch(const InterpolatedNoiseSampler& s,
+                  const double* block_x, const double* block_y,
+                  const double* block_z,
+                  std::size_t count, double* out) noexcept {
+    if (!block_x || !block_y || !block_z || !out) return;
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = sample(s, block_x[i], block_y[i], block_z[i]);
+    }
+}
+
 } // namespace lattice::world::gen::noise

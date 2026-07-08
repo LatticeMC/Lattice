@@ -13,6 +13,7 @@
 #include "world/gen/densityfunction/density_function.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include "lattice/dispatch.hpp"
@@ -93,6 +94,88 @@ inline double squeeze(double v) noexcept {
     return clamped * 0.5 - clamped * clamped * clamped / 24.0;
 }
 
+inline double evaluate_end_islands(const Node& n, double x, double z) noexcept {
+    if (!n.simplex_ptr) return 0.0;
+    const int blockX = static_cast<int>(x);
+    const int blockZ = static_cast<int>(z);
+    const int chunkX = blockX / 8;
+    const int chunkZ = blockZ / 8;
+    double height =
+        (static_cast<double>(blockX) * blockX
+         + static_cast<double>(blockZ) * blockZ) / 4096.0 * -8.0 + 100.0;
+    if (height > 80.0) height = 80.0;
+    if (height < -100.0) height = -100.0;
+
+    std::array<int, 625> candidate_x{};
+    std::array<int, 625> candidate_z{};
+    std::array<double, 625> sample_x{};
+    std::array<double, 625> sample_z{};
+    std::array<double, 625> samples{};
+    std::size_t candidate_count = 0;
+
+    for (int dx = -12; dx <= 12; ++dx) {
+        for (int dz = -12; dz <= 12; ++dz) {
+            const int cx = chunkX + dx;
+            const int cz = chunkZ + dz;
+            if (static_cast<long long>(cx) * cx + static_cast<long long>(cz) * cz > 4096) {
+                candidate_x[candidate_count] = cx;
+                candidate_z[candidate_count] = cz;
+                sample_x[candidate_count] = static_cast<double>(cx);
+                sample_z[candidate_count] = static_cast<double>(cz);
+                ++candidate_count;
+            }
+        }
+    }
+    noise::sample_2d_batch(*n.simplex_ptr, sample_x.data(), sample_z.data(), candidate_count, samples.data());
+    for (std::size_t i = 0; i < candidate_count; ++i) {
+        if (samples[i] >= -0.9) continue;
+        const int cx = candidate_x[i];
+        const int cz = candidate_z[i];
+        const int abs_cx = cx < 0 ? -cx : cx;
+        const int abs_cz = cz < 0 ? -cz : cz;
+        const double island_radius =
+            static_cast<double>((abs_cx * 3439 + abs_cz * 147) % 13 + 9);
+        const double local_x = blockX / 8.0 - cx * 2;
+        const double local_z = blockZ / 8.0 - cz * 2;
+        const double dist = std::sqrt(local_x * local_x + local_z * local_z);
+        const double island_height = island_radius - dist;
+        if (island_height > height) height = island_height;
+    }
+    return height;
+}
+
+struct ColumnScratchLease {
+    CacheState* cache = nullptr;
+    std::vector<double> local;
+    std::size_t index = 0;
+
+    ColumnScratchLease(CacheState* cache_in, int ny) : cache(cache_in) {
+        const std::size_t count = static_cast<std::size_t>(ny);
+        if (!cache) {
+            local.resize(count);
+            return;
+        }
+        index = cache->scratch_column_depth++;
+        if (cache->scratch_columns.size() <= index) cache->scratch_columns.resize(index + 1u);
+        cache->scratch_columns[index].resize(count);
+    }
+
+    ~ColumnScratchLease() {
+        if (cache) --cache->scratch_column_depth;
+    }
+
+    double* data() noexcept {
+        return cache ? cache->scratch_columns[index].data() : local.data();
+    }
+
+    const double* data() const noexcept {
+        return cache ? cache->scratch_columns[index].data() : local.data();
+    }
+
+    ColumnScratchLease(const ColumnScratchLease&) = delete;
+    ColumnScratchLease& operator=(const ColumnScratchLease&) = delete;
+};
+
 bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
                             const Context& base,
                             double y0, double dy, int ny,
@@ -123,20 +206,34 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
             for (int i = 0; i < ny; ++i) out[i] = 0.0;
             return true;
 
+        case NodeKind::kEndIslands: {
+            const double value = evaluate_end_islands(n, base.x, base.z);
+            for (int i = 0; i < ny; ++i) out[i] = value;
+            return true;
+        }
+
         case NodeKind::kNoise:
             if (!n.noise_ptr) {
                 for (int i = 0; i < ny; ++i) out[i] = 0.0;
                 return true;
             }
-            for (int i = 0; i < ny; ++i) {
-                const double y = y0 + static_cast<double>(i) * dy;
-                out[i] = noise::sample(*n.noise_ptr, base.x * n.d0, y * n.d1, base.z * n.d0);
+            {
+                const std::size_t count = static_cast<std::size_t>(ny);
+                noise::sample_y_column(*n.noise_ptr,
+                                       base.x * n.d0,
+                                       y0 * n.d1,
+                                       base.z * n.d0,
+                                       dy * n.d1,
+                                       count,
+                                       out);
             }
             return true;
 
         case NodeKind::kShiftA: {
             const double value = n.noise_ptr ? noise::sample(*n.noise_ptr, base.x * 0.25, 0.0, base.z * 0.25) * 4.0 : 0.0;
-            for (int i = 0; i < ny; ++i) out[i] = value;
+            for (int i = 0; i < ny; ++i) {
+                out[i] = value;
+            }
             return true;
         }
 
@@ -151,9 +248,19 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
                 for (int i = 0; i < ny; ++i) out[i] = 0.0;
                 return true;
             }
-            for (int i = 0; i < ny; ++i) {
-                const double y = y0 + static_cast<double>(i) * dy;
-                out[i] = noise::sample(*n.noise_ptr, base.x * 0.25, y * 0.25, base.z * 0.25) * 4.0;
+            {
+                std::vector<double> local_values;
+                std::vector<double>& values = base.cache ? base.cache->scratch_value : local_values;
+                const std::size_t count = static_cast<std::size_t>(ny);
+                values.resize(count);
+                noise::sample_y_column(*n.noise_ptr,
+                                       base.x * 0.25,
+                                       y0 * 0.25,
+                                       base.z * 0.25,
+                                       dy * 0.25,
+                                       count,
+                                       values.data());
+                for (int i = 0; i < ny; ++i) out[i] = values[static_cast<std::size_t>(i)] * 4.0;
             }
             return true;
 
@@ -166,10 +273,10 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
         case NodeKind::kSqueeze:
         case NodeKind::kClamp:
         case NodeKind::kBlendDensity: {
-            std::vector<double> values(static_cast<std::size_t>(ny));
+            ColumnScratchLease values(base.cache, ny);
             if (!eval_child(n.a, values.data())) return false;
             for (int i = 0; i < ny; ++i) {
-                const double v = values[static_cast<std::size_t>(i)];
+                const double v = values.data()[static_cast<std::size_t>(i)];
                 switch (n.kind) {
                     case NodeKind::kAbs: out[i] = std::abs(v); break;
                     case NodeKind::kSquare: out[i] = v * v; break;
@@ -190,11 +297,11 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
         case NodeKind::kMul:
         case NodeKind::kMin:
         case NodeKind::kMax: {
-            std::vector<double> left(static_cast<std::size_t>(ny));
+            ColumnScratchLease left(base.cache, ny);
             if (!eval_child(n.a, left.data())) return false;
             if (n.a == n.b) {
                 for (int i = 0; i < ny; ++i) {
-                    const double v = left[static_cast<std::size_t>(i)];
+                    const double v = left.data()[static_cast<std::size_t>(i)];
                     switch (n.kind) {
                         case NodeKind::kAdd: out[i] = v + v; break;
                         case NodeKind::kMul: out[i] = v * v; break;
@@ -205,11 +312,11 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
                 }
                 return true;
             }
-            std::vector<double> right(static_cast<std::size_t>(ny));
+            ColumnScratchLease right(base.cache, ny);
             if (!eval_child(n.b, right.data())) return false;
             for (int i = 0; i < ny; ++i) {
-                const double a = left[static_cast<std::size_t>(i)];
-                const double b = right[static_cast<std::size_t>(i)];
+                const double a = left.data()[static_cast<std::size_t>(i)];
+                const double b = right.data()[static_cast<std::size_t>(i)];
                 switch (n.kind) {
                     case NodeKind::kAdd: out[i] = a + b; break;
                     case NodeKind::kMul: out[i] = a == 0.0 ? 0.0 : a * b; break;
@@ -222,22 +329,22 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
         }
 
         case NodeKind::kMapRange: {
-            std::vector<double> input(static_cast<std::size_t>(ny));
+            ColumnScratchLease input(base.cache, ny);
             if (!eval_child(n.a, input.data())) return false;
-            for (int i = 0; i < ny; ++i) out[i] = map_range(input[static_cast<std::size_t>(i)], n.d0, n.d1, n.d2, n.d3);
+            for (int i = 0; i < ny; ++i) out[i] = map_range(input.data()[static_cast<std::size_t>(i)], n.d0, n.d1, n.d2, n.d3);
             return true;
         }
 
         case NodeKind::kRangeChoice: {
-            std::vector<double> input(static_cast<std::size_t>(ny));
-            std::vector<double> in_values(static_cast<std::size_t>(ny));
-            std::vector<double> out_values(static_cast<std::size_t>(ny));
+            ColumnScratchLease input(base.cache, ny);
+            ColumnScratchLease in_values(base.cache, ny);
+            ColumnScratchLease out_values(base.cache, ny);
             if (!eval_child(n.a, input.data())) return false;
             if (!eval_child(n.b, in_values.data())) return false;
             if (!eval_child(n.c, out_values.data())) return false;
             for (int i = 0; i < ny; ++i) {
-                const double value = input[static_cast<std::size_t>(i)];
-                out[i] = value >= n.d0 && value < n.d1 ? in_values[static_cast<std::size_t>(i)] : out_values[static_cast<std::size_t>(i)];
+                const double value = input.data()[static_cast<std::size_t>(i)];
+                out[i] = value >= n.d0 && value < n.d1 ? in_values.data()[static_cast<std::size_t>(i)] : out_values.data()[static_cast<std::size_t>(i)];
             }
             return true;
         }
@@ -247,19 +354,29 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
                 for (int i = 0; i < ny; ++i) out[i] = 0.0;
                 return true;
             }
-            std::vector<double> sx(static_cast<std::size_t>(ny));
-            std::vector<double> sy(static_cast<std::size_t>(ny));
-            std::vector<double> sz(static_cast<std::size_t>(ny));
+            ColumnScratchLease sx(base.cache, ny);
+            ColumnScratchLease sy(base.cache, ny);
+            ColumnScratchLease sz(base.cache, ny);
             if (!eval_child(n.a, sx.data())) return false;
             if (!eval_child(n.b, sy.data())) return false;
             if (!eval_child(n.c, sz.data())) return false;
+            std::vector<double> local_xs;
+            std::vector<double> local_ys;
+            std::vector<double> local_zs;
+            std::vector<double>& xs = base.cache ? base.cache->scratch_x : local_xs;
+            std::vector<double>& ys = base.cache ? base.cache->scratch_y : local_ys;
+            std::vector<double>& zs = base.cache ? base.cache->scratch_z : local_zs;
+            const std::size_t count = static_cast<std::size_t>(ny);
+            xs.resize(count);
+            ys.resize(count);
+            zs.resize(count);
             for (int i = 0; i < ny; ++i) {
                 const double y = y0 + static_cast<double>(i) * dy;
-                out[i] = noise::sample(*n.noise_ptr,
-                                       base.x * n.d0 + sx[static_cast<std::size_t>(i)],
-                                       y * n.d1 + sy[static_cast<std::size_t>(i)],
-                                       base.z * n.d0 + sz[static_cast<std::size_t>(i)]);
+                xs[static_cast<std::size_t>(i)] = base.x * n.d0 + sx.data()[static_cast<std::size_t>(i)];
+                ys[static_cast<std::size_t>(i)] = y * n.d1 + sy.data()[static_cast<std::size_t>(i)];
+                zs[static_cast<std::size_t>(i)] = base.z * n.d0 + sz.data()[static_cast<std::size_t>(i)];
             }
+            noise::sample_batch(*n.noise_ptr, xs.data(), ys.data(), zs.data(), count, out);
             return true;
         }
 
@@ -608,7 +725,6 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
         }
 
         case NodeKind::kEndIslands: {
-            if (!n.simplex_ptr) return 0.0;
             // Mojang's `EndIslands.compute(noise, blockX, blockZ)`:
             //
             //   chunkX = blockX // 8
@@ -629,42 +745,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             //
             // The integer division for chunkX/Z is Java's truncate-toward-zero;
             // we match it by using static_cast<int>(double) which truncates.
-            const int blockX = static_cast<int>(ctx.x);
-            const int blockZ = static_cast<int>(ctx.z);
-            const int chunkX = blockX / 8;
-            const int chunkZ = blockZ / 8;
-            double height =
-                (static_cast<double>(blockX) * blockX
-                 + static_cast<double>(blockZ) * blockZ) / 4096.0 * -8.0 + 100.0;
-            if (height > 80.0)   height = 80.0;
-            if (height < -100.0) height = -100.0;
-
-            for (int dx = -12; dx <= 12; ++dx) {
-                for (int dz = -12; dz <= 12; ++dz) {
-                    const int cx = chunkX + dx;
-                    const int cz = chunkZ + dz;
-                    if (static_cast<long long>(cx) * cx
-                      + static_cast<long long>(cz) * cz > 4096) {
-                        const double island_noise = noise::sample_2d(
-                            *n.simplex_ptr,
-                            static_cast<double>(cx),
-                            static_cast<double>(cz));
-                        if (island_noise < -0.9) {
-                            const int abs_cx = cx < 0 ? -cx : cx;
-                            const int abs_cz = cz < 0 ? -cz : cz;
-                            const double island_radius =
-                                static_cast<double>((abs_cx * 3439 + abs_cz * 147) % 13 + 9);
-                            const double local_x = blockX / 8.0 - cx * 2;
-                            const double local_z = blockZ / 8.0 - cz * 2;
-                            const double dist = std::sqrt(local_x * local_x
-                                                        + local_z * local_z);
-                            const double island_height = island_radius - dist;
-                            if (island_height > height) height = island_height;
-                        }
-                    }
-                }
-            }
-            return height;
+            return evaluate_end_islands(n, ctx.x, ctx.z);
         }
 
         // ---- Worldgen-7 additions ----

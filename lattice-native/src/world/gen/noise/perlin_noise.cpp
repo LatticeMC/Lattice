@@ -18,6 +18,8 @@
 
 #include <cmath>
 
+#include "lattice/dispatch.hpp"
+
 namespace lattice::world::gen::noise {
 
 namespace {
@@ -128,6 +130,72 @@ double sample(const PerlinNoiseSampler& s,
     return sample_core(s, x, y, z);
 }
 
+void sample_batch_scalar(const PerlinNoiseSampler& s,
+                         const double* x, const double* y, const double* z,
+                         std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = sample_core(s, x[i], y[i], z[i]);
+    }
+}
+
+void sample_batch(const PerlinNoiseSampler& s,
+                  const double* x, const double* y, const double* z,
+                  std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+#if defined(LATTICE_HAS_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_batch_avx2(s, x, y, z, count, out);
+        return;
+    }
+#endif
+    sample_batch_scalar(s, x, y, z, count, out);
+}
+
+void sample_y_column_scalar(const PerlinNoiseSampler& s,
+                            double x, double y0, double z, double dy,
+                            std::size_t count, double* out) noexcept {
+    if (!out) return;
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = sample_core(s, x, y0 + static_cast<double>(i) * dy, z);
+    }
+}
+
+void sample_y_column(const PerlinNoiseSampler& s,
+                     double x, double y0, double z, double dy,
+                     std::size_t count, double* out) noexcept {
+    if (!out) return;
+#if defined(LATTICE_HAS_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_y_column_avx2(s, x, y0, z, dy, count, out);
+        return;
+    }
+#endif
+    sample_y_column_scalar(s, x, y0, z, dy, count, out);
+}
+
+void sample_y_array_scalar(const PerlinNoiseSampler& s,
+                           double x, const double* y, double z,
+                           std::size_t count, double* out) noexcept {
+    if (!y || !out) return;
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = sample_core(s, x, y[i], z);
+    }
+}
+
+void sample_y_array(const PerlinNoiseSampler& s,
+                    double x, const double* y, double z,
+                    std::size_t count, double* out) noexcept {
+    if (!y || !out) return;
+#if defined(LATTICE_HAS_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_y_array_avx2(s, x, y, z, count, out);
+        return;
+    }
+#endif
+    sample_y_array_scalar(s, x, y, z, count, out);
+}
+
 double sample_y_scaled(const PerlinNoiseSampler& s,
                        double x, double y, double z,
                        double y_scale, double y_max) noexcept {
@@ -176,6 +244,30 @@ double sample_y_scaled(const PerlinNoiseSampler& s,
                           l, m, n,
                           o, p - s_offset, q,
                           /*fade_local_y=*/p);
+}
+
+void sample_y_scaled_batch_scalar(const PerlinNoiseSampler& s,
+                                  const double* x, const double* y, const double* z,
+                                  double y_scale, double y_max,
+                                  std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = sample_y_scaled(s, x[i], y[i], z[i], y_scale, y_max);
+    }
+}
+
+void sample_y_scaled_batch(const PerlinNoiseSampler& s,
+                           const double* x, const double* y, const double* z,
+                           double y_scale, double y_max,
+                           std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+#if defined(LATTICE_HAS_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_y_scaled_batch_avx2(s, x, y, z, y_scale, y_max, count, out);
+        return;
+    }
+#endif
+    sample_y_scaled_batch_scalar(s, x, y, z, y_scale, y_max, count, out);
 }
 
 double sample_derivative(const PerlinNoiseSampler& s,

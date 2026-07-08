@@ -2,6 +2,7 @@ package com.latticemc.lattice.mixin;
 
 import com.latticemc.lattice.nativelib.NativeNoiseInterpolatorAccess;
 import com.latticemc.lattice.nativelib.NativeNoiseChunkAccess;
+import com.latticemc.lattice.nativelib.WorldgenProfiler;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.NoiseChunk;
@@ -100,6 +101,7 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         int i01 = z * yRows + y + 1;
         int i11 = (z + 1) * yRows + y + 1;
         if (i11 >= start.length || i11 >= end.length) return;
+        long profileStart = WorldgenProfiler.start();
         this.noise000 = start[i00];
         this.noise001 = start[i10];
         this.noise100 = end[i00];
@@ -108,31 +110,38 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         this.noise011 = start[i11];
         this.noise110 = end[i01];
         this.noise111 = end[i11];
+        WorldgenProfiler.end("noise.interpolator.selectCellYZ.flat", profileStart);
         ci.cancel();
     }
 
     @Inject(method = "updateForY", at = @At("HEAD"), cancellable = true)
     private void lattice$updateForYFlat(double y, CallbackInfo ci) {
         if (!this.lattice$flatReadable) return;
+        long profileStart = WorldgenProfiler.start();
         this.valueXZ00 = Mth.lerp(y, this.noise000, this.noise010);
         this.valueXZ10 = Mth.lerp(y, this.noise100, this.noise110);
         this.valueXZ01 = Mth.lerp(y, this.noise001, this.noise011);
         this.valueXZ11 = Mth.lerp(y, this.noise101, this.noise111);
+        WorldgenProfiler.end("noise.interpolator.updateForY.flat", profileStart);
         ci.cancel();
     }
 
     @Inject(method = "updateForX", at = @At("HEAD"), cancellable = true)
     private void lattice$updateForXFlat(double x, CallbackInfo ci) {
         if (!this.lattice$flatReadable) return;
+        long profileStart = WorldgenProfiler.start();
         this.valueZ0 = Mth.lerp(x, this.valueXZ00, this.valueXZ10);
         this.valueZ1 = Mth.lerp(x, this.valueXZ01, this.valueXZ11);
+        WorldgenProfiler.end("noise.interpolator.updateForX.flat", profileStart);
         ci.cancel();
     }
 
     @Inject(method = "updateForZ", at = @At("HEAD"), cancellable = true)
     private void lattice$updateForZFlat(double z, CallbackInfo ci) {
         if (!this.lattice$flatReadable) return;
+        long profileStart = WorldgenProfiler.start();
         this.value = Mth.lerp(z, this.valueZ0, this.valueZ1);
+        WorldgenProfiler.end("noise.interpolator.updateForZ.flat", profileStart);
         ci.cancel();
     }
 

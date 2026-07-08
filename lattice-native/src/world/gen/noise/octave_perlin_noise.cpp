@@ -9,11 +9,34 @@
 
 #include "world/gen/noise/octave_perlin_noise.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <vector>
 
 namespace lattice::world::gen::noise {
 
 namespace {
+struct OctaveBatchScratch {
+    std::vector<double> x;
+    std::vector<double> y;
+    std::vector<double> z;
+    std::vector<double> tmp;
+
+    void resize(std::size_t count) {
+        x.resize(count);
+        y.resize(count);
+        z.resize(count);
+        tmp.resize(count);
+    }
+
+    void resize_y_tmp(std::size_t count) {
+        y.resize(count);
+        tmp.resize(count);
+    }
+};
+
+thread_local OctaveBatchScratch g_octave_batch_scratch;
+
 // Force-resolve the 3-arg single-octave Perlin sampler. (Overload
 // resolution would also pick this correctly via parameter type, but
 // the alias is explicit.)
@@ -139,6 +162,65 @@ double sample(const OctavePerlinNoiseSampler& s,
     return dispatch_sample(s, x, y, z);
 }
 
+void sample_batch(const OctavePerlinNoiseSampler& s,
+                  const double* x, const double* y, const double* z,
+                  std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+    std::fill(out, out + count, 0.0);
+    if (count == 0 || s.octave_count == 0 || !s.octaves || !s.amplitudes) return;
+
+    OctaveBatchScratch& scratch = g_octave_batch_scratch;
+    scratch.resize_y_tmp(count);
+    double freq = s.lacunarity;
+    double amp = s.persistence;
+    for (std::size_t octave = 0; octave < s.octave_count; ++octave) {
+        const double amplitude = s.amplitudes[octave];
+        if (amplitude != 0.0) {
+            for (std::size_t i = 0; i < count; ++i) {
+                scratch.x[i] = maintain_precision(x[i] * freq);
+                scratch.y[i] = maintain_precision(y[i] * freq);
+                scratch.z[i] = maintain_precision(z[i] * freq);
+            }
+            sample_batch(s.octaves[octave], scratch.x.data(), scratch.y.data(), scratch.z.data(), count, scratch.tmp.data());
+            const double scale = amplitude * amp;
+            for (std::size_t i = 0; i < count; ++i) out[i] += scale * scratch.tmp[i];
+        }
+        freq *= 2.0;
+        amp *= 0.5;
+    }
+}
+
+void sample_y_column(const OctavePerlinNoiseSampler& s,
+                     double x, double y0, double z, double dy,
+                     std::size_t count, double* out) noexcept {
+    if (!out) return;
+    std::fill(out, out + count, 0.0);
+    if (count == 0 || s.octave_count == 0 || !s.octaves || !s.amplitudes) return;
+
+    OctaveBatchScratch& scratch = g_octave_batch_scratch;
+    scratch.resize(count);
+    double freq = s.lacunarity;
+    double amp = s.persistence;
+    for (std::size_t octave = 0; octave < s.octave_count; ++octave) {
+        const double amplitude = s.amplitudes[octave];
+        if (amplitude != 0.0) {
+            for (std::size_t i = 0; i < count; ++i) {
+                scratch.y[i] = maintain_precision((y0 + static_cast<double>(i) * dy) * freq);
+            }
+            sample_y_array(s.octaves[octave],
+                           maintain_precision(x * freq),
+                           scratch.y.data(),
+                           maintain_precision(z * freq),
+                           count,
+                           scratch.tmp.data());
+            const double scale = amplitude * amp;
+            for (std::size_t i = 0; i < count; ++i) out[i] += scale * scratch.tmp[i];
+        }
+        freq *= 2.0;
+        amp *= 0.5;
+    }
+}
+
 double sample_full(const OctavePerlinNoiseSampler& s,
                    double x, double y, double z,
                    double y_scale, double y_max,
@@ -172,6 +254,36 @@ double sample_full(const OctavePerlinNoiseSampler& s,
     //     origins when use_origin == false" was wrong on both axes.
     if (s.octave_count == 0 || !s.octaves || !s.amplitudes) return 0.0;
     return dispatch_sample_full(s, x, y, z, y_scale, y_max, use_origin);
+}
+
+void sample_full_batch(const OctavePerlinNoiseSampler& s,
+                       const double* x, const double* y, const double* z,
+                       double y_scale, double y_max, bool use_origin,
+                       std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+    std::fill(out, out + count, 0.0);
+    if (count == 0 || s.octave_count == 0 || !s.octaves || !s.amplitudes) return;
+
+    OctaveBatchScratch& scratch = g_octave_batch_scratch;
+    scratch.resize(count);
+    double freq = s.lacunarity;
+    double amp = s.persistence;
+    for (std::size_t octave = 0; octave < s.octave_count; ++octave) {
+        const double amplitude = s.amplitudes[octave];
+        if (amplitude != 0.0) {
+            const PerlinNoiseSampler& perlin = s.octaves[octave];
+            for (std::size_t i = 0; i < count; ++i) {
+                scratch.x[i] = maintain_precision(x[i] * freq);
+                scratch.y[i] = use_origin ? -perlin.origin_y : maintain_precision(y[i] * freq);
+                scratch.z[i] = maintain_precision(z[i] * freq);
+            }
+            sample_y_scaled_batch(perlin, scratch.x.data(), scratch.y.data(), scratch.z.data(), y_scale * freq, y_max * freq, count, scratch.tmp.data());
+            const double scale = amplitude * amp;
+            for (std::size_t i = 0; i < count; ++i) out[i] += scale * scratch.tmp[i];
+        }
+        freq *= 2.0;
+        amp *= 0.5;
+    }
 }
 
 } // namespace lattice::world::gen::noise

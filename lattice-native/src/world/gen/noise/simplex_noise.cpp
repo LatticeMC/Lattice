@@ -15,6 +15,8 @@
 #include <array>
 #include <cmath>
 
+#include "lattice/dispatch.hpp"
+
 namespace lattice::world::gen::noise {
 
 namespace {
@@ -119,6 +121,28 @@ double sample_2d(const SimplexNoiseSampler& s, double x, double y) noexcept {
     return 70.0 * (n0 + n1 + n2);
 }
 
+void sample_2d_batch_scalar(const SimplexNoiseSampler& s,
+                            const double* x, const double* y,
+                            std::size_t count, double* out) noexcept {
+    if (!x || !y || !out) return;
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = sample_2d(s, x[i], y[i]);
+    }
+}
+
+void sample_2d_batch(const SimplexNoiseSampler& s,
+                     const double* x, const double* y,
+                     std::size_t count, double* out) noexcept {
+    if (!x || !y || !out) return;
+#if defined(LATTICE_HAS_SIMPLEX_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_2d_batch_avx2(s, x, y, count, out);
+        return;
+    }
+#endif
+    sample_2d_batch_scalar(s, x, y, count, out);
+}
+
 double sample_3d(const SimplexNoiseSampler& s, double x, double y, double z) noexcept {
     // Apply per-sampler origin offsets first.
     x += s.origin_x;
@@ -184,6 +208,28 @@ double sample_3d(const SimplexNoiseSampler& s, double x, double y, double z) noe
 
     // 32.0 scales the result to roughly [-1, 1].
     return 32.0 * (n0 + n1 + n2 + n3);
+}
+
+void sample_3d_batch_scalar(const SimplexNoiseSampler& s,
+                            const double* x, const double* y, const double* z,
+                            std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = sample_3d(s, x[i], y[i], z[i]);
+    }
+}
+
+void sample_3d_batch(const SimplexNoiseSampler& s,
+                     const double* x, const double* y, const double* z,
+                     std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+#if defined(LATTICE_HAS_SIMPLEX_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_3d_batch_avx2(s, x, y, z, count, out);
+        return;
+    }
+#endif
+    sample_3d_batch_scalar(s, x, y, z, count, out);
 }
 
 } // namespace lattice::world::gen::noise

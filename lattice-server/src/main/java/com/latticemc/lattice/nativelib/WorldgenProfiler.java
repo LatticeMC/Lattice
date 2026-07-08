@@ -47,7 +47,7 @@ public final class WorldgenProfiler {
         int written = 0;
         for (Map.Entry<String, Probe> entry : entries) {
             if (written++ > 0) builder.append(", ");
-            if (written > 16) {
+            if (written > 24) {
                 builder.append("...");
                 break;
             }
