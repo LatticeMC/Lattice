@@ -20,6 +20,10 @@ struct DoublePerlinBatchScratch {
         scaled_z.resize(count);
         second.resize(count);
     }
+
+    void resize_second(std::size_t count) {
+        second.resize(count);
+    }
 };
 
 thread_local DoublePerlinBatchScratch g_double_perlin_batch_scratch;
@@ -60,7 +64,7 @@ void sample_y_column(const DoublePerlinNoiseSampler& s,
     if (count == 0) return;
 
     DoublePerlinBatchScratch& scratch = g_double_perlin_batch_scratch;
-    scratch.resize(count);
+    scratch.resize_second(count);
     sample_y_column(s.first, x, y0, z, dy, count, out);
     sample_y_column(s.second,
                     x * kDomainScale,

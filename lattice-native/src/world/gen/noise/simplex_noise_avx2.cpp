@@ -13,9 +13,17 @@ constexpr int kGradients[12][3] = {
     { 0, 1, 1}, { 0,-1, 1}, { 0, 1,-1}, { 0,-1,-1},
 };
 
-inline int floor_to_int(double x) noexcept {
-    const int i = static_cast<int>(x);
-    return (static_cast<double>(i) <= x) ? i : i - 1;
+inline void floor_lanes_to_i32(__m256d value, int out_i[4]) noexcept {
+    const __m128i truncated = _mm256_cvttpd_epi32(value);
+    const __m256d back = _mm256_cvtepi32_pd(truncated);
+    const __m256d needs_adjust_pd = _mm256_cmp_pd(back, value, _CMP_GT_OQ);
+    const __m128i needs_adjust = _mm256_castsi256_si128(_mm256_castpd_si256(needs_adjust_pd));
+    const __m128i floor_i = _mm_sub_epi32(truncated, _mm_and_si128(needs_adjust, _mm_set1_epi32(1)));
+    _mm_store_si128(reinterpret_cast<__m128i*>(out_i), floor_i);
+}
+
+inline __m256d load_i32_as_pd(const int values[4]) noexcept {
+    return _mm256_cvtepi32_pd(_mm_load_si128(reinterpret_cast<const __m128i*>(values)));
 }
 
 inline int pmap(const SimplexNoiseSampler& s, int input) noexcept {
@@ -57,22 +65,20 @@ inline void sample4_2d(const SimplexNoiseSampler& s, const double* x, const doub
     const __m256d vy = _mm256_loadu_pd(y);
     const __m256d skew = _mm256_mul_pd(_mm256_add_pd(vx, vy), _mm256_set1_pd(F2));
 
-    alignas(32) double sx_lanes[4];
-    alignas(32) double sy_lanes[4];
     alignas(32) double x0_lanes[4];
     alignas(32) double y0_lanes[4];
-    _mm256_store_pd(sx_lanes, _mm256_add_pd(vx, skew));
-    _mm256_store_pd(sy_lanes, _mm256_add_pd(vy, skew));
+    const __m256d sx = _mm256_add_pd(vx, skew);
+    const __m256d sy = _mm256_add_pd(vy, skew);
 
-    int ii[4];
-    int jj[4];
-    for (int lane = 0; lane < 4; ++lane) {
-        ii[lane] = floor_to_int(sx_lanes[lane]);
-        jj[lane] = floor_to_int(sy_lanes[lane]);
-        const double t = static_cast<double>(ii[lane] + jj[lane]) * G2;
-        x0_lanes[lane] = x[lane] - (static_cast<double>(ii[lane]) - t);
-        y0_lanes[lane] = y[lane] - (static_cast<double>(jj[lane]) - t);
-    }
+    alignas(16) int ii[4];
+    alignas(16) int jj[4];
+    floor_lanes_to_i32(sx, ii);
+    floor_lanes_to_i32(sy, jj);
+    const __m256d ii_d = load_i32_as_pd(ii);
+    const __m256d jj_d = load_i32_as_pd(jj);
+    const __m256d t = _mm256_mul_pd(_mm256_add_pd(ii_d, jj_d), _mm256_set1_pd(G2));
+    _mm256_store_pd(x0_lanes, _mm256_sub_pd(vx, _mm256_sub_pd(ii_d, t)));
+    _mm256_store_pd(y0_lanes, _mm256_sub_pd(vy, _mm256_sub_pd(jj_d, t)));
 
     for (int lane = 0; lane < 4; ++lane) {
         const double x0 = x0_lanes[lane];
@@ -100,27 +106,34 @@ inline void sample4_3d(const SimplexNoiseSampler& s,
     const __m256d vz = _mm256_add_pd(_mm256_loadu_pd(z), _mm256_set1_pd(s.origin_z));
     const __m256d skew = _mm256_mul_pd(_mm256_add_pd(_mm256_add_pd(vx, vy), vz), _mm256_set1_pd(F3));
 
-    alignas(32) double sx_lanes[4];
-    alignas(32) double sy_lanes[4];
-    alignas(32) double sz_lanes[4];
-    alignas(32) double xx[4];
-    alignas(32) double yy[4];
-    alignas(32) double zz[4];
-    _mm256_store_pd(sx_lanes, _mm256_add_pd(vx, skew));
-    _mm256_store_pd(sy_lanes, _mm256_add_pd(vy, skew));
-    _mm256_store_pd(sz_lanes, _mm256_add_pd(vz, skew));
-    _mm256_store_pd(xx, vx);
-    _mm256_store_pd(yy, vy);
-    _mm256_store_pd(zz, vz);
+    const __m256d sx = _mm256_add_pd(vx, skew);
+    const __m256d sy = _mm256_add_pd(vy, skew);
+    const __m256d sz = _mm256_add_pd(vz, skew);
+
+    alignas(16) int ii[4];
+    alignas(16) int jj[4];
+    alignas(16) int kk[4];
+    floor_lanes_to_i32(sx, ii);
+    floor_lanes_to_i32(sy, jj);
+    floor_lanes_to_i32(sz, kk);
+    const __m256d ii_d = load_i32_as_pd(ii);
+    const __m256d jj_d = load_i32_as_pd(jj);
+    const __m256d kk_d = load_i32_as_pd(kk);
+    const __m256d t_lanes = _mm256_mul_pd(_mm256_add_pd(_mm256_add_pd(ii_d, jj_d), kk_d), _mm256_set1_pd(G3));
+    alignas(32) double x0_lanes[4];
+    alignas(32) double y0_lanes[4];
+    alignas(32) double z0_lanes[4];
+    _mm256_store_pd(x0_lanes, _mm256_sub_pd(vx, _mm256_sub_pd(ii_d, t_lanes)));
+    _mm256_store_pd(y0_lanes, _mm256_sub_pd(vy, _mm256_sub_pd(jj_d, t_lanes)));
+    _mm256_store_pd(z0_lanes, _mm256_sub_pd(vz, _mm256_sub_pd(kk_d, t_lanes)));
 
     for (int lane = 0; lane < 4; ++lane) {
-        const int i = floor_to_int(sx_lanes[lane]);
-        const int j = floor_to_int(sy_lanes[lane]);
-        const int k = floor_to_int(sz_lanes[lane]);
-        const double t = static_cast<double>(i + j + k) * G3;
-        const double x0 = xx[lane] - (static_cast<double>(i) - t);
-        const double y0 = yy[lane] - (static_cast<double>(j) - t);
-        const double z0 = zz[lane] - (static_cast<double>(k) - t);
+        const int i = ii[lane];
+        const int j = jj[lane];
+        const int k = kk[lane];
+        const double x0 = x0_lanes[lane];
+        const double y0 = y0_lanes[lane];
+        const double z0 = z0_lanes[lane];
 
         int i1, j1, k1;
         int i2, j2, k2;

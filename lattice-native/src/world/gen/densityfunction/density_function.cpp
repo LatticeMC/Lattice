@@ -193,6 +193,19 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
             return true;
 
         case NodeKind::kYClampedGradient:
+            if (n.i0 < n.i1 && ny > 0) {
+                const double y_last = y0 + static_cast<double>(ny - 1) * dy;
+                const double y_min = std::min(y0, y_last);
+                const double y_max = std::max(y0, y_last);
+                if (y_max <= static_cast<double>(n.i0)) {
+                    for (int i = 0; i < ny; ++i) out[i] = n.d0;
+                    return true;
+                }
+                if (y_min >= static_cast<double>(n.i1)) {
+                    for (int i = 0; i < ny; ++i) out[i] = n.d1;
+                    return true;
+                }
+            }
             for (int i = 0; i < ny; ++i) {
                 out[i] = y_clamped_gradient(n.i0, n.i1, n.d0, n.d1, y0 + static_cast<double>(i) * dy);
             }
@@ -249,20 +262,20 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
                 return true;
             }
             {
-                std::vector<double> local_values;
-                std::vector<double>& values = base.cache ? base.cache->scratch_value : local_values;
                 const std::size_t count = static_cast<std::size_t>(ny);
-                values.resize(count);
                 noise::sample_y_column(*n.noise_ptr,
                                        base.x * 0.25,
                                        y0 * 0.25,
                                        base.z * 0.25,
                                        dy * 0.25,
                                        count,
-                                       values.data());
-                for (int i = 0; i < ny; ++i) out[i] = values[static_cast<std::size_t>(i)] * 4.0;
+                                       out);
+                for (int i = 0; i < ny; ++i) out[i] *= 4.0;
             }
             return true;
+
+        case NodeKind::kBlendDensity:
+            return eval_child(n.a, out);
 
         case NodeKind::kAbs:
         case NodeKind::kSquare:
@@ -271,24 +284,33 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
         case NodeKind::kQuarterNegative:
         case NodeKind::kInvert:
         case NodeKind::kSqueeze:
-        case NodeKind::kClamp:
-        case NodeKind::kBlendDensity: {
+        case NodeKind::kClamp: {
             ColumnScratchLease values(base.cache, ny);
             if (!eval_child(n.a, values.data())) return false;
-            for (int i = 0; i < ny; ++i) {
-                const double v = values.data()[static_cast<std::size_t>(i)];
-                switch (n.kind) {
-                    case NodeKind::kAbs: out[i] = std::abs(v); break;
-                    case NodeKind::kSquare: out[i] = v * v; break;
-                    case NodeKind::kCube: out[i] = v * v * v; break;
-                    case NodeKind::kHalfNegative: out[i] = half_negative(v); break;
-                    case NodeKind::kQuarterNegative: out[i] = quarter_negative(v); break;
-                    case NodeKind::kInvert: out[i] = 1.0 / v; break;
-                    case NodeKind::kSqueeze: out[i] = squeeze(v); break;
-                    case NodeKind::kClamp: out[i] = clamp_d(v, n.d0, n.d1); break;
-                    case NodeKind::kBlendDensity: out[i] = v; break;
-                    default: return false;
+            if (n.kind == NodeKind::kAbs) {
+                for (int i = 0; i < ny; ++i) out[i] = std::abs(values.data()[static_cast<std::size_t>(i)]);
+            } else if (n.kind == NodeKind::kSquare) {
+                for (int i = 0; i < ny; ++i) {
+                    const double v = values.data()[static_cast<std::size_t>(i)];
+                    out[i] = v * v;
                 }
+            } else if (n.kind == NodeKind::kCube) {
+                for (int i = 0; i < ny; ++i) {
+                    const double v = values.data()[static_cast<std::size_t>(i)];
+                    out[i] = v * v * v;
+                }
+            } else if (n.kind == NodeKind::kHalfNegative) {
+                for (int i = 0; i < ny; ++i) out[i] = half_negative(values.data()[static_cast<std::size_t>(i)]);
+            } else if (n.kind == NodeKind::kQuarterNegative) {
+                for (int i = 0; i < ny; ++i) out[i] = quarter_negative(values.data()[static_cast<std::size_t>(i)]);
+            } else if (n.kind == NodeKind::kInvert) {
+                for (int i = 0; i < ny; ++i) out[i] = 1.0 / values.data()[static_cast<std::size_t>(i)];
+            } else if (n.kind == NodeKind::kSqueeze) {
+                for (int i = 0; i < ny; ++i) out[i] = squeeze(values.data()[static_cast<std::size_t>(i)]);
+            } else if (n.kind == NodeKind::kClamp) {
+                for (int i = 0; i < ny; ++i) out[i] = clamp_d(values.data()[static_cast<std::size_t>(i)], n.d0, n.d1);
+            } else {
+                return false;
             }
             return true;
         }
@@ -300,30 +322,41 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
             ColumnScratchLease left(base.cache, ny);
             if (!eval_child(n.a, left.data())) return false;
             if (n.a == n.b) {
-                for (int i = 0; i < ny; ++i) {
-                    const double v = left.data()[static_cast<std::size_t>(i)];
-                    switch (n.kind) {
-                        case NodeKind::kAdd: out[i] = v + v; break;
-                        case NodeKind::kMul: out[i] = v * v; break;
-                        case NodeKind::kMin:
-                        case NodeKind::kMax: out[i] = v; break;
-                        default: return false;
-                    }
+                if (n.kind == NodeKind::kAdd) {
+                    for (int i = 0; i < ny; ++i) out[i] = left.data()[static_cast<std::size_t>(i)] + left.data()[static_cast<std::size_t>(i)];
+                } else if (n.kind == NodeKind::kMul) {
+                    for (int i = 0; i < ny; ++i) out[i] = left.data()[static_cast<std::size_t>(i)] * left.data()[static_cast<std::size_t>(i)];
+                } else {
+                    for (int i = 0; i < ny; ++i) out[i] = left.data()[static_cast<std::size_t>(i)];
                 }
                 return true;
             }
             ColumnScratchLease right(base.cache, ny);
-            if (!eval_child(n.b, right.data())) return false;
-            for (int i = 0; i < ny; ++i) {
-                const double a = left.data()[static_cast<std::size_t>(i)];
-                const double b = right.data()[static_cast<std::size_t>(i)];
-                switch (n.kind) {
-                    case NodeKind::kAdd: out[i] = a + b; break;
-                    case NodeKind::kMul: out[i] = a == 0.0 ? 0.0 : a * b; break;
-                    case NodeKind::kMin: out[i] = std::min(a, b); break;
-                    case NodeKind::kMax: out[i] = std::max(a, b); break;
-                    default: return false;
+            if (n.kind == NodeKind::kMul) {
+                bool all_zero = true;
+                for (int i = 0; i < ny; ++i) {
+                    if (left.data()[static_cast<std::size_t>(i)] != 0.0) {
+                        all_zero = false;
+                        break;
+                    }
                 }
+                if (all_zero) {
+                    for (int i = 0; i < ny; ++i) out[i] = 0.0;
+                    return true;
+                }
+            }
+            if (!eval_child(n.b, right.data())) return false;
+            if (n.kind == NodeKind::kAdd) {
+                for (int i = 0; i < ny; ++i) out[i] = left.data()[static_cast<std::size_t>(i)] + right.data()[static_cast<std::size_t>(i)];
+            } else if (n.kind == NodeKind::kMul) {
+                for (int i = 0; i < ny; ++i) {
+                    const double a = left.data()[static_cast<std::size_t>(i)];
+                    out[i] = a == 0.0 ? 0.0 : a * right.data()[static_cast<std::size_t>(i)];
+                }
+            } else if (n.kind == NodeKind::kMin) {
+                for (int i = 0; i < ny; ++i) out[i] = std::min(left.data()[static_cast<std::size_t>(i)], right.data()[static_cast<std::size_t>(i)]);
+            } else {
+                for (int i = 0; i < ny; ++i) out[i] = std::max(left.data()[static_cast<std::size_t>(i)], right.data()[static_cast<std::size_t>(i)]);
             }
             return true;
         }

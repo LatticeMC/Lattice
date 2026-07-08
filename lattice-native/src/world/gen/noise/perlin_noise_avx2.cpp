@@ -13,8 +13,7 @@ inline std::uint32_t pmap(const std::uint8_t* perm, int input) noexcept {
     return perm[input & 0xFF];
 }
 
-inline double grad(int hash, double x, double y, double z) noexcept {
-    const int h = hash & 15;
+inline double grad_masked(int h, double x, double y, double z) noexcept {
     const double u = (h < 8) ? x : y;
     const double v = (h < 4) ? y : ((h == 12 || h == 14) ? x : z);
     return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
@@ -39,17 +38,19 @@ inline __m256d lerp(__m256d t, __m256d a, __m256d b) noexcept {
     return _mm256_add_pd(a, _mm256_mul_pd(t, _mm256_sub_pd(b, a)));
 }
 
-inline __m256d set4(const double values[4]) noexcept {
-    return _mm256_set_pd(values[3], values[2], values[1], values[0]);
+inline __m256d load4(const double values[4]) noexcept {
+    return _mm256_load_pd(values);
 }
 
-inline void floor_lanes(__m256d value, int out_i[4], double out_floor[4]) noexcept {
-    alignas(32) double lanes[4];
-    _mm256_store_pd(lanes, _mm256_floor_pd(value));
-    for (int lane = 0; lane < 4; ++lane) {
-        out_floor[lane] = lanes[lane];
-        out_i[lane] = static_cast<int>(lanes[lane]);
-    }
+inline __m256d floor_lanes(__m256d value, int out_i[4]) noexcept {
+    const __m128i truncated = _mm256_cvttpd_epi32(value);
+    const __m256d back = _mm256_cvtepi32_pd(truncated);
+    const __m256d needs_adjust_pd = _mm256_cmp_pd(back, value, _CMP_GT_OQ);
+    const __m128i needs_adjust = _mm256_castsi256_si128(_mm256_castpd_si256(needs_adjust_pd));
+    const __m128i floor_i = _mm_sub_epi32(truncated, _mm_and_si128(needs_adjust, _mm_set1_epi32(1)));
+    const __m256d floor_d = _mm256_cvtepi32_pd(floor_i);
+    _mm_store_si128(reinterpret_cast<__m128i*>(out_i), floor_i);
+    return floor_d;
 }
 
 inline void lattice_gradients(const std::uint8_t* p,
@@ -64,14 +65,65 @@ inline void lattice_gradients(const std::uint8_t* p,
         const int B = static_cast<int>(pmap(p, xi[lane] + 1)) + yi[lane];
         const int BA = static_cast<int>(pmap(p, B)) + zi[lane];
         const int BB = static_cast<int>(pmap(p, B + 1)) + zi[lane];
-        g000[lane] = grad(pmap(p, AA), xf[lane], yf[lane], zf[lane]);
-        g100[lane] = grad(pmap(p, BA), xf[lane] - 1.0, yf[lane], zf[lane]);
-        g010[lane] = grad(pmap(p, AB), xf[lane], yf[lane] - 1.0, zf[lane]);
-        g110[lane] = grad(pmap(p, BB), xf[lane] - 1.0, yf[lane] - 1.0, zf[lane]);
-        g001[lane] = grad(pmap(p, AA + 1), xf[lane], yf[lane], zf[lane] - 1.0);
-        g101[lane] = grad(pmap(p, BA + 1), xf[lane] - 1.0, yf[lane], zf[lane] - 1.0);
-        g011[lane] = grad(pmap(p, AB + 1), xf[lane], yf[lane] - 1.0, zf[lane] - 1.0);
-        g111[lane] = grad(pmap(p, BB + 1), xf[lane] - 1.0, yf[lane] - 1.0, zf[lane] - 1.0);
+        const double x0 = xf[lane];
+        const double y0 = yf[lane];
+        const double z0 = zf[lane];
+        const double x1 = x0 - 1.0;
+        const double y1 = y0 - 1.0;
+        const double z1 = z0 - 1.0;
+        const int h000 = static_cast<int>(pmap(p, AA)) & 15;
+        const int h100 = static_cast<int>(pmap(p, BA)) & 15;
+        const int h010 = static_cast<int>(pmap(p, AB)) & 15;
+        const int h110 = static_cast<int>(pmap(p, BB)) & 15;
+        const int h001 = static_cast<int>(pmap(p, AA + 1)) & 15;
+        const int h101 = static_cast<int>(pmap(p, BA + 1)) & 15;
+        const int h011 = static_cast<int>(pmap(p, AB + 1)) & 15;
+        const int h111 = static_cast<int>(pmap(p, BB + 1)) & 15;
+        g000[lane] = grad_masked(h000, x0, y0, z0);
+        g100[lane] = grad_masked(h100, x1, y0, z0);
+        g010[lane] = grad_masked(h010, x0, y1, z0);
+        g110[lane] = grad_masked(h110, x1, y1, z0);
+        g001[lane] = grad_masked(h001, x0, y0, z1);
+        g101[lane] = grad_masked(h101, x1, y0, z1);
+        g011[lane] = grad_masked(h011, x0, y1, z1);
+        g111[lane] = grad_masked(h111, x1, y1, z1);
+    }
+}
+
+inline void lattice_gradients_const_xz(const std::uint8_t* p,
+                                       int xi, const int yi[4], int zi,
+                                       double xf, const double yf[4], double zf,
+                                       double g000[4], double g100[4], double g010[4], double g110[4],
+                                       double g001[4], double g101[4], double g011[4], double g111[4]) noexcept {
+    const int px0 = static_cast<int>(pmap(p, xi));
+    const int px1 = static_cast<int>(pmap(p, xi + 1));
+    const double x1 = xf - 1.0;
+    const double z1 = zf - 1.0;
+    for (int lane = 0; lane < 4; ++lane) {
+        const int A = px0 + yi[lane];
+        const int AA = static_cast<int>(pmap(p, A)) + zi;
+        const int AB = static_cast<int>(pmap(p, A + 1)) + zi;
+        const int B = px1 + yi[lane];
+        const int BA = static_cast<int>(pmap(p, B)) + zi;
+        const int BB = static_cast<int>(pmap(p, B + 1)) + zi;
+        const double y0 = yf[lane];
+        const double y1 = y0 - 1.0;
+        const int h000 = static_cast<int>(pmap(p, AA)) & 15;
+        const int h100 = static_cast<int>(pmap(p, BA)) & 15;
+        const int h010 = static_cast<int>(pmap(p, AB)) & 15;
+        const int h110 = static_cast<int>(pmap(p, BB)) & 15;
+        const int h001 = static_cast<int>(pmap(p, AA + 1)) & 15;
+        const int h101 = static_cast<int>(pmap(p, BA + 1)) & 15;
+        const int h011 = static_cast<int>(pmap(p, AB + 1)) & 15;
+        const int h111 = static_cast<int>(pmap(p, BB + 1)) & 15;
+        g000[lane] = grad_masked(h000, xf, y0, zf);
+        g100[lane] = grad_masked(h100, x1, y0, zf);
+        g010[lane] = grad_masked(h010, xf, y1, zf);
+        g110[lane] = grad_masked(h110, x1, y1, zf);
+        g001[lane] = grad_masked(h001, xf, y0, z1);
+        g101[lane] = grad_masked(h101, x1, y0, z1);
+        g011[lane] = grad_masked(h011, xf, y1, z1);
+        g111[lane] = grad_masked(h111, x1, y1, z1);
     }
 }
 
@@ -79,24 +131,25 @@ inline void sample4(const PerlinNoiseSampler& s,
                     __m256d px, __m256d py, __m256d pz,
                     double y_scale, double y_max, bool scaled,
                     double* out) noexcept {
-    int xi[4], yi[4], zi[4];
-    double xfloor[4], yfloor[4], zfloor[4];
-    floor_lanes(px, xi, xfloor);
-    floor_lanes(py, yi, yfloor);
-    floor_lanes(pz, zi, zfloor);
+    alignas(16) int xi[4], yi[4], zi[4];
+    const __m256d xfloor = floor_lanes(px, xi);
+    const __m256d yfloor = floor_lanes(py, yi);
+    const __m256d zfloor = floor_lanes(pz, zi);
 
-    const __m256d local_x = _mm256_sub_pd(px, set4(xfloor));
-    const __m256d local_y_original = _mm256_sub_pd(py, set4(yfloor));
-    const __m256d local_z = _mm256_sub_pd(pz, set4(zfloor));
+    const __m256d local_x = _mm256_sub_pd(px, xfloor);
+    const __m256d local_y_original = _mm256_sub_pd(py, yfloor);
+    const __m256d local_z = _mm256_sub_pd(pz, zfloor);
     __m256d local_y = local_y_original;
 
     if (scaled && y_scale != 0.0) {
+        const __m256d y_scale_v = _mm256_set1_pd(y_scale);
+        const __m256d epsilon = _mm256_set1_pd(1.0e-7);
         const __m256d capped = y_max >= 0.0
             ? _mm256_min_pd(local_y_original, _mm256_set1_pd(y_max))
             : local_y_original;
         const __m256d scaled_offset = _mm256_mul_pd(
-            _mm256_floor_pd(_mm256_add_pd(_mm256_div_pd(capped, _mm256_set1_pd(y_scale)), _mm256_set1_pd(1.0e-7))),
-            _mm256_set1_pd(y_scale));
+            _mm256_floor_pd(_mm256_add_pd(_mm256_div_pd(capped, y_scale_v), epsilon)),
+            y_scale_v);
         local_y = _mm256_sub_pd(local_y_original, scaled_offset);
     }
 
@@ -105,16 +158,16 @@ inline void sample4(const PerlinNoiseSampler& s,
     _mm256_store_pd(yf, local_y);
     _mm256_store_pd(zf, local_z);
 
-    double g000[4], g100[4], g010[4], g110[4], g001[4], g101[4], g011[4], g111[4];
+    alignas(32) double g000[4], g100[4], g010[4], g110[4], g001[4], g101[4], g011[4], g111[4];
     lattice_gradients(s.permutation, xi, yi, zi, xf, yf, zf, g000, g100, g010, g110, g001, g101, g011, g111);
 
     const __m256d u = smooth_step(local_x);
     const __m256d v = smooth_step(local_y_original);
     const __m256d w = smooth_step(local_z);
-    const __m256d x00 = lerp(u, set4(g000), set4(g100));
-    const __m256d x10 = lerp(u, set4(g010), set4(g110));
-    const __m256d x01 = lerp(u, set4(g001), set4(g101));
-    const __m256d x11 = lerp(u, set4(g011), set4(g111));
+    const __m256d x00 = lerp(u, load4(g000), load4(g100));
+    const __m256d x10 = lerp(u, load4(g010), load4(g110));
+    const __m256d x01 = lerp(u, load4(g001), load4(g101));
+    const __m256d x11 = lerp(u, load4(g011), load4(g111));
     const __m256d y0 = lerp(v, x00, x10);
     const __m256d y1 = lerp(v, x01, x11);
     _mm256_storeu_pd(out, lerp(w, y0, y1));
@@ -132,38 +185,37 @@ inline void sample4_arrays(const PerlinNoiseSampler& s,
 }
 
 inline void sample4_const_xz(const PerlinNoiseSampler& s,
-                             const int xi[4], const int zi[4],
-                             const double xf[4], const double zf[4],
+                             int xi, int zi,
+                             double xf, double zf,
                              __m256d u, __m256d w,
                              __m256d y,
                              double* out) noexcept {
     const __m256d py = _mm256_add_pd(y, _mm256_set1_pd(s.origin_y));
 
-    int yi[4];
-    double yfloor[4];
-    floor_lanes(py, yi, yfloor);
-    const __m256d local_y = _mm256_sub_pd(py, set4(yfloor));
+    alignas(16) int yi[4];
+    const __m256d yfloor = floor_lanes(py, yi);
+    const __m256d local_y = _mm256_sub_pd(py, yfloor);
     alignas(32) double yf[4];
     _mm256_store_pd(yf, local_y);
 
-    double g000[4], g100[4], g010[4], g110[4], g001[4], g101[4], g011[4], g111[4];
-    lattice_gradients(s.permutation, xi, yi, zi, xf, yf, zf, g000, g100, g010, g110, g001, g101, g011, g111);
+    alignas(32) double g000[4], g100[4], g010[4], g110[4], g001[4], g101[4], g011[4], g111[4];
+    lattice_gradients_const_xz(s.permutation, xi, yi, zi, xf, yf, zf, g000, g100, g010, g110, g001, g101, g011, g111);
 
     const __m256d v = smooth_step(local_y);
-    const __m256d x00 = lerp(u, set4(g000), set4(g100));
-    const __m256d x10 = lerp(u, set4(g010), set4(g110));
-    const __m256d x01 = lerp(u, set4(g001), set4(g101));
-    const __m256d x11 = lerp(u, set4(g011), set4(g111));
+    const __m256d x00 = lerp(u, load4(g000), load4(g100));
+    const __m256d x10 = lerp(u, load4(g010), load4(g110));
+    const __m256d x01 = lerp(u, load4(g001), load4(g101));
+    const __m256d x11 = lerp(u, load4(g011), load4(g111));
     const __m256d y0 = lerp(v, x00, x10);
     const __m256d y1 = lerp(v, x01, x11);
     _mm256_storeu_pd(out, lerp(w, y0, y1));
 }
 
 struct ColumnXZState {
-    int xi[4];
-    int zi[4];
-    double xf[4];
-    double zf[4];
+    int xi;
+    int zi;
+    double xf;
+    double zf;
     __m256d u;
     __m256d w;
 };
@@ -175,7 +227,7 @@ inline ColumnXZState make_column_xz_state(const PerlinNoiseSampler& s, double x,
     const int zi0 = floor_to_int(pz);
     const double xf0 = px - static_cast<double>(xi0);
     const double zf0 = pz - static_cast<double>(zi0);
-    ColumnXZState state{{xi0, xi0, xi0, xi0}, {zi0, zi0, zi0, zi0}, {xf0, xf0, xf0, xf0}, {zf0, zf0, zf0, zf0}, smooth_step(_mm256_set1_pd(xf0)), smooth_step(_mm256_set1_pd(zf0))};
+    ColumnXZState state{xi0, zi0, xf0, zf0, smooth_step(_mm256_set1_pd(xf0)), smooth_step(_mm256_set1_pd(zf0))};
     return state;
 }
 
