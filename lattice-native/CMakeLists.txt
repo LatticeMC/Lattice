@@ -327,6 +327,19 @@ target_sources(lattice PRIVATE
     jni/double_perlin_noise.cpp
 )
 
+if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
+    target_compile_definitions(lattice PRIVATE LATTICE_HAS_DOUBLE_PERLIN_AVX2=1)
+    if(MSVC)
+        lattice_add_simd_object(lattice_double_perlin_avx2
+            SOURCES src/world/gen/noise/double_perlin_noise_avx2.cpp
+            FLAGS   /arch:AVX2)
+    else()
+        lattice_add_simd_object(lattice_double_perlin_avx2
+            SOURCES src/world/gen/noise/double_perlin_noise_avx2.cpp
+            FLAGS   -mavx2)
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # Module: DensityFunction evaluator (Worldgen-4) + JNI bindings (Worldgen-4b).
 # ---------------------------------------------------------------------------

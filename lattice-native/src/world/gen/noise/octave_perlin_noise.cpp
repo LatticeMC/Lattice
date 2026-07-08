@@ -13,6 +13,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "lattice/dispatch.hpp"
+
 namespace lattice::world::gen::noise {
 
 namespace {
@@ -162,15 +164,15 @@ double sample(const OctavePerlinNoiseSampler& s,
     return dispatch_sample(s, x, y, z);
 }
 
-void sample_batch(const OctavePerlinNoiseSampler& s,
-                  const double* x, const double* y, const double* z,
-                  std::size_t count, double* out) noexcept {
+void sample_batch_scalar(const OctavePerlinNoiseSampler& s,
+                         const double* x, const double* y, const double* z,
+                         std::size_t count, double* out) noexcept {
     if (!x || !y || !z || !out) return;
     std::fill(out, out + count, 0.0);
     if (count == 0 || s.octave_count == 0 || !s.octaves || !s.amplitudes) return;
 
     OctaveBatchScratch& scratch = g_octave_batch_scratch;
-    scratch.resize_y_tmp(count);
+    scratch.resize(count);
     double freq = s.lacunarity;
     double amp = s.persistence;
     for (std::size_t octave = 0; octave < s.octave_count; ++octave) {
@@ -190,15 +192,28 @@ void sample_batch(const OctavePerlinNoiseSampler& s,
     }
 }
 
-void sample_y_column(const OctavePerlinNoiseSampler& s,
-                     double x, double y0, double z, double dy,
-                     std::size_t count, double* out) noexcept {
+void sample_batch(const OctavePerlinNoiseSampler& s,
+                  const double* x, const double* y, const double* z,
+                  std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+#if defined(LATTICE_HAS_OCTAVE_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_batch_avx2(s, x, y, z, count, out);
+        return;
+    }
+#endif
+    sample_batch_scalar(s, x, y, z, count, out);
+}
+
+void sample_y_column_scalar(const OctavePerlinNoiseSampler& s,
+                            double x, double y0, double z, double dy,
+                            std::size_t count, double* out) noexcept {
     if (!out) return;
     std::fill(out, out + count, 0.0);
     if (count == 0 || s.octave_count == 0 || !s.octaves || !s.amplitudes) return;
 
     OctaveBatchScratch& scratch = g_octave_batch_scratch;
-    scratch.resize(count);
+    scratch.resize_y_tmp(count);
     double freq = s.lacunarity;
     double amp = s.persistence;
     for (std::size_t octave = 0; octave < s.octave_count; ++octave) {
@@ -219,6 +234,19 @@ void sample_y_column(const OctavePerlinNoiseSampler& s,
         freq *= 2.0;
         amp *= 0.5;
     }
+}
+
+void sample_y_column(const OctavePerlinNoiseSampler& s,
+                     double x, double y0, double z, double dy,
+                     std::size_t count, double* out) noexcept {
+    if (!out) return;
+#if defined(LATTICE_HAS_OCTAVE_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_y_column_avx2(s, x, y0, z, dy, count, out);
+        return;
+    }
+#endif
+    sample_y_column_scalar(s, x, y0, z, dy, count, out);
 }
 
 double sample_full(const OctavePerlinNoiseSampler& s,
@@ -256,10 +284,10 @@ double sample_full(const OctavePerlinNoiseSampler& s,
     return dispatch_sample_full(s, x, y, z, y_scale, y_max, use_origin);
 }
 
-void sample_full_batch(const OctavePerlinNoiseSampler& s,
-                       const double* x, const double* y, const double* z,
-                       double y_scale, double y_max, bool use_origin,
-                       std::size_t count, double* out) noexcept {
+void sample_full_batch_scalar(const OctavePerlinNoiseSampler& s,
+                              const double* x, const double* y, const double* z,
+                              double y_scale, double y_max, bool use_origin,
+                              std::size_t count, double* out) noexcept {
     if (!x || !y || !z || !out) return;
     std::fill(out, out + count, 0.0);
     if (count == 0 || s.octave_count == 0 || !s.octaves || !s.amplitudes) return;
@@ -284,6 +312,20 @@ void sample_full_batch(const OctavePerlinNoiseSampler& s,
         freq *= 2.0;
         amp *= 0.5;
     }
+}
+
+void sample_full_batch(const OctavePerlinNoiseSampler& s,
+                       const double* x, const double* y, const double* z,
+                       double y_scale, double y_max, bool use_origin,
+                       std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+#if defined(LATTICE_HAS_OCTAVE_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_full_batch_avx2(s, x, y, z, y_scale, y_max, use_origin, count, out);
+        return;
+    }
+#endif
+    sample_full_batch_scalar(s, x, y, z, y_scale, y_max, use_origin, count, out);
 }
 
 } // namespace lattice::world::gen::noise

@@ -170,11 +170,11 @@ void sample_y_column(const InterpolatedNoiseSampler& s,
         for (int p = 0; p < 8; ++p) {
             const PerlinNoiseSampler* lv = interpolation_octaves[p];
             if (lv) {
-                const double o = interpolation_o[p];
+                const double octave_scale = interpolation_o[p];
                 const double sx = interpolation_sx[p];
-                const double sy = maintain_precision(h * o);
+                const double sy = maintain_precision(h * octave_scale);
                 const double sz = interpolation_sz[p];
-                n += sample_y_scaled(*lv, sx, sy, sz, k * o, h * o) / o;
+                n += sample_y_scaled(*lv, sx, sy, sz, k * octave_scale, h * octave_scale) / octave_scale;
             }
         }
 
@@ -185,20 +185,20 @@ void sample_y_column(const InterpolatedNoiseSampler& s,
         double l_acc = 0.0;
         double m_acc = 0.0;
         for (int r = 0; r < 16; ++r) {
-            const double o = lower_upper_o[r];
+            const double octave_scale = lower_upper_o[r];
             const double sx = lower_upper_sx[r];
-            const double sy = maintain_precision(e * o);
+            const double sy = maintain_precision(e * octave_scale);
             const double sz = lower_upper_sz[r];
-            const double v = j * o;
-            const double y_max = e * o;
+            const double v = j * octave_scale;
+            const double y_max = e * octave_scale;
 
             if (!bl2) {
                 const PerlinNoiseSampler* lv = lower_octaves[r];
-                if (lv) l_acc += sample_y_scaled(*lv, sx, sy, sz, v, y_max) / o;
+                if (lv) l_acc += sample_y_scaled(*lv, sx, sy, sz, v, y_max) / octave_scale;
             }
             if (!bl3) {
                 const PerlinNoiseSampler* lv = upper_octaves[r];
-                if (lv) m_acc += sample_y_scaled(*lv, sx, sy, sz, v, y_max) / o;
+                if (lv) m_acc += sample_y_scaled(*lv, sx, sy, sz, v, y_max) / octave_scale;
             }
         }
 

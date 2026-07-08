@@ -3,7 +3,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
+#include "lattice/dispatch.hpp"
 #include "world/gen/noise/double_perlin_noise.hpp"
 
 using namespace lattice::world::gen::noise;
@@ -79,3 +81,36 @@ TEST_CASE("double_perlin: create_amplitude returns octaves/6") {
     CHECK(create_amplitude(6) == doctest::Approx(1.0).epsilon(1e-15));
     CHECK(create_amplitude(3) == doctest::Approx(0.5).epsilon(1e-15));
 }
+
+#if defined(LATTICE_TEST_HAS_DOUBLE_PERLIN_AVX2)
+TEST_CASE("double_perlin: AVX2 batch paths match scalar reference") {
+    if (!lattice::cpu::initialize().avx2) return;
+
+    PerlinNoiseSampler a = oct(0x7B, 1.1, -2.2, 3.3);
+    PerlinNoiseSampler b = oct(0xC4, -4.4, 5.5, -6.6);
+    double amps[1] = {1.0};
+    DoublePerlinNoiseSampler s{};
+    s.first.octaves = &a; s.first.amplitudes = amps; s.first.octave_count = 1;
+    s.first.lacunarity = 1.0; s.first.persistence = 1.0;
+    s.second.octaves = &b; s.second.amplitudes = amps; s.second.octave_count = 1;
+    s.second.lacunarity = 1.0; s.second.persistence = 1.0;
+    s.amplitude = create_amplitude(2);
+
+    constexpr std::size_t count = 21;
+    std::vector<double> x(count), y(count), z(count), scalar(count), avx2(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const double fi = static_cast<double>(i);
+        x[i] = -9.0 + fi * 0.37;
+        y[i] =  5.0 - fi * 0.41;
+        z[i] = -3.0 + fi * 0.43;
+    }
+
+    sample_batch_scalar(s, x.data(), y.data(), z.data(), count, scalar.data());
+    sample_batch_avx2(s, x.data(), y.data(), z.data(), count, avx2.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
+
+    sample_y_column_scalar(s, 3.25, -8.5, 6.75, 0.125, count, scalar.data());
+    sample_y_column_avx2(s, 3.25, -8.5, 6.75, 0.125, count, avx2.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
+}
+#endif

@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "lattice/dispatch.hpp"
+
 namespace lattice::world::gen::noise {
 
 namespace {
@@ -39,9 +41,9 @@ double sample(const DoublePerlinNoiseSampler& s,
     return (v1 + v2) * s.amplitude;
 }
 
-void sample_batch(const DoublePerlinNoiseSampler& s,
-                  const double* x, const double* y, const double* z,
-                  std::size_t count, double* out) noexcept {
+void sample_batch_scalar(const DoublePerlinNoiseSampler& s,
+                         const double* x, const double* y, const double* z,
+                         std::size_t count, double* out) noexcept {
     if (!x || !y || !z || !out) return;
     if (count == 0) return;
 
@@ -57,9 +59,22 @@ void sample_batch(const DoublePerlinNoiseSampler& s,
     for (std::size_t i = 0; i < count; ++i) out[i] = (out[i] + scratch.second[i]) * s.amplitude;
 }
 
-void sample_y_column(const DoublePerlinNoiseSampler& s,
-                     double x, double y0, double z, double dy,
-                     std::size_t count, double* out) noexcept {
+void sample_batch(const DoublePerlinNoiseSampler& s,
+                  const double* x, const double* y, const double* z,
+                  std::size_t count, double* out) noexcept {
+    if (!x || !y || !z || !out) return;
+#if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_batch_avx2(s, x, y, z, count, out);
+        return;
+    }
+#endif
+    sample_batch_scalar(s, x, y, z, count, out);
+}
+
+void sample_y_column_scalar(const DoublePerlinNoiseSampler& s,
+                            double x, double y0, double z, double dy,
+                            std::size_t count, double* out) noexcept {
     if (!out) return;
     if (count == 0) return;
 
@@ -74,6 +89,19 @@ void sample_y_column(const DoublePerlinNoiseSampler& s,
                     count,
                     scratch.second.data());
     for (std::size_t i = 0; i < count; ++i) out[i] = (out[i] + scratch.second[i]) * s.amplitude;
+}
+
+void sample_y_column(const DoublePerlinNoiseSampler& s,
+                     double x, double y0, double z, double dy,
+                     std::size_t count, double* out) noexcept {
+    if (!out) return;
+#if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX2)
+    if (lattice::cpu::features().avx2) {
+        sample_y_column_avx2(s, x, y0, z, dy, count, out);
+        return;
+    }
+#endif
+    sample_y_column_scalar(s, x, y0, z, dy, count, out);
 }
 
 } // namespace lattice::world::gen::noise

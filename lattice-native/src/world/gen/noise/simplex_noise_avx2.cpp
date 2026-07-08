@@ -17,9 +17,12 @@ inline void floor_lanes_to_i32(__m256d value, int out_i[4]) noexcept {
     const __m128i truncated = _mm256_cvttpd_epi32(value);
     const __m256d back = _mm256_cvtepi32_pd(truncated);
     const __m256d needs_adjust_pd = _mm256_cmp_pd(back, value, _CMP_GT_OQ);
-    const __m128i needs_adjust = _mm256_castsi256_si128(_mm256_castpd_si256(needs_adjust_pd));
-    const __m128i floor_i = _mm_sub_epi32(truncated, _mm_and_si128(needs_adjust, _mm_set1_epi32(1)));
-    _mm_store_si128(reinterpret_cast<__m128i*>(out_i), floor_i);
+    const int needs_adjust = _mm256_movemask_pd(needs_adjust_pd);
+    _mm_store_si128(reinterpret_cast<__m128i*>(out_i), truncated);
+    out_i[0] -= (needs_adjust >> 0) & 1;
+    out_i[1] -= (needs_adjust >> 1) & 1;
+    out_i[2] -= (needs_adjust >> 2) & 1;
+    out_i[3] -= (needs_adjust >> 3) & 1;
 }
 
 inline __m256d load_i32_as_pd(const int values[4]) noexcept {

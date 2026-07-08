@@ -54,9 +54,25 @@ void sample_batch(const OctavePerlinNoiseSampler& s,
                   const double* x, const double* y, const double* z,
                   std::size_t count, double* out) noexcept;
 
+void sample_batch_scalar(const OctavePerlinNoiseSampler& s,
+                         const double* x, const double* y, const double* z,
+                         std::size_t count, double* out) noexcept;
+
+void sample_batch_avx2(const OctavePerlinNoiseSampler& s,
+                       const double* x, const double* y, const double* z,
+                       std::size_t count, double* out) noexcept;
+
 void sample_y_column(const OctavePerlinNoiseSampler& s,
                      double x, double y0, double z, double dy,
                      std::size_t count, double* out) noexcept;
+
+void sample_y_column_scalar(const OctavePerlinNoiseSampler& s,
+                            double x, double y0, double z, double dy,
+                            std::size_t count, double* out) noexcept;
+
+void sample_y_column_avx2(const OctavePerlinNoiseSampler& s,
+                          double x, double y0, double z, double dy,
+                          std::size_t count, double* out) noexcept;
 
 /// `method_16453 sample(x, y, z, yScale, yMax, useOrigin)`.
 /// `useOrigin == false` removes the per-octave origin offset, which
@@ -71,6 +87,16 @@ void sample_full_batch(const OctavePerlinNoiseSampler& s,
                        const double* x, const double* y, const double* z,
                        double y_scale, double y_max, bool use_origin,
                        std::size_t count, double* out) noexcept;
+
+void sample_full_batch_scalar(const OctavePerlinNoiseSampler& s,
+                              const double* x, const double* y, const double* z,
+                              double y_scale, double y_max, bool use_origin,
+                              std::size_t count, double* out) noexcept;
+
+void sample_full_batch_avx2(const OctavePerlinNoiseSampler& s,
+                            const double* x, const double* y, const double* z,
+                            double y_scale, double y_max, bool use_origin,
+                            std::size_t count, double* out) noexcept;
 
 /// `method_16452 maintainPrecision(value)`. Public so callers can use
 /// the same numerics elsewhere.

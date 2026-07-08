@@ -63,6 +63,9 @@ set(_palette_simd_srcs "")
 set(_entity_simd_srcs "")
 set(_heightmap_simd_srcs "")
 set(_pathfinder_simd_srcs "")
+set(_perlin_simd_srcs "")
+set(_double_perlin_simd_srcs "")
+set(_simplex_simd_srcs "")
 if(LATTICE_ARCH_X86)
     list(APPEND _palette_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage_bmi2.cpp)
     list(APPEND _heightmap_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan_avx2.cpp)
@@ -71,6 +74,9 @@ if(LATTICE_ARCH_X86)
         ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query_avx2.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep_avx2.cpp)
     list(APPEND _pathfinder_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder_avx2.cpp)
+    list(APPEND _perlin_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise_avx2.cpp)
+    list(APPEND _double_perlin_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise_avx2.cpp)
+    list(APPEND _simplex_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise_avx2.cpp)
 elseif(LATTICE_ARCH_ARM64)
     list(APPEND _palette_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage_neon.cpp)
     list(APPEND _heightmap_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan_neon.cpp)
@@ -84,11 +90,19 @@ endif()
 # We compile the SIMD TUs into the test binary at the same per-source
 # flag level that the main library uses. CMake's source-file properties
 # carry the flag.
-foreach(s IN LISTS _palette_simd_srcs _heightmap_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs)
+foreach(s IN LISTS _palette_simd_srcs)
     if(MSVC)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     elseif(LATTICE_ARCH_X86)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mbmi2;-mavx2")
+    endif()
+endforeach()
+
+foreach(s IN LISTS _heightmap_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs _perlin_simd_srcs _double_perlin_simd_srcs _simplex_simd_srcs)
+    if(MSVC)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
+    elseif(LATTICE_ARCH_X86)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mavx2")
     endif()
 endforeach()
 
@@ -185,28 +199,43 @@ lattice_add_test(block_light_engine
 
 lattice_add_test(perlin_noise
     SOURCES  test_perlin_noise.cpp
-    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp)
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
+             ${_perlin_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+if(LATTICE_ARCH_X86)
+    target_compile_definitions(lattice_test_perlin_noise PRIVATE LATTICE_TEST_HAS_PERLIN_AVX2=1)
+endif()
 
 lattice_add_test(octave_perlin_noise
     SOURCES  test_octave_perlin_noise.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
-             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp)
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
+             ${_perlin_simd_srcs})
 
 lattice_add_test(double_perlin_noise
     SOURCES  test_double_perlin_noise.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
+             ${_perlin_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
-             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp)
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
+             ${_double_perlin_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+if(LATTICE_ARCH_X86)
+    target_compile_definitions(lattice_test_double_perlin_noise PRIVATE LATTICE_TEST_HAS_DOUBLE_PERLIN_AVX2=1)
+endif()
 
 lattice_add_test(density_function
     SOURCES  test_density_function.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
+             ${_perlin_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp)
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
+             ${_double_perlin_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
+             ${_simplex_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
+             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
+             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp)
 
 lattice_add_test(beardifier
     SOURCES  test_beardifier.cpp
@@ -218,24 +247,33 @@ lattice_add_test(material_rules
 
 lattice_add_test(simplex_noise
     SOURCES  test_simplex_noise.cpp
-    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp)
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
+             ${_simplex_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+if(LATTICE_ARCH_X86)
+    target_compile_definitions(lattice_test_simplex_noise PRIVATE LATTICE_TEST_HAS_SIMPLEX_AVX2=1)
+endif()
 
 lattice_add_test(interpolated_noise
     SOURCES  test_interpolated_noise.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
+             ${_perlin_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp)
 
 lattice_add_test(chunk_noise_sampler
     SOURCES  test_chunk_noise_sampler.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
+             ${_perlin_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp
-              ${CMAKE_SOURCE_DIR}/src/world/gen/chunknoise/chunk_noise_sampler.cpp)
+             ${_double_perlin_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
+             ${_simplex_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
+             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
+             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp
+             ${CMAKE_SOURCE_DIR}/src/world/gen/chunknoise/chunk_noise_sampler.cpp)
 
 # Worldgen-8: header-only Xoroshiro128++ port + OreVeinSampler.
 lattice_add_test(xoroshiro128pp

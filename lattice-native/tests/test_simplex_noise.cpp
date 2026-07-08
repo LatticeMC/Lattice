@@ -3,7 +3,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
+#include "lattice/dispatch.hpp"
 #include "world/gen/noise/simplex_noise.hpp"
 
 using namespace lattice::world::gen::noise;
@@ -67,3 +69,31 @@ TEST_CASE("simplex: 3D sample at origin is zero with zero-permutation") {
     CHECK(std::isfinite(v));
     CHECK(std::abs(v) < 1.5);
 }
+
+#if defined(LATTICE_TEST_HAS_SIMPLEX_AVX2)
+TEST_CASE("simplex: AVX2 batch paths match scalar reference") {
+    if (!lattice::cpu::initialize().avx2) return;
+
+    auto s = make_shuffled();
+    s.origin_x = 1.25;
+    s.origin_y = -3.5;
+    s.origin_z = 7.75;
+
+    constexpr std::size_t count = 19;
+    std::vector<double> x(count), y(count), z(count), scalar(count), avx2(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const double fi = static_cast<double>(i);
+        x[i] = -8.0 + fi * 0.37;
+        y[i] =  6.0 - fi * 0.41;
+        z[i] = -4.0 + fi * 0.43;
+    }
+
+    sample_2d_batch_scalar(s, x.data(), y.data(), count, scalar.data());
+    sample_2d_batch_avx2(s, x.data(), y.data(), count, avx2.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
+
+    sample_3d_batch_scalar(s, x.data(), y.data(), z.data(), count, scalar.data());
+    sample_3d_batch_avx2(s, x.data(), y.data(), z.data(), count, avx2.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
+}
+#endif
