@@ -32,6 +32,10 @@ public final class NativeDensityFunction {
     private static volatile boolean PROFILING_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionProfiling");
     private static volatile boolean PARITY_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionParity");
     private static volatile int PARITY_INTERVAL = Integer.getInteger("lattice.nativeDensityFunctionParityInterval", 1024);
+    private static volatile boolean Y_COLUMN_NATIVE_AVAILABLE = true;
+    private static volatile boolean Y_COLUMNS_NATIVE_AVAILABLE = true;
+    private static volatile boolean INTERPOLATED_COLUMN_NATIVE_AVAILABLE = true;
+    private static volatile boolean INTERPOLATED_COLUMNS_NATIVE_AVAILABLE = true;
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, NativeDensityFunction> DIRECT_CACHE = new WeakHashMap<>();
@@ -144,7 +148,7 @@ public final class NativeDensityFunction {
         NativeDensityFunction compiled = tryCompile(function);
         if (compiled == null) return false;
         try {
-            nativeEvaluateYColumn(compiled.handle, compiled.cacheHandle, x, y0, z, dy, cellX, cellZ, values.length, values);
+            evaluateYColumn(compiled.handle, compiled.cacheHandle, x, y0, z, dy, cellX, cellZ, values.length, values);
             if (stats) SLICE_SUCCESS.increment();
             if (profiling) SLICE_NANOS.add(System.nanoTime() - start);
             return true;
@@ -220,7 +224,7 @@ public final class NativeDensityFunction {
         }
         long start = profiling ? System.nanoTime() : 0L;
         try {
-            nativeEvaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, yRows, outputs);
+            evaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, yRows, outputs);
             for (int i = 0; i < count; i++) {
                 accesses[i].lattice$copyFlatRow(isSlice0, zRow, outputs[i], yRows, zRows);
             }
@@ -234,6 +238,54 @@ public final class NativeDensityFunction {
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_y_columns", e.getMessage());
             return false;
+        }
+    }
+
+    private static void evaluateYColumn(long handle,
+                                        long cacheHandle,
+                                        double x,
+                                        double y0,
+                                        double z,
+                                        double dy,
+                                        int cellX,
+                                        int cellZ,
+                                        int ny,
+                                        double[] out) {
+        if (Y_COLUMN_NATIVE_AVAILABLE) {
+            try {
+                nativeEvaluateYColumn(handle, cacheHandle, x, y0, z, dy, cellX, cellZ, ny, out);
+                return;
+            } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
+                Y_COLUMN_NATIVE_AVAILABLE = false;
+                LatticeNative.logFallbackOnce("density_function_y_column_symbol", e.getMessage());
+            }
+        }
+        nativeClearCache(cacheHandle);
+        nativeEvaluateGrid(handle, cacheHandle, x, y0, z, 1.0, dy, 1.0, cellX, cellZ, 1, ny, 1, out);
+    }
+
+    private static void evaluateYColumns(long[] handles,
+                                         long[] cacheHandles,
+                                         int count,
+                                         double x,
+                                         double y0,
+                                         double z,
+                                         double dy,
+                                         int cellX,
+                                         int cellZ,
+                                         int ny,
+                                         double[][] out) {
+        if (Y_COLUMNS_NATIVE_AVAILABLE) {
+            try {
+                nativeEvaluateYColumns(handles, cacheHandles, count, x, y0, z, dy, cellX, cellZ, ny, out);
+                return;
+            } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
+                Y_COLUMNS_NATIVE_AVAILABLE = false;
+                LatticeNative.logFallbackOnce("density_function_y_columns_symbol", e.getMessage());
+            }
+        }
+        for (int i = 0; i < count; i++) {
+            evaluateYColumn(handles[i], cacheHandles[i], x, y0, z, dy, cellX, cellZ, ny, out[i]);
         }
     }
 
@@ -313,7 +365,7 @@ public final class NativeDensityFunction {
 
         try {
             compiled.syncInterpolatorColumn(cellStartBlockX, cellCountXZ, cellCountY);
-            nativeEvaluateInterpolatedColumn(
+            if (!evaluateInterpolatedColumn(
                     compiled.handle,
                     compiled.cacheHandle,
                     cellStartBlockX,
@@ -326,7 +378,9 @@ public final class NativeDensityFunction {
                     cellCountXZ,
                     cellCountY,
                     null,
-                    values);
+                    values)) {
+                return false;
+            }
             if (profiling) {
                 COLUMN_NANOS.add(System.nanoTime() - start);
                 COLUMN_COUNT.increment();
@@ -397,7 +451,7 @@ public final class NativeDensityFunction {
         long start = profiling ? System.nanoTime() : 0L;
         try {
             if (count > 0) {
-                nativeEvaluateInterpolatedColumns(
+                boolean filledColumns = evaluateInterpolatedColumns(
                         handles,
                         cacheHandles,
                         count,
@@ -411,12 +465,18 @@ public final class NativeDensityFunction {
                         cellCountXZ,
                         cellCountY,
                         outputs);
-                for (int i = 0; i < count; i++) {
-                    nativeAccesses[i].lattice$setColumnCellX(cellX);
-                }
-                if (STATS_ENABLED) {
-                    COLUMN_BATCH_CALLS.increment();
-                    COLUMN_BATCH_FUNCTIONS.add(count);
+                if (filledColumns) {
+                    for (int i = 0; i < count; i++) {
+                        nativeAccesses[i].lattice$setColumnCellX(cellX);
+                    }
+                    if (STATS_ENABLED) {
+                        COLUMN_BATCH_CALLS.increment();
+                        COLUMN_BATCH_FUNCTIONS.add(count);
+                    }
+                } else {
+                    for (int i = 0; i < count; i++) {
+                        javaAccesses[javaCount++] = nativeAccesses[i];
+                    }
                 }
             }
 
@@ -441,6 +501,60 @@ public final class NativeDensityFunction {
             LatticeNative.logFallbackOnce("density_function_cell_columns", e.getMessage());
             return false;
         }
+    }
+
+    private static boolean evaluateInterpolatedColumn(long handle,
+                                                      long cacheHandle,
+                                                      double x0,
+                                                      double z0,
+                                                      double yMin,
+                                                      int cellX,
+                                                      int firstCellZ,
+                                                      int cellWidth,
+                                                      int cellHeight,
+                                                      int cellCountXZ,
+                                                      int cellCountY,
+                                                      double[][] cacheAllInCellValues,
+                                                      double[] out) {
+        if (!INTERPOLATED_COLUMN_NATIVE_AVAILABLE) return false;
+        try {
+            nativeEvaluateInterpolatedColumn(handle, cacheHandle, x0, z0, yMin, cellX, firstCellZ, cellWidth, cellHeight, cellCountXZ, cellCountY, cacheAllInCellValues, out);
+            return true;
+        } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
+            INTERPOLATED_COLUMN_NATIVE_AVAILABLE = false;
+            LatticeNative.logFallbackOnce("density_function_cell_column_symbol", e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean evaluateInterpolatedColumns(long[] handles,
+                                                       long[] cacheHandles,
+                                                       int count,
+                                                       double x0,
+                                                       double z0,
+                                                       double yMin,
+                                                       int cellX,
+                                                       int firstCellZ,
+                                                       int cellWidth,
+                                                       int cellHeight,
+                                                       int cellCountXZ,
+                                                       int cellCountY,
+                                                       double[][] out) {
+        if (INTERPOLATED_COLUMNS_NATIVE_AVAILABLE) {
+            try {
+                nativeEvaluateInterpolatedColumns(handles, cacheHandles, count, x0, z0, yMin, cellX, firstCellZ, cellWidth, cellHeight, cellCountXZ, cellCountY, out);
+                return true;
+            } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
+                INTERPOLATED_COLUMNS_NATIVE_AVAILABLE = false;
+                LatticeNative.logFallbackOnce("density_function_cell_columns_symbol", e.getMessage());
+            }
+        }
+        for (int i = 0; i < count; i++) {
+            if (!evaluateInterpolatedColumn(handles[i], cacheHandles[i], x0, z0, yMin, cellX, firstCellZ, cellWidth, cellHeight, cellCountXZ, cellCountY, null, out[i])) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean tryFillCell(double[] values,
