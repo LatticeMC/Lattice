@@ -234,8 +234,10 @@ inline void sample4_const_xz(const PerlinNoiseSampler& s,
     _mm256_storeu_pd(out, lerp(w, y0, y1));
 }
 
+#if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable: 4324) // structure padded due to alignment specifier - intentional for AVX2
+#endif
 struct ColumnXZState {
     int xi;
     int zi;
@@ -244,7 +246,9 @@ struct ColumnXZState {
     __m256d u;
     __m256d w;
 };
+#if defined(_MSC_VER)
 #pragma warning(pop)
+#endif
 
 inline ColumnXZState make_column_xz_state(const PerlinNoiseSampler& s, double x, double z) noexcept {
     const double px = x + s.origin_x;

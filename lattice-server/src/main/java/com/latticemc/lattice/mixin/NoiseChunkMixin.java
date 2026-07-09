@@ -30,6 +30,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     @Shadow @Final int cellNoiseMinY;
     @Shadow @Final List<NoiseChunk.NoiseInterpolator> interpolators;
     @Shadow @Final List<?> cellCaches;
+    @Shadow @Final private DensityFunction.ContextProvider sliceFillingContextProvider;
     @Shadow private int cellStartBlockX;
     @Shadow int cellStartBlockY;
     @Shadow private int cellStartBlockZ;
@@ -195,7 +196,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
             this.arrayInterpolationCounter++;
             if (NativeDensityFunction.tryFillSlices(
                     this.interpolators,
-                    (DensityFunction.ContextProvider) (Object) this,
+                    this.sliceFillingContextProvider,
                     isSlice0,
                     zRow,
                     this.cellStartBlockX,
@@ -211,7 +212,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
             for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolators) {
                 NativeNoiseInterpolatorAccess access = (NativeNoiseInterpolatorAccess) (Object) noiseInterpolator;
                 double[] values = access.lattice$sliceRow(isSlice0, zRow);
-                noiseInterpolator.fillArray(values, (DensityFunction.ContextProvider) (Object) this);
+                noiseInterpolator.fillArray(values, this.sliceFillingContextProvider);
                 access.lattice$copyFlatRow(isSlice0, zRow, values, yRows, zRows);
             }
         }
