@@ -143,6 +143,32 @@ TEST_CASE("perlin: y_scaled small yScale shifts the lattice-Y residual") {
     CHECK(any_diff);
 }
 
+TEST_CASE("perlin: y_scaled array yMax path matches scalar samples") {
+    auto s = make_shuffled_sampler();
+    constexpr std::size_t count = 17;
+    std::vector<double> x_values(count), y(count), z_values(count), y_max(count), batch(count);
+    const double x = 2.25;
+    const double z = -5.75;
+    const double y_scale = 0.125;
+    for (std::size_t i = 0; i < count; ++i) {
+        const double fi = static_cast<double>(i);
+        x_values[i] = x + fi * 0.0625;
+        y[i] = -4.5 + fi * 0.375;
+        z_values[i] = z - fi * 0.03125;
+        y_max[i] = (i % 3 == 0) ? -1.0 : 0.05 + fi * 0.03125;
+    }
+
+    sample_y_scaled_batch_ymax(s, x_values.data(), y.data(), z_values.data(), y_scale, y_max.data(), count, batch.data());
+    for (std::size_t i = 0; i < count; ++i) {
+        CHECK(batch[i] == sample_y_scaled(s, x_values[i], y[i], z_values[i], y_scale, y_max[i]));
+    }
+
+    sample_y_scaled_array_ymax(s, x, y.data(), z, y_scale, y_max.data(), count, batch.data());
+    for (std::size_t i = 0; i < count; ++i) {
+        CHECK(batch[i] == sample_y_scaled(s, x, y[i], z, y_scale, y_max[i]));
+    }
+}
+
 TEST_CASE("perlin: sample_derivative returns finite gradient") {
     auto s = make_shuffled_sampler();
     double deriv[3] = {0, 0, 0};
@@ -177,6 +203,16 @@ TEST_CASE("perlin: AVX2 batch paths match scalar reference") {
 
     sample_y_scaled_batch_scalar(s, x.data(), y.data(), z.data(), 0.125, 0.75, count, scalar.data());
     sample_y_scaled_batch_avx2(s, x.data(), y.data(), z.data(), 0.125, 0.75, count, avx2.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
+
+    std::vector<double> y_max(count);
+    for (std::size_t i = 0; i < count; ++i) y_max[i] = (i % 4 == 0) ? -1.0 : 0.0625 + static_cast<double>(i) * 0.03125;
+    sample_y_scaled_batch_ymax_scalar(s, x.data(), y.data(), z.data(), 0.125, y_max.data(), count, scalar.data());
+    sample_y_scaled_batch_ymax_avx2(s, x.data(), y.data(), z.data(), 0.125, y_max.data(), count, avx2.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
+
+    sample_y_scaled_array_ymax_scalar(s, 1.25, y.data(), 8.75, 0.125, y_max.data(), count, scalar.data());
+    sample_y_scaled_array_ymax_avx2(s, 1.25, y.data(), 8.75, 0.125, y_max.data(), count, avx2.data());
     for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
 }
 #endif

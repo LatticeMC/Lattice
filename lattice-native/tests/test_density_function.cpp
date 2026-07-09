@@ -3,7 +3,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
+#include "lattice/dispatch.hpp"
 #include "world/gen/densityfunction/density_function.hpp"
 #include "world/gen/noise/double_perlin_noise.hpp"
 #include "world/gen/noise/simplex_noise.hpp"
@@ -234,6 +236,46 @@ TEST_CASE("density: noise node uses the bound sampler") {
     CHECK(std::isfinite(v));
     CHECK(v == noise::sample(dpn, 0.5, 0.7, -0.3));
 }
+
+#if defined(LATTICE_TEST_HAS_DENSITY_AVX2)
+TEST_CASE("density: AVX2 weird_scaled uniform rarity column matches scalar") {
+    if (!lattice::cpu::initialize().avx2) return;
+
+    PerlinNoiseSampler oa = oct(0x31);
+    PerlinNoiseSampler ob = oct(0xC7);
+    double amps[1] = {1.0};
+    DoublePerlinNoiseSampler dpn{};
+    dpn.first.octaves = &oa; dpn.first.amplitudes = amps;
+    dpn.first.octave_count = 1; dpn.first.lacunarity = 1.0; dpn.first.persistence = 1.0;
+    dpn.second.octaves = &ob; dpn.second.amplitudes = amps;
+    dpn.second.octave_count = 1; dpn.second.lacunarity = 1.0; dpn.second.persistence = 1.0;
+    dpn.amplitude = 1.0;
+
+    NodeArena a;
+    Node input{}; input.kind = NodeKind::kConstant; input.d0 = 0.25; // Type1 rarity = 1.5 for the whole column.
+    Node weird{}; weird.kind = NodeKind::kWeirdScaledSampler;
+    weird.a = a.push(input);
+    weird.noise_ptr = &dpn;
+    weird.d0 = 0.0;
+    a.root = a.push(weird);
+
+    constexpr int count = 17;
+    const double x = 12.25;
+    const double y0 = -16.0;
+    const double z = 33.75;
+    const double dy = 3.5;
+    std::vector<double> column(static_cast<std::size_t>(count));
+
+    REQUIRE(evaluate_y_column_avx2(a, a.root, x, y0, z, dy, 0, 0, count, nullptr, column.data()));
+    for (int i = 0; i < count; ++i) {
+        Context ctx{};
+        ctx.x = x;
+        ctx.y = y0 + static_cast<double>(i) * dy;
+        ctx.z = z;
+        CHECK(column[static_cast<std::size_t>(i)] == evaluate(a, ctx));
+    }
+}
+#endif
 
 TEST_CASE("density: Cache2D returns cached value on (x,z) hit") {
     // Build a tree that COUNTS evaluations via a global counter wired

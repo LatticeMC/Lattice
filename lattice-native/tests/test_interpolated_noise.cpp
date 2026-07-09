@@ -110,6 +110,26 @@ TEST_CASE("interpolated_noise: deterministic for same input") {
     CHECK(std::abs(v1 - v3) < 0.01);
 }
 
+TEST_CASE("interpolated_noise: y column matches scalar samples") {
+    auto lower  = make_octave(16, 0x41);
+    auto upper  = make_octave(16, 0x52);
+    auto interp = make_octave(8,  0x63);
+    auto s      = make_default_sampler(lower, upper, interp);
+
+    constexpr std::size_t count = 17;
+    const double x = 37.25;
+    const double y0 = -23.5;
+    const double z = 91.75;
+    const double dy = 4.125;
+    std::vector<double> column(count);
+
+    noise::sample_y_column(s, x, y0, z, dy, count, column.data());
+    for (std::size_t i = 0; i < count; ++i) {
+        const double expected = noise::sample(s, x, y0 + static_cast<double>(i) * dy, z);
+        CHECK(column[i] == doctest::Approx(expected).epsilon(1e-12));
+    }
+}
+
 TEST_CASE("interpolated_noise: empty octave stack samples to zero") {
     OctaveBundle empty{};
     empty.sampler.octaves = nullptr;

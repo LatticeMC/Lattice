@@ -49,10 +49,12 @@ struct PinnedDoubleArray {
     jdoubleArray array = nullptr;
     jdouble* data = nullptr;
     std::size_t length = 0;
+    bool delete_local_ref = true;
 
     PinnedDoubleArray() = default;
 
-    PinnedDoubleArray(JNIEnv* env_in, jdoubleArray array_in) : env(env_in), array(array_in) {
+    PinnedDoubleArray(JNIEnv* env_in, jdoubleArray array_in, bool delete_local_ref_in = true)
+        : env(env_in), array(array_in), delete_local_ref(delete_local_ref_in) {
         if (!env || !array) return;
         length = static_cast<std::size_t>(env->GetArrayLength(array));
         data = env->GetDoubleArrayElements(array, nullptr);
@@ -60,18 +62,20 @@ struct PinnedDoubleArray {
 
     ~PinnedDoubleArray() {
         if (env && array && data) env->ReleaseDoubleArrayElements(array, data, JNI_ABORT);
-        if (env && array) env->DeleteLocalRef(array);
+        if (delete_local_ref && env && array) env->DeleteLocalRef(array);
     }
 
     PinnedDoubleArray(const PinnedDoubleArray&) = delete;
     PinnedDoubleArray& operator=(const PinnedDoubleArray&) = delete;
 
     PinnedDoubleArray(PinnedDoubleArray&& other) noexcept
-        : env(other.env), array(other.array), data(other.data), length(other.length) {
+        : env(other.env), array(other.array), data(other.data), length(other.length),
+          delete_local_ref(other.delete_local_ref) {
         other.env = nullptr;
         other.array = nullptr;
         other.data = nullptr;
         other.length = 0;
+        other.delete_local_ref = true;
     }
 
     PinnedDoubleArray& operator=(PinnedDoubleArray&&) = delete;
@@ -156,7 +160,7 @@ std::vector<PinnedDoubleArray> bind_bound_cache_all_in_cell_arrays(JNIEnv* env, 
     pinned.reserve(slots);
     for (std::size_t i = 0; i < slots; ++i) {
         if (!refs[i]) continue;
-        pinned.emplace_back(env, refs[i]);
+        pinned.emplace_back(env, refs[i], false);
         if (env->ExceptionCheck()) return pinned;
         auto& guard = pinned.back();
         if (!guard.data) continue;

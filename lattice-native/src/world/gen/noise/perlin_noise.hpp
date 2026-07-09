@@ -102,6 +102,19 @@ void sample_y_scaled_batch(const PerlinNoiseSampler& s,
                            double y_scale, double y_max,
                            std::size_t count, double* out) noexcept;
 
+/// Batch form with per-lane yMax. Used by InterpolatedNoise, where yMax is
+/// derived from the column Y coordinate and therefore changes for every lane.
+void sample_y_scaled_batch_ymax(const PerlinNoiseSampler& s,
+                                const double* x, const double* y, const double* z,
+                                double y_scale, const double* y_max,
+                                std::size_t count, double* out) noexcept;
+
+/// Batch y-scaled samples for one X/Z column with per-lane yMax.
+void sample_y_scaled_array_ymax(const PerlinNoiseSampler& s,
+                                double x, const double* y, double z,
+                                double y_scale, const double* y_max,
+                                std::size_t count, double* out) noexcept;
+
 /// `sampleDerivative(x, y, z, out_dxdydz)` — returns the value AND
 /// writes the 3-component derivative to `out_dxdydz[0..3)`. Vanilla's
 /// `method_35477` uses this for density-function gradient terms.
@@ -121,9 +134,19 @@ void sample_y_array_scalar(const PerlinNoiseSampler& s,
                            std::size_t count, double* out) noexcept;
 
 void sample_y_scaled_batch_scalar(const PerlinNoiseSampler& s,
-                                  const double* x, const double* y, const double* z,
-                                  double y_scale, double y_max,
-                                  std::size_t count, double* out) noexcept;
+                                   const double* x, const double* y, const double* z,
+                                   double y_scale, double y_max,
+                                   std::size_t count, double* out) noexcept;
+
+void sample_y_scaled_batch_ymax_scalar(const PerlinNoiseSampler& s,
+                                       const double* x, const double* y, const double* z,
+                                       double y_scale, const double* y_max,
+                                       std::size_t count, double* out) noexcept;
+
+void sample_y_scaled_array_ymax_scalar(const PerlinNoiseSampler& s,
+                                       double x, const double* y, double z,
+                                       double y_scale, const double* y_max,
+                                       std::size_t count, double* out) noexcept;
 
 void sample_batch_avx2(const PerlinNoiseSampler& s,
                        const double* x, const double* y, const double* z,
@@ -137,8 +160,18 @@ void sample_y_array_avx2(const PerlinNoiseSampler& s,
                          std::size_t count, double* out) noexcept;
 
 void sample_y_scaled_batch_avx2(const PerlinNoiseSampler& s,
-                                const double* x, const double* y, const double* z,
-                                double y_scale, double y_max,
-                                std::size_t count, double* out) noexcept;
+                                 const double* x, const double* y, const double* z,
+                                 double y_scale, double y_max,
+                                 std::size_t count, double* out) noexcept;
+
+void sample_y_scaled_batch_ymax_avx2(const PerlinNoiseSampler& s,
+                                     const double* x, const double* y, const double* z,
+                                     double y_scale, const double* y_max,
+                                     std::size_t count, double* out) noexcept;
+
+void sample_y_scaled_array_ymax_avx2(const PerlinNoiseSampler& s,
+                                     double x, const double* y, double z,
+                                     double y_scale, const double* y_max,
+                                     std::size_t count, double* out) noexcept;
 
 } // namespace lattice::world::gen::noise

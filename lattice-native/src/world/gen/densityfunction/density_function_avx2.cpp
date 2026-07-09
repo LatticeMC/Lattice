@@ -50,6 +50,19 @@ inline bool all_zero_column(const double* values, int ny) noexcept {
     return true;
 }
 
+inline bool all_equal_column(const double* values, int ny, double value) noexcept {
+    const __m256d expected = _mm256_set1_pd(value);
+    int i = 0;
+    for (; i + 4 <= ny; i += 4) {
+        const __m256d v = _mm256_loadu_pd(values + i);
+        if (_mm256_movemask_pd(_mm256_cmp_pd(v, expected, _CMP_EQ_OQ)) != 0xF) return false;
+    }
+    for (; i < ny; ++i) {
+        if (values[i] != value) return false;
+    }
+    return true;
+}
+
 inline void scan_range_column(const double* values, int ny, double min_inclusive, double max_exclusive,
                               bool& any_in, bool& any_out) noexcept {
     const __m256d min_v = _mm256_set1_pd(min_inclusive);
@@ -665,6 +678,28 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                 for (; i < ny; ++i) {
                     const double value = input.data()[static_cast<std::size_t>(i)];
                     rarity_values.data()[static_cast<std::size_t>(i)] = value < -0.5 ? 0.75 : value < 0.0 ? 1.0 : value < 0.5 ? 1.5 : 2.0;
+                }
+            }
+
+            if (ny > 0) {
+                const double rarity = rarity_values.data()[0];
+                if (all_equal_column(rarity_values.data(), ny, rarity)) {
+                    noise::sample_y_column(*n.noise_ptr,
+                                           x / rarity,
+                                           y0 / rarity,
+                                           z / rarity,
+                                           dy / rarity,
+                                           static_cast<std::size_t>(ny),
+                                           out);
+                    const __m256d sign_mask = _mm256_set1_pd(-0.0);
+                    const __m256d rarity_v = _mm256_set1_pd(rarity);
+                    i = 0;
+                    for (; i + 4 <= ny; i += 4) {
+                        const __m256d sampled = _mm256_loadu_pd(out + i);
+                        _mm256_storeu_pd(out + i, _mm256_mul_pd(_mm256_andnot_pd(sign_mask, sampled), rarity_v));
+                    }
+                    for (; i < ny; ++i) out[i] = std::abs(out[i]) * rarity;
+                    return true;
                 }
             }
 

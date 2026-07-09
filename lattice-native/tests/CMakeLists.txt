@@ -66,6 +66,7 @@ set(_pathfinder_simd_srcs "")
 set(_perlin_simd_srcs "")
 set(_double_perlin_simd_srcs "")
 set(_simplex_simd_srcs "")
+set(_density_simd_srcs "")
 if(LATTICE_ARCH_X86)
     list(APPEND _palette_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage_bmi2.cpp)
     list(APPEND _heightmap_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan_avx2.cpp)
@@ -77,6 +78,7 @@ if(LATTICE_ARCH_X86)
     list(APPEND _perlin_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise_avx2.cpp)
     list(APPEND _double_perlin_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise_avx2.cpp)
     list(APPEND _simplex_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise_avx2.cpp)
+    list(APPEND _density_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function_avx2.cpp)
 elseif(LATTICE_ARCH_ARM64)
     list(APPEND _palette_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage_neon.cpp)
     list(APPEND _heightmap_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan_neon.cpp)
@@ -98,7 +100,7 @@ foreach(s IN LISTS _palette_simd_srcs)
     endif()
 endforeach()
 
-foreach(s IN LISTS _heightmap_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs _perlin_simd_srcs _double_perlin_simd_srcs _simplex_simd_srcs)
+foreach(s IN LISTS _heightmap_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs _perlin_simd_srcs _double_perlin_simd_srcs _simplex_simd_srcs _density_simd_srcs)
     if(MSVC)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     elseif(LATTICE_ARCH_X86)
@@ -235,7 +237,12 @@ lattice_add_test(density_function
              ${_simplex_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
-             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp)
+             ${_density_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+if(LATTICE_ARCH_X86)
+    target_compile_definitions(lattice_test_density_function PRIVATE LATTICE_HAS_DENSITY_AVX2=1 LATTICE_TEST_HAS_DENSITY_AVX2=1)
+endif()
 
 lattice_add_test(beardifier
     SOURCES  test_beardifier.cpp
@@ -272,8 +279,13 @@ lattice_add_test(chunk_noise_sampler
              ${_simplex_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
+             ${_density_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp
-             ${CMAKE_SOURCE_DIR}/src/world/gen/chunknoise/chunk_noise_sampler.cpp)
+             ${CMAKE_SOURCE_DIR}/src/world/gen/chunknoise/chunk_noise_sampler.cpp
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+if(LATTICE_ARCH_X86)
+    target_compile_definitions(lattice_test_chunk_noise_sampler PRIVATE LATTICE_HAS_DENSITY_AVX2=1)
+endif()
 
 # Worldgen-8: header-only Xoroshiro128++ port + OreVeinSampler.
 lattice_add_test(xoroshiro128pp

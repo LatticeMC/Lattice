@@ -210,6 +210,49 @@ inline void sample4_arrays(const PerlinNoiseSampler& s,
             y_scale, y_max, scaled, out);
 }
 
+inline void sample4_arrays_ymax(const PerlinNoiseSampler& s,
+                                const double* x, const double* y, const double* z,
+                                double y_scale, const double* y_max,
+                                double* out) noexcept {
+    const __m256d px = _mm256_add_pd(_mm256_loadu_pd(x), _mm256_set1_pd(s.origin_x));
+    const __m256d py = _mm256_add_pd(_mm256_loadu_pd(y), _mm256_set1_pd(s.origin_y));
+    const __m256d pz = _mm256_add_pd(_mm256_loadu_pd(z), _mm256_set1_pd(s.origin_z));
+
+    alignas(16) int xi[4], yi[4], zi[4];
+    const __m256d xfloor = floor_lanes(px, xi);
+    const __m256d yfloor = floor_lanes(py, yi);
+    const __m256d zfloor = floor_lanes(pz, zi);
+
+    const __m256d local_x = _mm256_sub_pd(px, xfloor);
+    const __m256d local_y_original = _mm256_sub_pd(py, yfloor);
+    const __m256d local_z = _mm256_sub_pd(pz, zfloor);
+    __m256d local_y = local_y_original;
+
+    if (y_scale != 0.0) {
+        const __m256d y_max_v = _mm256_loadu_pd(y_max);
+        const __m256d use_y_max = _mm256_and_pd(_mm256_cmp_pd(y_max_v, _mm256_setzero_pd(), _CMP_GE_OQ),
+                                               _mm256_cmp_pd(y_max_v, local_y_original, _CMP_LT_OQ));
+        const __m256d capped = _mm256_blendv_pd(local_y_original, y_max_v, use_y_max);
+        const __m256d y_scale_v = _mm256_set1_pd(y_scale);
+        const __m256d scaled_offset = _mm256_mul_pd(
+            _mm256_floor_pd(_mm256_add_pd(_mm256_div_pd(capped, y_scale_v), _mm256_set1_pd(1.0e-7))),
+            y_scale_v);
+        local_y = _mm256_sub_pd(local_y_original, scaled_offset);
+    }
+
+    const GradientSet g = lattice_gradients(s.permutation, xi, yi, zi, local_x, local_y, local_z);
+    const __m256d u = smooth_step(local_x);
+    const __m256d v = smooth_step(local_y_original);
+    const __m256d w = smooth_step(local_z);
+    const __m256d x00 = lerp(u, g.g000, g.g100);
+    const __m256d x10 = lerp(u, g.g010, g.g110);
+    const __m256d x01 = lerp(u, g.g001, g.g101);
+    const __m256d x11 = lerp(u, g.g011, g.g111);
+    const __m256d y0 = lerp(v, x00, x10);
+    const __m256d y1 = lerp(v, x01, x11);
+    _mm256_storeu_pd(out, lerp(w, y0, y1));
+}
+
 inline void sample4_const_xz(const PerlinNoiseSampler& s,
                              int xi, int zi,
                              double xf, double zf,
@@ -225,6 +268,44 @@ inline void sample4_const_xz(const PerlinNoiseSampler& s,
                                                      _mm256_set1_pd(xf), local_y, _mm256_set1_pd(zf));
 
     const __m256d v = smooth_step(local_y);
+    const __m256d x00 = lerp(u, g.g000, g.g100);
+    const __m256d x10 = lerp(u, g.g010, g.g110);
+    const __m256d x01 = lerp(u, g.g001, g.g101);
+    const __m256d x11 = lerp(u, g.g011, g.g111);
+    const __m256d y0 = lerp(v, x00, x10);
+    const __m256d y1 = lerp(v, x01, x11);
+    _mm256_storeu_pd(out, lerp(w, y0, y1));
+}
+
+inline void sample4_const_xz_ymax(const PerlinNoiseSampler& s,
+                                  int xi, int zi,
+                                  double xf, double zf,
+                                  __m256d u, __m256d w,
+                                  __m256d y,
+                                  double y_scale, const double* y_max,
+                                  double* out) noexcept {
+    const __m256d py = _mm256_add_pd(y, _mm256_set1_pd(s.origin_y));
+
+    alignas(16) int yi[4];
+    const __m256d yfloor = floor_lanes(py, yi);
+    const __m256d local_y_original = _mm256_sub_pd(py, yfloor);
+    __m256d local_y = local_y_original;
+
+    if (y_scale != 0.0) {
+        const __m256d y_max_v = _mm256_loadu_pd(y_max);
+        const __m256d use_y_max = _mm256_and_pd(_mm256_cmp_pd(y_max_v, _mm256_setzero_pd(), _CMP_GE_OQ),
+                                               _mm256_cmp_pd(y_max_v, local_y_original, _CMP_LT_OQ));
+        const __m256d capped = _mm256_blendv_pd(local_y_original, y_max_v, use_y_max);
+        const __m256d y_scale_v = _mm256_set1_pd(y_scale);
+        const __m256d scaled_offset = _mm256_mul_pd(
+            _mm256_floor_pd(_mm256_add_pd(_mm256_div_pd(capped, y_scale_v), _mm256_set1_pd(1.0e-7))),
+            y_scale_v);
+        local_y = _mm256_sub_pd(local_y_original, scaled_offset);
+    }
+
+    const GradientSet g = lattice_gradients_const_xz(s.permutation, xi, yi, zi,
+                                                     _mm256_set1_pd(xf), local_y, _mm256_set1_pd(zf));
+    const __m256d v = smooth_step(local_y_original);
     const __m256d x00 = lerp(u, g.g000, g.g100);
     const __m256d x10 = lerp(u, g.g010, g.g110);
     const __m256d x01 = lerp(u, g.g001, g.g101);
@@ -298,12 +379,37 @@ void sample_y_array_avx2(const PerlinNoiseSampler& s,
 }
 
 void sample_y_scaled_batch_avx2(const PerlinNoiseSampler& s,
-                                const double* x, const double* y, const double* z,
-                                double y_scale, double y_max,
-                                std::size_t count, double* out) noexcept {
+                                 const double* x, const double* y, const double* z,
+                                 double y_scale, double y_max,
+                                 std::size_t count, double* out) noexcept {
     std::size_t i = 0;
     for (; i + 4 <= count; i += 4) sample4_arrays(s, x + i, y + i, z + i, y_scale, y_max, true, out + i);
     if (i < count) sample_y_scaled_batch_scalar(s, x + i, y + i, z + i, y_scale, y_max, count - i, out + i);
+}
+
+void sample_y_scaled_batch_ymax_avx2(const PerlinNoiseSampler& s,
+                                     const double* x, const double* y, const double* z,
+                                     double y_scale, const double* y_max,
+                                     std::size_t count, double* out) noexcept {
+    std::size_t i = 0;
+    for (; i + 4 <= count; i += 4) sample4_arrays_ymax(s, x + i, y + i, z + i, y_scale, y_max + i, out + i);
+    if (i < count) sample_y_scaled_batch_ymax_scalar(s, x + i, y + i, z + i, y_scale, y_max + i, count - i, out + i);
+}
+
+void sample_y_scaled_array_ymax_avx2(const PerlinNoiseSampler& s,
+                                     double x, const double* y, double z,
+                                     double y_scale, const double* y_max,
+                                     std::size_t count, double* out) noexcept {
+    std::size_t i = 0;
+    const ColumnXZState state = make_column_xz_state(s, x, z);
+    for (; i + 4 <= count; i += 4) {
+        sample4_const_xz_ymax(s,
+                              state.xi, state.zi, state.xf, state.zf, state.u, state.w,
+                              _mm256_loadu_pd(y + i),
+                              y_scale, y_max + i,
+                              out + i);
+    }
+    if (i < count) sample_y_scaled_array_ymax_scalar(s, x, y + i, z, y_scale, y_max + i, count - i, out + i);
 }
 
 } // namespace lattice::world::gen::noise

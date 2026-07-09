@@ -680,12 +680,6 @@ public final class NativeDensityFunction {
             return last.compiled();
         }
         synchronized (CACHE) {
-            NativeDensityFunction cached = CACHE.get(function);
-            if (cached != null) {
-                LAST_COMPILE.set(new LastCompile(function, cached));
-                threadCache.put(function, cached);
-                return cached;
-            }
             if (FAILED_COMPILES.containsKey(function)) {
                 LAST_COMPILE.set(new LastCompile(function, null));
                 threadCache.put(function, FAILED_COMPILE_SENTINEL);
@@ -699,13 +693,6 @@ public final class NativeDensityFunction {
         if (PROFILING_ENABLED) COMPILE_NANOS.add(System.nanoTime() - start);
 
         synchronized (CACHE) {
-            NativeDensityFunction cached = CACHE.get(function);
-            if (cached != null) {
-                if (compiled != null) compiled.destroyNow();
-                LAST_COMPILE.set(new LastCompile(function, cached));
-                threadCache.put(function, cached);
-                return cached;
-            }
             if (FAILED_COMPILES.containsKey(function)) {
                 if (compiled != null) compiled.destroyNow();
                 LAST_COMPILE.set(new LastCompile(function, null));
@@ -714,7 +701,6 @@ public final class NativeDensityFunction {
             }
             if (compiled != null) {
                 if (STATS_ENABLED) COMPILE_SUCCESS.increment();
-                CACHE.put(function, compiled);
             } else {
                 FAILED_COMPILES.put(function, Boolean.TRUE);
             }
@@ -736,12 +722,6 @@ public final class NativeDensityFunction {
             return last.compiled();
         }
         synchronized (DIRECT_CACHE) {
-            NativeDensityFunction cached = DIRECT_CACHE.get(function);
-            if (cached != null) {
-                LAST_DIRECT_COMPILE.set(new LastCompile(function, cached));
-                threadCache.put(function, cached);
-                return cached;
-            }
             if (FAILED_DIRECT_COMPILES.containsKey(function)) {
                 LAST_DIRECT_COMPILE.set(new LastCompile(function, null));
                 threadCache.put(function, FAILED_COMPILE_SENTINEL);
@@ -755,13 +735,6 @@ public final class NativeDensityFunction {
         if (PROFILING_ENABLED) COMPILE_NANOS.add(System.nanoTime() - start);
 
         synchronized (DIRECT_CACHE) {
-            NativeDensityFunction cached = DIRECT_CACHE.get(function);
-            if (cached != null) {
-                if (compiled != null) compiled.destroyNow();
-                LAST_DIRECT_COMPILE.set(new LastCompile(function, cached));
-                threadCache.put(function, cached);
-                return cached;
-            }
             if (FAILED_DIRECT_COMPILES.containsKey(function)) {
                 if (compiled != null) compiled.destroyNow();
                 LAST_DIRECT_COMPILE.set(new LastCompile(function, null));
@@ -770,7 +743,6 @@ public final class NativeDensityFunction {
             }
             if (compiled != null) {
                 if (STATS_ENABLED) COMPILE_SUCCESS.increment();
-                DIRECT_CACHE.put(function, compiled);
             } else {
                 DIRECT_CELL_REJECTS.incrementAndGet();
                 FAILED_DIRECT_COMPILES.put(function, Boolean.TRUE);
