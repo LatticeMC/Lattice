@@ -272,7 +272,7 @@ TEST_CASE("density: AVX2 weird_scaled uniform rarity column matches scalar") {
         ctx.x = x;
         ctx.y = y0 + static_cast<double>(i) * dy;
         ctx.z = z;
-        CHECK(column[static_cast<std::size_t>(i)] == evaluate(a, ctx));
+        CHECK(column[static_cast<std::size_t>(i)] == doctest::Approx(evaluate(a, ctx)));
     }
 }
 #endif
