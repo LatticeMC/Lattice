@@ -110,7 +110,7 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         this.noise011 = start[i11];
         this.noise110 = end[i01];
         this.noise111 = end[i11];
-        WorldgenProfiler.end("noise.interpolator.selectCellYZ.flat", profileStart);
+        WorldgenProfiler.end(WorldgenProfiler.NOISE_INTERPOLATOR_SELECT_CELL_YZ_FLAT, profileStart);
         ci.cancel();
     }
 
@@ -122,7 +122,7 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         this.valueXZ10 = Mth.lerp(y, this.noise100, this.noise110);
         this.valueXZ01 = Mth.lerp(y, this.noise001, this.noise011);
         this.valueXZ11 = Mth.lerp(y, this.noise101, this.noise111);
-        WorldgenProfiler.end("noise.interpolator.updateForY.flat", profileStart);
+        WorldgenProfiler.end(WorldgenProfiler.NOISE_INTERPOLATOR_UPDATE_FOR_Y_FLAT, profileStart);
         ci.cancel();
     }
 
@@ -132,7 +132,7 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         long profileStart = WorldgenProfiler.start();
         this.valueZ0 = Mth.lerp(x, this.valueXZ00, this.valueXZ10);
         this.valueZ1 = Mth.lerp(x, this.valueXZ01, this.valueXZ11);
-        WorldgenProfiler.end("noise.interpolator.updateForX.flat", profileStart);
+        WorldgenProfiler.end(WorldgenProfiler.NOISE_INTERPOLATOR_UPDATE_FOR_X_FLAT, profileStart);
         ci.cancel();
     }
 
@@ -141,7 +141,7 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         if (!this.lattice$flatReadable) return;
         long profileStart = WorldgenProfiler.start();
         this.value = Mth.lerp(z, this.valueZ0, this.valueZ1);
-        WorldgenProfiler.end("noise.interpolator.updateForZ.flat", profileStart);
+        WorldgenProfiler.end(WorldgenProfiler.NOISE_INTERPOLATOR_UPDATE_FOR_Z_FLAT, profileStart);
         ci.cancel();
     }
 

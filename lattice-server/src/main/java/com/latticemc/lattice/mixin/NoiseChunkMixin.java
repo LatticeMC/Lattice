@@ -84,7 +84,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
 
     @Inject(method = "updateForY", at = @At("RETURN"))
     private void lattice$profileUpdateForYEnd(int cellEndBlockY, double y, CallbackInfo ci) {
-        WorldgenProfiler.end("noise.updateForY", this.lattice$updateForYStart.get().longValue());
+        WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_Y, this.lattice$updateForYStart.get().longValue());
     }
 
     @Inject(method = "updateForX", at = @At("HEAD"))
@@ -94,7 +94,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
 
     @Inject(method = "updateForX", at = @At("RETURN"))
     private void lattice$profileUpdateForXEnd(int cellEndBlockX, double x, CallbackInfo ci) {
-        WorldgenProfiler.end("noise.updateForX", this.lattice$updateForXStart.get().longValue());
+        WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_X, this.lattice$updateForXStart.get().longValue());
     }
 
     @Inject(method = "updateForZ", at = @At("HEAD"))
@@ -104,7 +104,7 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
 
     @Inject(method = "updateForZ", at = @At("RETURN"))
     private void lattice$profileUpdateForZEnd(int cellEndBlockZ, double z, CallbackInfo ci) {
-        WorldgenProfiler.end("noise.updateForZ", this.lattice$updateForZStart.get().longValue());
+        WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_Z, this.lattice$updateForZStart.get().longValue());
     }
 
     @Inject(method = "fillAllDirectly", at = @At("HEAD"), cancellable = true)

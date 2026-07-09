@@ -11,6 +11,14 @@ public final class WorldgenProfiler {
     private static volatile boolean ENABLED = Boolean.getBoolean("lattice.worldgenProfiler");
     private static final ConcurrentHashMap<String, Probe> PROBES = new ConcurrentHashMap<>();
 
+    public static final Probe NOISE_UPDATE_FOR_Y = probe("noise.updateForY");
+    public static final Probe NOISE_UPDATE_FOR_X = probe("noise.updateForX");
+    public static final Probe NOISE_UPDATE_FOR_Z = probe("noise.updateForZ");
+    public static final Probe NOISE_INTERPOLATOR_SELECT_CELL_YZ_FLAT = probe("noise.interpolator.selectCellYZ.flat");
+    public static final Probe NOISE_INTERPOLATOR_UPDATE_FOR_Y_FLAT = probe("noise.interpolator.updateForY.flat");
+    public static final Probe NOISE_INTERPOLATOR_UPDATE_FOR_X_FLAT = probe("noise.interpolator.updateForX.flat");
+    public static final Probe NOISE_INTERPOLATOR_UPDATE_FOR_Z_FLAT = probe("noise.interpolator.updateForZ.flat");
+
     private WorldgenProfiler() {}
 
     public static boolean enabled() {
@@ -28,9 +36,12 @@ public final class WorldgenProfiler {
     public static void end(String name, long startNanos) {
         if (startNanos == 0L) return;
         long elapsed = System.nanoTime() - startNanos;
-        Probe probe = PROBES.computeIfAbsent(name, ignored -> new Probe());
-        probe.count.increment();
-        probe.nanos.add(elapsed);
+        probe(name).add(elapsed);
+    }
+
+    public static void end(Probe probe, long startNanos) {
+        if (startNanos == 0L) return;
+        probe.add(System.nanoTime() - startNanos);
     }
 
     public static void reset() {
@@ -72,8 +83,17 @@ public final class WorldgenProfiler {
         return builder.append('}').toString();
     }
 
-    private static final class Probe {
+    public static Probe probe(String name) {
+        return PROBES.computeIfAbsent(name, ignored -> new Probe());
+    }
+
+    public static final class Probe {
         private final LongAdder count = new LongAdder();
         private final LongAdder nanos = new LongAdder();
+
+        private void add(long elapsed) {
+            count.increment();
+            nanos.add(elapsed);
+        }
     }
 }
