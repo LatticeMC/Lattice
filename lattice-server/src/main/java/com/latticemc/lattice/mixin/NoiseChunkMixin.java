@@ -39,13 +39,13 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     @Shadow private int inCellX;
     @Shadow private int inCellY;
     @Shadow private int inCellZ;
+    @Shadow long interpolationCounter;
     @Shadow long arrayInterpolationCounter;
     @Unique private final ThreadLocal<Long> lattice$initializeForFirstCellXStart = ThreadLocal.withInitial(() -> 0L);
     @Unique private final ThreadLocal<Long> lattice$advanceCellXStart = ThreadLocal.withInitial(() -> 0L);
     @Unique private final ThreadLocal<Long> lattice$fillAllDirectlyStart = ThreadLocal.withInitial(() -> 0L);
     @Unique private final ThreadLocal<Long> lattice$updateForYStart = ThreadLocal.withInitial(() -> 0L);
     @Unique private final ThreadLocal<Long> lattice$updateForXStart = ThreadLocal.withInitial(() -> 0L);
-    @Unique private final ThreadLocal<Long> lattice$updateForZStart = ThreadLocal.withInitial(() -> 0L);
 
     @Inject(method = "initializeForFirstCellX", at = @At("HEAD"))
     private void lattice$profileInitializeForFirstCellXStart(CallbackInfo ci) {
@@ -97,14 +97,20 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
         WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_X, this.lattice$updateForXStart.get().longValue());
     }
 
-    @Inject(method = "updateForZ", at = @At("HEAD"))
-    private void lattice$profileUpdateForZStart(int cellEndBlockZ, double z, CallbackInfo ci) {
-        this.lattice$updateForZStart.set(WorldgenProfiler.start());
-    }
+    /**
+     * @author Lattice
+     * @reason Avoid per-interpolator mixin/profiler overhead on the hottest Z interpolation path.
+     */
+    @Overwrite
+    public void updateForZ(int cellEndBlockZ, double z) {
+        long profileStart = WorldgenProfiler.start();
+        this.inCellZ = cellEndBlockZ - this.cellStartBlockZ;
+        this.interpolationCounter++;
 
-    @Inject(method = "updateForZ", at = @At("RETURN"))
-    private void lattice$profileUpdateForZEnd(int cellEndBlockZ, double z, CallbackInfo ci) {
-        WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_Z, this.lattice$updateForZStart.get().longValue());
+        for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolators) {
+            ((NativeNoiseInterpolatorAccess) (Object) noiseInterpolator).lattice$updateForZ(z);
+        }
+        WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_Z, profileStart);
     }
 
     @Inject(method = "fillAllDirectly", at = @At("HEAD"), cancellable = true)

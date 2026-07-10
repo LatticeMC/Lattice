@@ -78,8 +78,20 @@ public abstract class NoiseInterpolatorMixin implements NativeNoiseInterpolatorA
         this.lattice$invokeSelectCellYZ(y, z);
     }
 
+    @Override
+    public void lattice$updateForZ(double z) {
+        if (this.lattice$flatReadable) {
+            this.value = Mth.lerp(z, this.valueZ0, this.valueZ1);
+            return;
+        }
+        this.lattice$invokeUpdateForZ(z);
+    }
+
     @Invoker("selectCellYZ")
     protected abstract void lattice$invokeSelectCellYZ(int y, int z);
+
+    @Invoker("updateForZ")
+    protected abstract void lattice$invokeUpdateForZ(double z);
 
     @Inject(method = "swapSlices", at = @At("TAIL"))
     private void lattice$swapFlatSlices(CallbackInfo ci) {

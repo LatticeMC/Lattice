@@ -624,7 +624,8 @@ public final class NativeDensityFunction {
         }
 
         try {
-            if (highLevel) {
+            boolean interpolated = highLevel || !compiled.interpolators.isEmpty();
+            if (interpolated) {
                 if (compiled.clearsCachePerCell) nativeClearCache(compiled.cacheHandle);
                 if (stats) CELL_INTERPOLATED.increment();
                 compiled.syncInterpolatorColumn(cellStartBlockX, cellCountXZ, cellCountY);
@@ -1378,6 +1379,7 @@ public final class NativeDensityFunction {
                     || name.endsWith("DensityFunctions$Shift")
                     || name.endsWith("DensityFunctions$WeirdScaledSampler")
                     || name.endsWith("DensityFunctions$Spline")
+                    || name.contains("NoiseChunk$NoiseInterpolator")
                     || name.contains("InterpolatedNoise")) {
                 directExpensiveNodeCount++;
             }
@@ -1437,7 +1439,6 @@ public final class NativeDensityFunction {
             if (name.contains("NoiseChunk$NoiseInterpolator")) {
                 int input = compile((DensityFunction) invoke(function, "wrapped"));
                 if (input < 0) return -1;
-                if (directCell) return input;
                 if (!(function instanceof NativeNoiseInterpolatorAccess access)) return -1;
                 int ref = addCache(handle, 5, input, NativeDensityFunction::nativeAddInterpolated);
                 if (ref >= 0) {

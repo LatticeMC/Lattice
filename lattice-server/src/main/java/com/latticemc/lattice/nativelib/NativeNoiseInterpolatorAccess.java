@@ -14,4 +14,6 @@ public interface NativeNoiseInterpolatorAccess {
     double[] lattice$sliceRow(boolean slice0, int zRow);
 
     void lattice$selectCellYZ(int y, int z);
+
+    void lattice$updateForZ(double z);
 }
