@@ -40,7 +40,6 @@ option(LATTICE_WARNINGS_AS_ERRORS "Promote warnings to errors" OFF)
 # Dependencies
 # ---------------------------------------------------------------------------
 find_package(JNI REQUIRED)
-find_package(Threads REQUIRED)
 
 # libdeflate — pinned source build via FetchContent. We deliberately don't
 # `find_package` system libdeflate: developers should get the same version
@@ -124,7 +123,7 @@ endif()
 # Main shared library (sources added by modules below)
 # ---------------------------------------------------------------------------
 add_library(lattice SHARED)
-target_link_libraries(lattice PRIVATE lattice_baseline_flags Threads::Threads)
+target_link_libraries(lattice PRIVATE lattice_baseline_flags)
 target_include_directories(lattice
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -189,7 +188,6 @@ endfunction()
 # Core sources (always built)
 # ---------------------------------------------------------------------------
 target_sources(lattice PRIVATE
-    src/core/concurrency/adaptive_row_executor.cpp
     src/core/cpu/detect.cpp
     jni/loader.cpp
 )

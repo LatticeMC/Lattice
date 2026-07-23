@@ -18,8 +18,7 @@ public final class LatticeDensityCommand extends Command {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
     private static final List<String> DENSITY_ACTIONS = List.of(
             "status", "reset", "all", "fast", "profile", "enabled", "cell", "directCell", "directCellColumn",
-            "shiftedNoise", "spline", "multipointSpline", "climateBatch", "parallelRows",
-            "parallelRowsLanes", "parallelRowsMinWork", "stats", "profiling",
+            "shiftedNoise", "spline", "multipointSpline", "climateBatch", "stats", "profiling",
             "parity", "parityInterval", "surface", "heightmap", "worldgenProfiler", "worldgenHotLoops", "worldgenProfileStatus", "worldgenProfileReset");
     private static final List<String> BOOLEAN_VALUES = List.of("true", "false", "on", "off");
     private static final List<String> FULL_OPTIONS = List.of(
@@ -84,9 +83,7 @@ public final class LatticeDensityCommand extends Command {
                 sender.sendMessage("Lattice density " + args[1] + '=' + value);
                 return true;
             }
-            if ("parityInterval".equalsIgnoreCase(args[1])
-                    || "parallelRowsLanes".equalsIgnoreCase(args[1])
-                    || "parallelRowsMinWork".equalsIgnoreCase(args[1])) {
+            if ("parityInterval".equalsIgnoreCase(args[1])) {
                 try {
                     int value = Integer.parseInt(args[2]);
                     if (!NativeDensityFunction.setIntOption(args[1], value)) {
@@ -130,8 +127,6 @@ public final class LatticeDensityCommand extends Command {
         }
         if (args.length == 3 && "density".equalsIgnoreCase(args[0])) {
             if ("parityInterval".equalsIgnoreCase(args[1])) return filter(List.of("1", "128", "1024", "4096"), args[2]);
-            if ("parallelRowsLanes".equalsIgnoreCase(args[1])) return filter(List.of("1", "2", "4", "6"), args[2]);
-            if ("parallelRowsMinWork".equalsIgnoreCase(args[1])) return filter(List.of("256", "1024", "4096", "16384"), args[2]);
             if (!"status".equalsIgnoreCase(args[1]) && !"reset".equalsIgnoreCase(args[1])) {
                 return filter(BOOLEAN_VALUES, args[2]);
             }
