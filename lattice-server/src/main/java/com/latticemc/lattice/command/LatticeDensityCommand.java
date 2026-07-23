@@ -17,13 +17,13 @@ import org.slf4j.LoggerFactory;
 public final class LatticeDensityCommand extends Command {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
     private static final List<String> DENSITY_ACTIONS = List.of(
-            "status", "reset", "all", "fast", "profile", "enabled", "cell", "directCell",
-            "shiftedNoise", "spline", "multipointSpline", "stats", "profiling",
-            "parity", "parityInterval", "surface", "heightmap", "worldgenProfiler", "worldgenProfileStatus", "worldgenProfileReset");
+            "status", "reset", "all", "fast", "profile", "enabled", "cell", "directCell", "directCellColumn",
+            "shiftedNoise", "spline", "multipointSpline", "climateBatch", "stats", "profiling",
+            "parity", "parityInterval", "surface", "heightmap", "worldgenProfiler", "worldgenHotLoops", "worldgenProfileStatus", "worldgenProfileReset");
     private static final List<String> BOOLEAN_VALUES = List.of("true", "false", "on", "off");
     private static final List<String> FULL_OPTIONS = List.of(
-            "enabled", "cell", "directCell", "shiftedNoise", "spline",
-            "multipointSpline", "surface", "heightmap");
+            "enabled", "cell", "directCell", "directCellColumn", "shiftedNoise", "spline",
+            "multipointSpline", "climateBatch", "surface", "heightmap");
     private static final List<String> PROFILE_OPTIONS = List.of(
             "stats", "profiling", "parity");
     private static boolean registered;
@@ -104,6 +104,8 @@ public final class LatticeDensityCommand extends Command {
             if (!NativeDensityFunction.setOption(args[1], value.booleanValue())) {
                 if ("worldgenProfiler".equalsIgnoreCase(args[1])) {
                     WorldgenProfiler.setEnabled(value.booleanValue());
+                } else if ("worldgenHotLoops".equalsIgnoreCase(args[1])) {
+                    WorldgenProfiler.setHotLoopsEnabled(value.booleanValue());
                 } else {
                     sender.sendMessage("Unknown density option: " + args[1]);
                     return true;
@@ -142,9 +144,11 @@ public final class LatticeDensityCommand extends Command {
             NativeDensityFunction.setOption("enabled", false);
             NativeDensityFunction.setOption("cell", false);
             NativeDensityFunction.setOption("directCell", false);
+            NativeDensityFunction.setOption("directCellColumn", false);
             NativeDensityFunction.setOption("shiftedNoise", false);
             NativeDensityFunction.setOption("spline", false);
             NativeDensityFunction.setOption("multipointSpline", false);
+            NativeDensityFunction.setOption("climateBatch", false);
             NativeDensityFunction.setOption("surface", value);
             NativeDensityFunction.setOption("heightmap", value);
             for (String option : PROFILE_OPTIONS) NativeDensityFunction.setOption(option, false);

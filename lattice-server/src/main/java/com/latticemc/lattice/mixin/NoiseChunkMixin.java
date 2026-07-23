@@ -1,15 +1,21 @@
 package com.latticemc.lattice.mixin;
 
 import com.latticemc.lattice.nativelib.NativeCacheAllInCellAccess;
+import com.latticemc.lattice.nativelib.DirectCellColumnCache;
 import com.latticemc.lattice.nativelib.NativeDensityFunction;
 import com.latticemc.lattice.nativelib.NativeNoiseChunkAccess;
 import com.latticemc.lattice.nativelib.NativeNoiseInterpolatorAccess;
-import com.latticemc.lattice.nativelib.NativeOreVeinBlockStateFiller;
 import com.latticemc.lattice.nativelib.WorldgenProfiler;
+import java.util.IdentityHashMap;
 import java.util.List;
+import net.minecraft.world.level.levelgen.Aquifer;
 import net.minecraft.world.level.levelgen.DensityFunction;
+import net.minecraft.world.level.levelgen.DensityFunctions;
 import net.minecraft.world.level.levelgen.NoiseChunk;
-import net.minecraft.world.level.levelgen.PositionalRandomFactory;
+import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
+import net.minecraft.world.level.levelgen.NoiseSettings;
+import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.blending.Blender;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
@@ -41,76 +47,61 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     @Shadow private int inCellZ;
     @Shadow long interpolationCounter;
     @Shadow long arrayInterpolationCounter;
-    @Unique private final ThreadLocal<Long> lattice$initializeForFirstCellXStart = ThreadLocal.withInitial(() -> 0L);
-    @Unique private final ThreadLocal<Long> lattice$advanceCellXStart = ThreadLocal.withInitial(() -> 0L);
-    @Unique private final ThreadLocal<Long> lattice$fillAllDirectlyStart = ThreadLocal.withInitial(() -> 0L);
-    @Unique private final ThreadLocal<Long> lattice$updateForYStart = ThreadLocal.withInitial(() -> 0L);
-    @Unique private final ThreadLocal<Long> lattice$updateForXStart = ThreadLocal.withInitial(() -> 0L);
+    @Unique private long lattice$initializeForFirstCellXStart;
+    @Unique private long lattice$advanceCellXStart;
+    @Unique private long lattice$fillAllDirectlyStart;
+    @Unique private final IdentityHashMap<DensityFunction, DirectCellColumnCache> lattice$directCellColumns = new IdentityHashMap<>();
+    @Unique private Object lattice$sliceArenaKey;
+    @Shadow @Final private NoiseChunk.NoiseInterpolator[] interpolatorArray;
+    @Unique private int lattice$preparedCacheColumnCellX = Integer.MIN_VALUE;
+    @Unique private boolean lattice$cellColumnsJavaOnly;
+
+    @Inject(method = "<init>", at = @At("RETURN"))
+    private void lattice$captureSliceArenaKey(int cellCountXZ,
+                                               RandomState random,
+                                               int firstNoiseX,
+                                               int firstNoiseZ,
+                                               NoiseSettings noiseSettings,
+                                               DensityFunctions.BeardifierOrMarker beardifier,
+                                               NoiseGeneratorSettings noiseGeneratorSettings,
+                                               Aquifer.FluidPicker fluidPicker,
+                                               Blender blender,
+                                               CallbackInfo ci) {
+        this.lattice$sliceArenaKey = random.router();
+    }
 
     @Inject(method = "initializeForFirstCellX", at = @At("HEAD"))
     private void lattice$profileInitializeForFirstCellXStart(CallbackInfo ci) {
-        this.lattice$initializeForFirstCellXStart.set(WorldgenProfiler.start());
+        if (!WorldgenProfiler.available()) return;
+        this.lattice$initializeForFirstCellXStart = WorldgenProfiler.start();
     }
 
     @Inject(method = "initializeForFirstCellX", at = @At("RETURN"))
     private void lattice$profileInitializeForFirstCellXEnd(CallbackInfo ci) {
-        WorldgenProfiler.end("noise.initializeForFirstCellX", this.lattice$initializeForFirstCellXStart.get().longValue());
+        if (!WorldgenProfiler.available()) return;
+        WorldgenProfiler.end("noise.initializeForFirstCellX", this.lattice$initializeForFirstCellXStart);
     }
 
     @Inject(method = "advanceCellX", at = @At("HEAD"))
     private void lattice$profileAdvanceCellXStart(int increment, CallbackInfo ci) {
-        this.lattice$advanceCellXStart.set(WorldgenProfiler.start());
+        if (!WorldgenProfiler.available()) return;
+        this.lattice$advanceCellXStart = WorldgenProfiler.start();
     }
 
     @Inject(method = "advanceCellX", at = @At("RETURN"))
     private void lattice$profileAdvanceCellXEnd(int increment, CallbackInfo ci) {
-        WorldgenProfiler.end("noise.advanceCellX", this.lattice$advanceCellXStart.get().longValue());
+        if (!WorldgenProfiler.available()) return;
+        WorldgenProfiler.end("noise.advanceCellX", this.lattice$advanceCellXStart);
     }
 
     @Inject(method = "fillAllDirectly", at = @At("HEAD"))
     private void lattice$profileFillAllDirectlyStart(double[] values, DensityFunction function, CallbackInfo ci) {
-        this.lattice$fillAllDirectlyStart.set(WorldgenProfiler.start());
+        this.lattice$fillAllDirectlyStart = WorldgenProfiler.hotLoopStart();
     }
 
     @Inject(method = "fillAllDirectly", at = @At("RETURN"))
     private void lattice$profileFillAllDirectlyEnd(double[] values, DensityFunction function, CallbackInfo ci) {
-        WorldgenProfiler.end("noise.fillAllDirectly", this.lattice$fillAllDirectlyStart.get().longValue());
-    }
-
-    @Inject(method = "updateForY", at = @At("HEAD"))
-    private void lattice$profileUpdateForYStart(int cellEndBlockY, double y, CallbackInfo ci) {
-        this.lattice$updateForYStart.set(WorldgenProfiler.start());
-    }
-
-    @Inject(method = "updateForY", at = @At("RETURN"))
-    private void lattice$profileUpdateForYEnd(int cellEndBlockY, double y, CallbackInfo ci) {
-        WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_Y, this.lattice$updateForYStart.get().longValue());
-    }
-
-    @Inject(method = "updateForX", at = @At("HEAD"))
-    private void lattice$profileUpdateForXStart(int cellEndBlockX, double x, CallbackInfo ci) {
-        this.lattice$updateForXStart.set(WorldgenProfiler.start());
-    }
-
-    @Inject(method = "updateForX", at = @At("RETURN"))
-    private void lattice$profileUpdateForXEnd(int cellEndBlockX, double x, CallbackInfo ci) {
-        WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_X, this.lattice$updateForXStart.get().longValue());
-    }
-
-    /**
-     * @author Lattice
-     * @reason Avoid per-interpolator mixin/profiler overhead on the hottest Z interpolation path.
-     */
-    @Overwrite
-    public void updateForZ(int cellEndBlockZ, double z) {
-        long profileStart = WorldgenProfiler.start();
-        this.inCellZ = cellEndBlockZ - this.cellStartBlockZ;
-        this.interpolationCounter++;
-
-        for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolators) {
-            ((NativeNoiseInterpolatorAccess) (Object) noiseInterpolator).lattice$updateForZ(z);
-        }
-        WorldgenProfiler.end(WorldgenProfiler.NOISE_UPDATE_FOR_Z, profileStart);
+        WorldgenProfiler.end("noise.fillAllDirectly", this.lattice$fillAllDirectlyStart);
     }
 
     @Inject(method = "fillAllDirectly", at = @At("HEAD"), cancellable = true)
@@ -122,6 +113,51 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
         int startZ = this.cellStartBlockZ;
         int cellX = Math.floorDiv(startX, this.cellWidth);
         int cellZ = Math.floorDiv(startZ, this.cellWidth);
+        int localCellY = Math.floorDiv(this.cellStartBlockY, this.cellHeight) - this.cellNoiseMinY;
+        int localCellZ = cellZ - this.firstCellZ;
+        int cellValueCount = this.cellWidth * this.cellHeight * this.cellWidth;
+        int columnValueCount = this.cellCountXZ * this.cellCountY * cellValueCount;
+        boolean parityCheck = NativeDensityFunction.shouldCheckParity();
+        if (NativeDensityFunction.shouldTryFillCellColumnDirect()) {
+            DirectCellColumnCache column = this.lattice$directCellColumns.get(function);
+            if (column != null && column.rejected) return;
+            if (column == null) {
+                column = new DirectCellColumnCache();
+                this.lattice$directCellColumns.put(function, column);
+            }
+            if (column.cellX != cellX) {
+                if (column.values == null || column.values.length < columnValueCount) {
+                    NativeDensityFunction.releaseDirectCellColumnBuffer(column.values);
+                    column.values = NativeDensityFunction.acquireDirectCellColumnBuffer(columnValueCount);
+                }
+                column.available = NativeDensityFunction.tryFillCellColumnDirect(
+                        column.values,
+                        function,
+                        startX,
+                        this.firstCellZ,
+                        this.cellNoiseMinY,
+                        this.cellWidth,
+                        this.cellHeight,
+                        this.cellCountXZ,
+                        this.cellCountY,
+                        cellX);
+                column.rejected = !column.available;
+                column.cellX = cellX;
+            }
+            if (column.available) {
+                int cellOffset = (localCellZ * this.cellCountY + localCellY) * cellValueCount;
+                System.arraycopy(column.values, cellOffset, values, 0, cellValueCount);
+                if (parityCheck) {
+                    double[] javaValues = new double[values.length];
+                    NativeDensityFunction.runWithFillAllDirectlyBypass(() -> function.fillArray(javaValues, (DensityFunction.ContextProvider) (Object) this));
+                    NativeDensityFunction.recordParity("directCellColumn", function, values, javaValues);
+                }
+                WorldgenProfiler.end("noise.fillAllDirectly", this.lattice$fillAllDirectlyStart);
+                ci.cancel();
+                return;
+            }
+            if (column.rejected) return;
+        }
         if (NativeDensityFunction.tryFillCellDirect(
                 values,
                 function,
@@ -134,14 +170,14 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 this.cellCountY,
                 cellX,
                 cellZ,
-                Math.floorDiv(this.cellStartBlockY, this.cellHeight) - this.cellNoiseMinY,
-                cellZ - this.firstCellZ)) {
-            if (NativeDensityFunction.shouldCheckParity()) {
+                localCellY,
+                localCellZ)) {
+            if (parityCheck) {
                 double[] javaValues = new double[values.length];
                 NativeDensityFunction.runWithFillAllDirectlyBypass(() -> function.fillArray(javaValues, (DensityFunction.ContextProvider) (Object) this));
                 NativeDensityFunction.recordParity("directCell", function, values, javaValues);
             }
-            WorldgenProfiler.end("noise.fillAllDirectly", this.lattice$fillAllDirectlyStart.get().longValue());
+            WorldgenProfiler.end("noise.fillAllDirectly", this.lattice$fillAllDirectlyStart);
             ci.cancel();
         }
     }
@@ -189,12 +225,50 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
 
     @Inject(method = "fillSlice", at = @At("HEAD"), cancellable = true)
     private void lattice$fillSliceBatchNative(boolean isSlice0, int start, CallbackInfo ci) {
-        if (NativeDensityFunction.shouldCheckParity()) return;
+        boolean parityCheck = NativeDensityFunction.shouldCheckParity();
         long profileStart = WorldgenProfiler.start();
         int yRows = this.cellCountY + 1;
         int zRows = this.cellCountXZ + 1;
         this.cellStartBlockX = start * this.cellWidth;
         this.inCellX = 0;
+        if (NativeDensityFunction.tryFillSliceRows(
+                this.interpolators,
+                this.lattice$sliceArenaKey,
+                isSlice0,
+                this.cellStartBlockX,
+                this.cellNoiseMinY * this.cellHeight,
+                this.firstCellZ * this.cellWidth,
+                this.cellHeight,
+                start,
+                this.firstCellZ,
+                this.cellWidth,
+                yRows,
+                zRows)) {
+            for (int zRow = 0; zRow < zRows; zRow++) {
+                this.cellStartBlockZ = (this.firstCellZ + zRow) * this.cellWidth;
+                this.inCellZ = 0;
+                this.arrayInterpolationCounter++;
+                if (parityCheck) {
+                    for (NoiseChunk.NoiseInterpolator interpolator : this.interpolators) {
+                        NativeNoiseInterpolatorAccess access = (NativeNoiseInterpolatorAccess) (Object) interpolator;
+                        double[] javaValues = access.lattice$sliceRow(isSlice0, zRow);
+                        interpolator.fillArray(javaValues, this.sliceFillingContextProvider);
+                        double[] nativeValues = isSlice0 ? access.lattice$flatSlice0() : access.lattice$flatSlice1();
+                        NativeDensityFunction.recordParitySliceRow(
+                                "sliceSharedJava",
+                                interpolator.wrapped(),
+                                nativeValues,
+                                zRow * yRows,
+                                javaValues,
+                                yRows);
+                    }
+                }
+            }
+            this.arrayInterpolationCounter++;
+            WorldgenProfiler.end("noise.fillSlice", profileStart);
+            ci.cancel();
+            return;
+        }
         for (int zRow = 0; zRow < zRows; zRow++) {
             int cellZ = this.firstCellZ + zRow;
             this.cellStartBlockZ = cellZ * this.cellWidth;
@@ -233,10 +307,11 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
      */
     @Overwrite
     public void selectCellYZ(int y, int z) {
-        long profileStart = WorldgenProfiler.start();
+        long profileStart = WorldgenProfiler.hotLoopStart();
         try {
-            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolators) {
-                ((NativeNoiseInterpolatorAccess) (Object) noiseInterpolator).lattice$selectCellYZ(y, z);
+            NoiseChunk.NoiseInterpolator[] interpolators = this.interpolatorArray;
+            for (int i = 0; i < interpolators.length; i++) {
+                ((NativeNoiseInterpolatorAccess) (Object) interpolators[i]).lattice$selectCellYZ(y, z);
             }
 
             this.fillingCell = true;
@@ -248,19 +323,54 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
             int cellValueCount = this.cellWidth * this.cellHeight * this.cellWidth;
             int columnValueCount = this.cellCountXZ * this.cellCountY * cellValueCount;
             int cellOffset = (z * this.cellCountY + y) * cellValueCount;
-            long cacheStart = WorldgenProfiler.start();
-            if (NativeDensityFunction.tryFillCellColumns(
-                    this.cellCaches,
-                    (DensityFunction.ContextProvider) (Object) this,
-                    this.cellStartBlockX,
-                    this.firstCellZ,
-                    this.cellNoiseMinY,
-                    this.cellWidth,
-                    this.cellHeight,
-                    this.cellCountXZ,
-                    this.cellCountY,
-                    cellX,
-                    cellOffset)) {
+            long cacheStart = WorldgenProfiler.hotLoopStart();
+            if (this.lattice$preparedCacheColumnCellX == cellX) {
+                for (Object cache : this.cellCaches) {
+                    NativeCacheAllInCellAccess access = (NativeCacheAllInCellAccess) cache;
+                    double[] column = access.lattice$columnValues();
+                    if (access.lattice$columnCellX() == cellX && column != null && column.length >= columnValueCount) {
+                        System.arraycopy(column, cellOffset, access.lattice$values(), 0, cellValueCount);
+                    } else {
+                        access.lattice$noiseFiller().fillArray(
+                                access.lattice$values(), (DensityFunction.ContextProvider) (Object) this);
+                    }
+                }
+                WorldgenProfiler.end("noise.selectCellYZ.cache", cacheStart);
+                this.arrayInterpolationCounter++;
+                this.fillingCell = false;
+                return;
+            }
+            if (!this.lattice$cellColumnsJavaOnly) {
+                int columnResult = NativeDensityFunction.fillCellColumns(
+                        this.cellCaches,
+                        (DensityFunction.ContextProvider) (Object) this,
+                        this.lattice$sliceArenaKey,
+                        this.cellStartBlockX,
+                        this.firstCellZ,
+                        this.cellNoiseMinY,
+                        this.cellWidth,
+                        this.cellHeight,
+                        this.cellCountXZ,
+                        this.cellCountY,
+                        cellX,
+                        cellOffset);
+                if (columnResult == NativeDensityFunction.CELL_COLUMNS_KNOWN_JAVA_ONLY) {
+                    this.lattice$cellColumnsJavaOnly = true;
+                } else if (columnResult >= 0) {
+                    this.lattice$cellColumnsJavaOnly = columnResult == 0;
+                    this.lattice$preparedCacheColumnCellX = cellX;
+                    WorldgenProfiler.end("noise.selectCellYZ.cache", cacheStart);
+                    this.arrayInterpolationCounter++;
+                    this.fillingCell = false;
+                    return;
+                }
+            }
+            if (this.lattice$cellColumnsJavaOnly) {
+                for (Object cache : this.cellCaches) {
+                    NativeCacheAllInCellAccess access = (NativeCacheAllInCellAccess) cache;
+                    access.lattice$noiseFiller().fillArray(
+                            access.lattice$values(), (DensityFunction.ContextProvider) (Object) this);
+                }
                 WorldgenProfiler.end("noise.selectCellYZ.cache", cacheStart);
                 this.arrayInterpolationCounter++;
                 this.fillingCell = false;
@@ -271,7 +381,8 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
                 double[] column = access.lattice$columnValues();
                 if (access.lattice$columnCellX() != cellX) {
                     if (column == null || column.length < columnValueCount) {
-                        column = new double[columnValueCount];
+                        NativeDensityFunction.releaseDirectCellColumnBuffer(column);
+                        column = NativeDensityFunction.acquireDirectCellColumnBuffer(columnValueCount);
                         access.lattice$setColumnValues(column);
                     }
                     if (NativeDensityFunction.tryFillCellColumn(
@@ -306,22 +417,20 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
         }
     }
 
-    @Redirect(
-            method = "<init>",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lnet/minecraft/world/level/levelgen/OreVeinifier;create(Lnet/minecraft/world/level/levelgen/DensityFunction;Lnet/minecraft/world/level/levelgen/DensityFunction;Lnet/minecraft/world/level/levelgen/DensityFunction;Lnet/minecraft/world/level/levelgen/PositionalRandomFactory;)Lnet/minecraft/world/level/levelgen/NoiseChunk$BlockStateFiller;"
-            )
-    )
-    private NoiseChunk.BlockStateFiller lattice$useNativeOreVeinFiller(DensityFunction veinToggle,
-                                                                       DensityFunction veinRidged,
-                                                                       DensityFunction veinGap,
-                                                                       PositionalRandomFactory random) {
-        final NoiseChunk.BlockStateFiller nativeFiller = NativeOreVeinBlockStateFiller.tryCreate(
-                veinToggle, veinRidged, veinGap, random);
-        return nativeFiller != null
-                ? nativeFiller
-                : OreVeinifierAccessor.lattice$create(veinToggle, veinRidged, veinGap, random);
+    @Inject(method = "stopInterpolation", at = @At("RETURN"))
+    private void lattice$releaseDirectCellColumns(CallbackInfo ci) {
+        for (DirectCellColumnCache column : this.lattice$directCellColumns.values()) {
+            NativeDensityFunction.releaseDirectCellColumnBuffer(column.values);
+            column.values = null;
+        }
+        this.lattice$directCellColumns.clear();
+        this.lattice$preparedCacheColumnCellX = Integer.MIN_VALUE;
+        for (Object cache : this.cellCaches) {
+            NativeCacheAllInCellAccess access = (NativeCacheAllInCellAccess) cache;
+            NativeDensityFunction.releaseDirectCellColumnBuffer(access.lattice$columnValues());
+            access.lattice$setColumnValues(null);
+            access.lattice$setColumnCellX(Integer.MIN_VALUE);
+        }
     }
 
     @Override
@@ -393,4 +502,5 @@ public abstract class NoiseChunkMixin implements NativeNoiseChunkAccess {
     public boolean lattice$fillingCell() {
         return this.fillingCell;
     }
+
 }

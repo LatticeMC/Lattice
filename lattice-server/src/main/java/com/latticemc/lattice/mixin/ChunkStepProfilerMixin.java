@@ -19,15 +19,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ChunkStep.class)
 public abstract class ChunkStepProfilerMixin {
     @Shadow @Final private ChunkStatus targetStatus;
-    @Unique private final ThreadLocal<Long> lattice$applyStart = ThreadLocal.withInitial(() -> 0L);
+    @Unique private final ThreadLocal<Long> lattice$applyStart = WorldgenProfiler.available()
+            ? ThreadLocal.withInitial(() -> 0L)
+            : null;
 
     @Inject(method = "apply", at = @At("HEAD"))
     private void lattice$profileApplyStart(WorldGenContext worldGenContext, StaticCache2D<GenerationChunkHolder> cache, ChunkAccess chunk, CallbackInfoReturnable<CompletableFuture<ChunkAccess>> cir) {
+        if (!WorldgenProfiler.available()) return;
         this.lattice$applyStart.set(WorldgenProfiler.start());
     }
 
     @Inject(method = "apply", at = @At("RETURN"))
     private void lattice$profileApplyEnd(WorldGenContext worldGenContext, StaticCache2D<GenerationChunkHolder> cache, ChunkAccess chunk, CallbackInfoReturnable<CompletableFuture<ChunkAccess>> cir) {
+        if (!WorldgenProfiler.available()) return;
         WorldgenProfiler.end("status." + this.targetStatus.getName(), this.lattice$applyStart.get().longValue());
     }
 }

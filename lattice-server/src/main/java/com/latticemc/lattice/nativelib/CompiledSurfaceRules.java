@@ -70,22 +70,22 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         return Block.stateById(id);
     }
 
-    public int[] tryApplyBatch(SurfaceSystemAccess system,
-                               int biomeId,
-                               int x,
-                               int z,
-                               int surfaceTop,
-                               int surfaceDepth,
-                               int minSurfaceLevel,
-                               boolean hole,
-                               boolean steepSlope,
-                               double surfaceNoise,
-                               double surfaceSecondaryNoise,
-                               double[] namedNoiseValues,
-                               int[] columnCtx,
-                               byte[] bools,
-                               int count,
-                               int[] blockData) {
+    public void tryApplyBatch(int biomeId,
+                              int x,
+                              int z,
+                              int surfaceTop,
+                              int surfaceDepth,
+                              int minSurfaceLevel,
+                              boolean hole,
+                              boolean steepSlope,
+                              double surfaceNoise,
+                              double surfaceSecondaryNoise,
+                              double[] namedNoiseValues,
+                              int[] columnCtx,
+                              byte[] bools,
+                              int count,
+                              int[] blockData,
+                              int[] output) {
         columnCtx[0] = x;
         columnCtx[1] = z;
         columnCtx[2] = surfaceTop;
@@ -95,14 +95,15 @@ public final class CompiledSurfaceRules implements AutoCloseable {
         bools[0] = (byte) (hole ? 1 : 0);
         bools[1] = (byte) (steepSlope ? 1 : 0);
 
-        return rules.evaluateBatch(
+        rules.evaluateBatchInto(
                 count,
                 columnCtx,
                 surfaceNoise,
                 surfaceSecondaryNoise,
                 namedNoiseValues,
                 bools,
-                blockData);
+                blockData,
+                output);
     }
 
     public void appendBatchBlockData(SurfaceSystemAccess system,
@@ -125,22 +126,21 @@ public final class CompiledSurfaceRules implements AutoCloseable {
     }
 
     public void appendBatchBlockData(int seaLevel,
-                                     Holder<Biome> biome,
-                                     int x,
                                      int y,
-                                     int z,
                                      int fluidHeight,
                                      int stoneDepthFloor,
                                      int stoneDepthCeiling,
+                                     float modifiedBaseTemperature,
+                                     float heightTemperatureNoise,
                                      int[] blockData,
-                                     int index,
-                                     BlockPos.MutableBlockPos mutablePos) {
+                                     int index) {
         int base = index * 5;
         blockData[base] = y;
         blockData[base + 1] = fluidHeight;
         blockData[base + 2] = stoneDepthFloor;
         blockData[base + 3] = stoneDepthCeiling;
-        blockData[base + 4] = biome.value().coldEnoughToSnow(mutablePos.set(x, y, z), seaLevel) ? 1 : 0;
+        float temperature = Biome.lattice$heightAdjustedTemperature(modifiedBaseTemperature, heightTemperatureNoise, y, seaLevel);
+        blockData[base + 4] = temperature >= 0.15F ? 0 : 1;
     }
 
     @Override

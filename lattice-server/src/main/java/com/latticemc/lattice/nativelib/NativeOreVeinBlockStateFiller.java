@@ -9,6 +9,7 @@ import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 
 public final class NativeOreVeinBlockStateFiller implements NoiseChunk.BlockStateFiller {
+    private static final boolean ENABLED = Boolean.getBoolean("lattice.nativeOreVeinBlockStateFiller");
     private static final BlockState[] STATES = {
             null,
             Blocks.COPPER_ORE.defaultBlockState(),
@@ -41,7 +42,7 @@ public final class NativeOreVeinBlockStateFiller implements NoiseChunk.BlockStat
                                                         DensityFunction veinRidged,
                                                         DensityFunction veinGap,
                                                         PositionalRandomFactory random) {
-        if (!NativeOreVeinSampler.isAvailable()) return null;
+        if (!ENABLED || !NativeOreVeinSampler.isAvailable()) return null;
         final long[] seeds = tryExtractXoroshiroSeeds(random);
         if (seeds == null) return null;
         return new NativeOreVeinBlockStateFiller(veinToggle, veinRidged, veinGap, seeds[0], seeds[1]);

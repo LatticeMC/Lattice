@@ -39,7 +39,6 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(SurfaceSystem.class)
@@ -48,7 +47,6 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
     @Unique private static final AtomicBoolean lattice$compileLogged = new AtomicBoolean(false);
     @Unique private static final AtomicBoolean lattice$nokLogged = new AtomicBoolean(false);
     @Unique private volatile boolean lattice$nativeSurfaceDisabled = false;
-    @Unique private final ThreadLocal<Long> lattice$buildSurfaceStart = ThreadLocal.withInitial(() -> 0L);
     private final Map<SurfaceRules.RuleSource, CompiledSurfaceRules> lattice$compiled = new ConcurrentHashMap<>();
 
     @Shadow protected abstract BlockState getBand(int x, int y, int z);
@@ -68,34 +66,33 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
     @Override
     public BlockState getBandlands(int x, int y, int z) { return this.getBand(x, y, z); }
 
-    @Inject(method = "buildSurface", at = @At("HEAD"), cancellable = true)
-    private void lattice$buildSurface(RandomState randomState,
-                                      BiomeManager biomeManager,
-                                      Registry<Biome> biomes,
-                                      boolean useLegacyRandomSource,
-                                      WorldGenerationContext context,
-                                      ChunkAccess chunk,
-                                      NoiseChunk noiseChunk,
-                                      SurfaceRules.RuleSource ruleSource,
-                                      CallbackInfo ci) {
-        this.lattice$buildSurfaceStart.set(WorldgenProfiler.start());
-        if (!NativeWorldgenToggle.surfaceEnabled()) return;
-        if (!LatticeNative.isLoaded()) return;
-        if (lattice$nativeSurfaceDisabled) return;
+    @Override
+    public boolean lattice$tryBuildSurface(RandomState randomState,
+                                           BiomeManager biomeManager,
+                                           Registry<Biome> biomes,
+                                           boolean useLegacyRandomSource,
+                                           WorldGenerationContext context,
+                                           ChunkAccess chunk,
+                                           NoiseChunk noiseChunk,
+                                           SurfaceRules.RuleSource ruleSource) {
+        long profileStart = WorldgenProfiler.available() ? WorldgenProfiler.start() : 0L;
+        if (!NativeWorldgenToggle.surfaceEnabled()) return lattice$finishBuildSurface(false, profileStart);
+        if (!LatticeNative.isLoaded()) return lattice$finishBuildSurface(false, profileStart);
+        if (lattice$nativeSurfaceDisabled) return lattice$finishBuildSurface(false, profileStart);
         CompiledSurfaceRules compiled = lattice$compile(ruleSource, randomState, biomes, context);
         if (compiled == null) {
             lattice$nativeSurfaceDisabled = true;
             if (lattice$nokLogged.compareAndSet(false, true)) {
                 lattice$logger.warn("[Lattice] SurfaceSystem native path DISABLED — compile returned null, falling back to vanilla");
             }
-            return;
+            return lattice$finishBuildSurface(false, profileStart);
         }
 
         final BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
         final ChunkPos pos = chunk.getPos();
         final int minBlockX = pos.getMinBlockX();
         final int minBlockZ = pos.getMinBlockZ();
-        final BlockColumn blockColumn = new ChunkBlockColumn(chunk, mutableBlockPos);
+        final ChunkBlockColumn blockColumn = new ChunkBlockColumn(chunk, mutableBlockPos);
         final BlockPos.MutableBlockPos topPos = new BlockPos.MutableBlockPos();
         final WorldStateSnapshot snapshot = WorldStateSnapshot.create(chunk, biomeManager, noiseChunk, biomes, useLegacyRandomSource);
 
@@ -103,6 +100,7 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
         final int seaLevel = systemAccess.seaLevel();
         final int[] batchBlockData = new int[chunk.getHeight() * 5];
         final int[] batchYs = new int[chunk.getHeight()];
+        final int[] batchResults = new int[chunk.getHeight()];
         final int[] columnCtx = new int[6];
         final byte[] columnBools = new byte[2];
         final int namedNoiseCount = compiled.getNamedNoiseCount();
@@ -114,8 +112,14 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                 int x = minBlockX + lx;
                 int z = minBlockZ + lz;
                 int surfaceTop = snapshot.surfaceTop(lx, lz);
-                mutableBlockPos.setX(x).setZ(z);
+                blockColumn.setColumn(x, z);
                 Holder<Biome> biome = snapshot.biome(lx, lz);
+                BlockPos.MutableBlockPos columnTemperaturePos = coldCheckPos.set(x, surfaceTop, z);
+                float modifiedBaseTemperature = biome.value().lattice$modifiedBaseTemperature(columnTemperaturePos);
+                int temperatureThreshold = seaLevel + 17;
+                float heightTemperatureNoise = surfaceTop > temperatureThreshold
+                        ? Biome.lattice$temperatureHeightNoise(x, z)
+                        : 0.0F;
                 if (biome.is(Biomes.ERODED_BADLANDS)) {
                     this.erodedBadlandsExtension(blockColumn, x, z, surfaceTop, chunk);
                 }
@@ -158,15 +162,15 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                         int stoneDepthBelow = y - stoneBase + 1;
                         if (block == this.defaultBlock) {
                             batchYs[count] = y;
-                            compiled.appendBatchBlockData(seaLevel, biome, x, y, z, fluidHeight, stoneDepthAbove, stoneDepthBelow, batchBlockData, count, coldCheckPos);
+                            compiled.appendBatchBlockData(seaLevel, y, fluidHeight, stoneDepthAbove, stoneDepthBelow,
+                                    modifiedBaseTemperature, heightTemperatureNoise, batchBlockData, count);
                             count++;
                         }
                     }
                 }
 
                 if (count > 0) {
-                    int[] results = compiled.tryApplyBatch(
-                            systemAccess,
+                    compiled.tryApplyBatch(
                             snapshot.biomeId(lx, lz),
                             x,
                             z,
@@ -181,9 +185,10 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
                             columnCtx,
                             columnBools,
                             count,
-                            batchBlockData);
+                            batchBlockData,
+                            batchResults);
                     for (int i = 0; i < count; i++) {
-                        int id = results[i];
+                        int id = batchResults[i];
                         if (id == NativeMaterialRules.NO_MATCH) continue;
                         BlockState out = id == NativeMaterialRules.BANDLANDS_SENTINEL
                                 ? this.getBand(x, batchYs[i], z)
@@ -198,20 +203,13 @@ public abstract class SurfaceSystemMixin implements SurfaceSystemCallbacks {
             }
         }
 
-        ci.cancel();
+        return lattice$finishBuildSurface(true, profileStart);
     }
 
-    @Inject(method = "buildSurface", at = @At("RETURN"))
-    private void lattice$profileBuildSurfaceEnd(RandomState randomState,
-                                                BiomeManager biomeManager,
-                                                Registry<Biome> biomes,
-                                                boolean useLegacyRandomSource,
-                                                WorldGenerationContext context,
-                                                ChunkAccess chunk,
-                                                NoiseChunk noiseChunk,
-                                                SurfaceRules.RuleSource ruleSource,
-                                                CallbackInfo ci) {
-        WorldgenProfiler.end("surface.buildSurface", this.lattice$buildSurfaceStart.get().longValue());
+    @Unique
+    private static boolean lattice$finishBuildSurface(boolean handled, long profileStart) {
+        WorldgenProfiler.end("surface.buildSurface", profileStart);
+        return handled;
     }
 
     @Inject(method = "topMaterial", at = @At("HEAD"), cancellable = true)

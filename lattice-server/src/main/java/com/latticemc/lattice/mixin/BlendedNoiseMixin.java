@@ -4,7 +4,6 @@ import com.latticemc.lattice.nativelib.NativeInterpolatedNoise;
 import com.latticemc.lattice.nativelib.NativeOctavePerlinNoise;
 import it.unimi.dsi.fastutil.doubles.DoubleList;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.synth.BlendedNoise;
 import net.minecraft.world.level.levelgen.synth.ImprovedNoise;
 import net.minecraft.world.level.levelgen.synth.PerlinNoise;
@@ -15,7 +14,6 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(BlendedNoise.class)
 public abstract class BlendedNoiseMixin implements NativeInterpolatedNoiseAccess {
@@ -72,13 +70,6 @@ public abstract class BlendedNoiseMixin implements NativeInterpolatedNoiseAccess
                 this.yFactor,
                 this.smearScaleMultiplier
         );
-    }
-
-    @Inject(method = "compute", at = @At("HEAD"), cancellable = true)
-    private void lattice$compute(DensityFunction.FunctionContext context, CallbackInfoReturnable<Double> cir) {
-        NativeInterpolatedNoise nativeSampler = this.lattice$native;
-        if (nativeSampler == null) return;
-        cir.setReturnValue(nativeSampler.sample(context.blockX(), context.blockY(), context.blockZ()));
     }
 
     @Override

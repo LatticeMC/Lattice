@@ -1,6 +1,7 @@
 package com.latticemc.lattice.mixin;
 
 import com.latticemc.lattice.nativelib.NativePerlinNoise;
+import com.latticemc.lattice.nativelib.NativeScalarNoiseControl;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.synth.ImprovedNoise;
 import org.spongepowered.asm.mixin.Final;
@@ -28,6 +29,7 @@ public abstract class ImprovedNoiseMixin {
 
     @Inject(method = "noise(DDD)D", at = @At("HEAD"), cancellable = true)
     private void lattice$noise(double x, double y, double z, CallbackInfoReturnable<Double> cir) {
+        if (!NativeScalarNoiseControl.perlinEnabled()) return;
         NativePerlinNoise nativeSampler = this.lattice$native;
         if (nativeSampler == null) return;
         cir.setReturnValue(nativeSampler.sample(x, y, z));
@@ -40,6 +42,7 @@ public abstract class ImprovedNoiseMixin {
                                       double yScale,
                                       double yMax,
                                       CallbackInfoReturnable<Double> cir) {
+        if (!NativeScalarNoiseControl.perlinEnabled()) return;
         NativePerlinNoise nativeSampler = this.lattice$native;
         if (nativeSampler == null) return;
         cir.setReturnValue(nativeSampler.sampleYScaled(x, y, z, yScale, yMax));
@@ -51,6 +54,7 @@ public abstract class ImprovedNoiseMixin {
                                              double z,
                                              double[] values,
                                              CallbackInfoReturnable<Double> cir) {
+        if (!NativeScalarNoiseControl.perlinEnabled()) return;
         NativePerlinNoise nativeSampler = this.lattice$native;
         if (nativeSampler == null || values == null || values.length < 3) return;
         double[] derivative = new double[3];

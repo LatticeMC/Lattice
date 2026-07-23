@@ -9,11 +9,14 @@ public interface NativeNoiseInterpolatorAccess {
 
     double[] lattice$flatSlice1();
 
+    void lattice$markFlatSliceReadable();
+
     void lattice$copyFlatRow(boolean slice0, int zRow, double[] values, int yRows, int zRows);
+
+    void lattice$copyPackedFlatRow(boolean slice0, int zRow, double[] values, int valuesOffset, int yRows, int zRows);
 
     double[] lattice$sliceRow(boolean slice0, int zRow);
 
     void lattice$selectCellYZ(int y, int z);
 
-    void lattice$updateForZ(double z);
 }

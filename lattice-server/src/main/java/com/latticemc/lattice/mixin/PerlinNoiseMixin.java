@@ -1,6 +1,7 @@
 package com.latticemc.lattice.mixin;
 
 import com.latticemc.lattice.nativelib.NativeOctavePerlinNoise;
+import com.latticemc.lattice.nativelib.NativeScalarNoiseControl;
 import com.mojang.datafixers.util.Pair;
 import it.unimi.dsi.fastutil.doubles.DoubleList;
 import net.minecraft.util.RandomSource;
@@ -58,6 +59,7 @@ public abstract class PerlinNoiseMixin {
 
     @Inject(method = "getValue(DDD)D", at = @At("HEAD"), cancellable = true)
     private void lattice$getValue(double x, double y, double z, CallbackInfoReturnable<Double> cir) {
+        if (!NativeScalarNoiseControl.perlinEnabled()) return;
         NativeOctavePerlinNoise nativeSampler = this.lattice$native;
         if (nativeSampler == null) return;
         cir.setReturnValue(nativeSampler.sample(x, y, z));
@@ -71,6 +73,7 @@ public abstract class PerlinNoiseMixin {
                                       double yMax,
                                       boolean useFixedY,
                                       CallbackInfoReturnable<Double> cir) {
+        if (!NativeScalarNoiseControl.perlinEnabled()) return;
         NativeOctavePerlinNoise nativeSampler = this.lattice$native;
         if (nativeSampler == null) return;
         cir.setReturnValue(nativeSampler.sampleFull(x, y, z, yScale, yMax, useFixedY));

@@ -8,7 +8,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 
 public final class WorldgenProfiler {
-    private static volatile boolean ENABLED = Boolean.getBoolean("lattice.worldgenProfiler");
+    private static final boolean AVAILABLE = Boolean.getBoolean("lattice.worldgenProfilerAvailable")
+            || Boolean.getBoolean("lattice.worldgenProfiler");
+    private static volatile boolean ENABLED = AVAILABLE && Boolean.getBoolean("lattice.worldgenProfiler");
+    private static volatile boolean HOT_LOOPS_ENABLED = AVAILABLE && Boolean.getBoolean("lattice.worldgenProfilerHotLoops");
     private static final ConcurrentHashMap<String, Probe> PROBES = new ConcurrentHashMap<>();
 
     public static final Probe NOISE_UPDATE_FOR_Y = probe("noise.updateForY");
@@ -21,26 +24,38 @@ public final class WorldgenProfiler {
 
     private WorldgenProfiler() {}
 
+    public static boolean available() {
+        return AVAILABLE;
+    }
+
     public static boolean enabled() {
         return ENABLED;
     }
 
     public static void setEnabled(boolean enabled) {
-        ENABLED = enabled;
+        ENABLED = AVAILABLE && enabled;
+    }
+
+    public static void setHotLoopsEnabled(boolean enabled) {
+        HOT_LOOPS_ENABLED = AVAILABLE && enabled;
     }
 
     public static long start() {
-        return ENABLED ? System.nanoTime() : 0L;
+        return AVAILABLE && ENABLED ? System.nanoTime() : 0L;
+    }
+
+    public static long hotLoopStart() {
+        return AVAILABLE && ENABLED && HOT_LOOPS_ENABLED ? System.nanoTime() : 0L;
     }
 
     public static void end(String name, long startNanos) {
-        if (startNanos == 0L) return;
+        if (!AVAILABLE || startNanos == 0L) return;
         long elapsed = System.nanoTime() - startNanos;
         probe(name).add(elapsed);
     }
 
     public static void end(Probe probe, long startNanos) {
-        if (startNanos == 0L) return;
+        if (!AVAILABLE || startNanos == 0L) return;
         probe.add(System.nanoTime() - startNanos);
     }
 
@@ -49,10 +64,16 @@ public final class WorldgenProfiler {
     }
 
     public static String status() {
-        if (PROBES.isEmpty()) return "worldgenProfiler=" + ENABLED + " {}";
+        if (PROBES.isEmpty()) return "worldgenProfiler=" + ENABLED + " available=" + AVAILABLE + " hotLoops=" + HOT_LOOPS_ENABLED + " {}";
         List<Map.Entry<String, Probe>> entries = new ArrayList<>(PROBES.entrySet());
         entries.sort(Comparator.comparingLong((Map.Entry<String, Probe> entry) -> entry.getValue().nanos.sum()).reversed());
-        StringBuilder builder = new StringBuilder("worldgenProfiler=").append(ENABLED).append(" {");
+        StringBuilder builder = new StringBuilder("worldgenProfiler=")
+                .append(ENABLED)
+                .append(" available=")
+                .append(AVAILABLE)
+                .append(" hotLoops=")
+                .append(HOT_LOOPS_ENABLED)
+                .append(" {");
         long total = 0L;
         for (Map.Entry<String, Probe> entry : entries) total += entry.getValue().nanos.sum();
         int written = 0;

@@ -15,26 +15,35 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(NoiseBasedChunkGenerator.class)
 public abstract class NoiseBasedChunkGeneratorProfilerMixin {
-    @Unique private final ThreadLocal<Long> lattice$fillFromNoiseStart = ThreadLocal.withInitial(() -> 0L);
-    @Unique private final ThreadLocal<Long> lattice$doFillStart = ThreadLocal.withInitial(() -> 0L);
+    @Unique private final ThreadLocal<Long> lattice$fillFromNoiseStart = WorldgenProfiler.available()
+            ? ThreadLocal.withInitial(() -> 0L)
+            : null;
+    @Unique private final ThreadLocal<Long> lattice$doFillStart = WorldgenProfiler.available()
+            ? ThreadLocal.withInitial(() -> 0L)
+            : null;
 
     @Inject(method = "fillFromNoise", at = @At("HEAD"))
     private void lattice$profileFillFromNoiseStart(Blender blender, RandomState randomState, StructureManager structureManager, ChunkAccess chunk, CallbackInfoReturnable<CompletableFuture<ChunkAccess>> cir) {
+        if (!WorldgenProfiler.available()) return;
         this.lattice$fillFromNoiseStart.set(WorldgenProfiler.start());
     }
 
     @Inject(method = "fillFromNoise", at = @At("RETURN"))
     private void lattice$profileFillFromNoiseEnd(Blender blender, RandomState randomState, StructureManager structureManager, ChunkAccess chunk, CallbackInfoReturnable<CompletableFuture<ChunkAccess>> cir) {
+        if (!WorldgenProfiler.available()) return;
         WorldgenProfiler.end("noise.fillFromNoise", this.lattice$fillFromNoiseStart.get().longValue());
     }
 
     @Inject(method = "doFill", at = @At("HEAD"))
     private void lattice$profileDoFillStart(Blender blender, StructureManager structureManager, RandomState random, ChunkAccess chunk, int minCellY, int cellCountY, CallbackInfoReturnable<ChunkAccess> cir) {
+        if (!WorldgenProfiler.available()) return;
         this.lattice$doFillStart.set(WorldgenProfiler.start());
     }
 
     @Inject(method = "doFill", at = @At("RETURN"))
     private void lattice$profileDoFillEnd(Blender blender, StructureManager structureManager, RandomState random, ChunkAccess chunk, int minCellY, int cellCountY, CallbackInfoReturnable<ChunkAccess> cir) {
+        if (!WorldgenProfiler.available()) return;
         WorldgenProfiler.end("noise.doFill", this.lattice$doFillStart.get().longValue());
     }
+
 }

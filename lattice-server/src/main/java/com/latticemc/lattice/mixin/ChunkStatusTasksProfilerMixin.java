@@ -16,15 +16,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ChunkStatusTasks.class)
 public abstract class ChunkStatusTasksProfilerMixin {
-    @Unique private static final ThreadLocal<Long> lattice$generateNoiseStart = ThreadLocal.withInitial(() -> 0L);
+    @Unique private static final ThreadLocal<Long> lattice$generateNoiseStart = WorldgenProfiler.available()
+            ? ThreadLocal.withInitial(() -> 0L)
+            : null;
 
     @Inject(method = "generateNoise", at = @At("HEAD"))
     private static void lattice$profileGenerateNoiseStart(WorldGenContext worldGenContext, ChunkStep step, StaticCache2D<GenerationChunkHolder> cache, ChunkAccess chunk, CallbackInfoReturnable<CompletableFuture<ChunkAccess>> cir) {
+        if (!WorldgenProfiler.available()) return;
         lattice$generateNoiseStart.set(WorldgenProfiler.start());
     }
 
     @Inject(method = "generateNoise", at = @At("RETURN"))
     private static void lattice$profileGenerateNoiseEnd(WorldGenContext worldGenContext, ChunkStep step, StaticCache2D<GenerationChunkHolder> cache, ChunkAccess chunk, CallbackInfoReturnable<CompletableFuture<ChunkAccess>> cir) {
+        if (!WorldgenProfiler.available()) return;
         WorldgenProfiler.end("status.generateNoise", lattice$generateNoiseStart.get().longValue());
     }
 }
