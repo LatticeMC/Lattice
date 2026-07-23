@@ -34,6 +34,9 @@ public final class NativeDensityFunction {
     private static volatile boolean SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionSpline", "true"));
     private static volatile boolean MULTIPOINT_SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionMultipointSpline", "true"));
     private static volatile boolean CLIMATE_BATCH_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionClimateBatch", "true"));
+    private static volatile boolean PARALLEL_ROWS_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionParallelRows", "false"));
+    private static volatile int PARALLEL_ROWS_LANES = Math.max(1, Integer.getInteger("lattice.nativeDensityFunctionParallelRowsLanes", 1));
+    private static volatile int PARALLEL_ROWS_MIN_WORK = Math.max(1, Integer.getInteger("lattice.nativeDensityFunctionParallelRowsMinWork", 1024));
     private static volatile boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
     private static volatile boolean PROFILING_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionProfiling");
     private static volatile boolean PARITY_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionParity");
@@ -114,6 +117,9 @@ public final class NativeDensityFunction {
     private static final LongAdder COLUMN_BATCH_FUNCTIONS = new LongAdder();
     private static final LongAdder COLUMN_JAVA_ONLY_BATCHES = new LongAdder();
     private static final LongAdder COLUMN_JAVA_ONLY_BYPASSES = new LongAdder();
+    private static final LongAdder PARALLEL_ROWS_CALLS = new LongAdder();
+    private static final LongAdder PARALLEL_ROWS_INLINE = new LongAdder();
+    private static final LongAdder PARALLEL_ROWS_LANE_TOTAL = new LongAdder();
     private static final LongAdder SYNC_NANOS = new LongAdder();
     private static final LongAdder SYNC_COUNT = new LongAdder();
     private static final LongAdder PARITY_CHECKS = new LongAdder();
@@ -569,9 +575,14 @@ public final class NativeDensityFunction {
                                                         double[][] out) {
         if (!Y_COLUMN_ROOTS_FLAT_ROWS_NATIVE_AVAILABLE) return false;
         try {
-            nativeEvaluateYColumnRootsFlatRows(
+            int lanes = nativeEvaluateYColumnRootsFlatRows(
                     batch.handle, batch.cacheHandle, batch.roots, count,
-                    x, y0, z0, dy, cellX, firstCellZ, cellWidth, yRows, zRows, out);
+                    x, y0, z0, dy, cellX, firstCellZ, cellWidth, yRows, zRows,
+                    PARALLEL_ROWS_ENABLED, PARALLEL_ROWS_LANES, PARALLEL_ROWS_MIN_WORK, out);
+            if (lanes <= 0) return false;
+            if (lanes > 1) PARALLEL_ROWS_CALLS.increment();
+            else PARALLEL_ROWS_INLINE.increment();
+            PARALLEL_ROWS_LANE_TOTAL.add(lanes);
             return true;
         } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
             Y_COLUMN_ROOTS_FLAT_ROWS_NATIVE_AVAILABLE = false;
@@ -1367,6 +1378,7 @@ public final class NativeDensityFunction {
             case "spline" -> SPLINE_ENABLED = value;
             case "multipointSpline" -> MULTIPOINT_SPLINE_ENABLED = value;
             case "climateBatch" -> CLIMATE_BATCH_ENABLED = value;
+            case "parallelRows" -> PARALLEL_ROWS_ENABLED = value;
             case "stats" -> STATS_ENABLED = value;
             case "profiling" -> PROFILING_ENABLED = value;
             case "parity" -> PARITY_ENABLED = value;
@@ -1374,13 +1386,15 @@ public final class NativeDensityFunction {
                 return NativeWorldgenToggle.setOption(option, value);
             }
         }
-        clearCompiledCaches();
+        if (!"parallelRows".equals(option)) clearCompiledCaches();
         return true;
     }
 
     public static boolean setIntOption(String option, int value) {
         switch (option) {
             case "parityInterval" -> PARITY_INTERVAL = Math.max(1, value);
+            case "parallelRowsLanes" -> PARALLEL_ROWS_LANES = Math.max(1, value);
+            case "parallelRowsMinWork" -> PARALLEL_ROWS_MIN_WORK = Math.max(1, value);
             default -> {
                 return false;
             }
@@ -1397,6 +1411,9 @@ public final class NativeDensityFunction {
                 + " spline=" + SPLINE_ENABLED
                 + " multipointSpline=" + MULTIPOINT_SPLINE_ENABLED
                 + " climateBatch=" + CLIMATE_BATCH_ENABLED
+                + " parallelRows=" + PARALLEL_ROWS_ENABLED
+                + " parallelRowsLanes=" + PARALLEL_ROWS_LANES
+                + " parallelRowsMinWork=" + PARALLEL_ROWS_MIN_WORK
                 + " stats=" + STATS_ENABLED
                 + " profiling=" + PROFILING_ENABLED
                 + " parity=" + PARITY_ENABLED
@@ -1412,6 +1429,9 @@ public final class NativeDensityFunction {
                 + " climateTemplate=" + CLIMATE_TEMPLATE_HITS.sum() + '/' + CLIMATE_TEMPLATE_MISSES.sum()
                 + " columnBatch=" + COLUMN_BATCH_CALLS.sum() + '/' + COLUMN_BATCH_FUNCTIONS.sum()
                 + " columnJavaOnly=" + COLUMN_JAVA_ONLY_BATCHES.sum() + '/' + COLUMN_JAVA_ONLY_BYPASSES.sum()
+                + " parallelRows={calls=" + PARALLEL_ROWS_CALLS.sum()
+                + ", inline=" + PARALLEL_ROWS_INLINE.sum()
+                + ", lanes=" + PARALLEL_ROWS_LANE_TOTAL.sum() + '}'
                 + " cell=" + CELL_SUCCESS.sum() + '/' + CELL_ATTEMPTS.sum()
                 + " cellDirect=" + CELL_DIRECT_SUCCESS.sum() + '/' + CELL_DIRECT_ATTEMPTS.sum()
                 + " cellHigh=" + CELL_HIGH_SUCCESS.sum() + '/' + CELL_HIGH_ATTEMPTS.sum()
@@ -1480,6 +1500,9 @@ public final class NativeDensityFunction {
         COLUMN_BATCH_FUNCTIONS.reset();
         COLUMN_JAVA_ONLY_BATCHES.reset();
         COLUMN_JAVA_ONLY_BYPASSES.reset();
+        PARALLEL_ROWS_CALLS.reset();
+        PARALLEL_ROWS_INLINE.reset();
+        PARALLEL_ROWS_LANE_TOTAL.reset();
         SYNC_NANOS.reset();
         SYNC_COUNT.reset();
         PARITY_CHECKS.reset();
@@ -2472,7 +2495,7 @@ public final class NativeDensityFunction {
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateGridRoots(long handle, long cacheHandle, int[] roots, int count, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateYColumn(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] out);
-    private static native void nativeEvaluateYColumnRootsFlatRows(long handle, long cacheHandle, int[] roots, int count, double x, double y0, double z0, double dy, int cellX, int firstCellZ, int cellWidth, int yRows, int zRows, double[][] out);
+    private static native int nativeEvaluateYColumnRootsFlatRows(long handle, long cacheHandle, int[] roots, int count, double x, double y0, double z0, double dy, int cellX, int firstCellZ, int cellWidth, int yRows, int zRows, boolean parallelRows, int parallelism, int minWork, double[][] out);
     private static native void nativeEvaluateYColumnsFlatRows(long[] handles, long[] cacheHandles, int count, double x, double y0, double z0, double dy, int cellX, int firstCellZ, int cellWidth, int yRows, int zRows, double[][] out);
     private static native void nativeEvaluateYColumnsFlat(long[] handles, long[] cacheHandles, int count, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[][] out, int outputOffset);
     private static native void nativeEvaluateYColumnsPacked(long[] handles, long[] cacheHandles, int count, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] outPacked);

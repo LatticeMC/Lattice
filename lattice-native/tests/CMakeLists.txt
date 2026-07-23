@@ -27,7 +27,7 @@ function(lattice_add_test name)
     endif()
     set(target_name "lattice_test_${name}")
     add_executable(${target_name} ${ARG_SOURCES} ${ARG_DEPS_SRC})
-    target_link_libraries(${target_name} PRIVATE doctest::doctest)
+    target_link_libraries(${target_name} PRIVATE doctest::doctest Threads::Threads)
     target_include_directories(${target_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src
@@ -54,6 +54,10 @@ function(lattice_add_test name)
 endfunction()
 
 # ---- Tests -----------------------------------------------------------------
+
+lattice_add_test(adaptive_row_executor
+    SOURCES  test_adaptive_row_executor.cpp
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/core/concurrency/adaptive_row_executor.cpp)
 
 # SIMD specialisation sources, compiled into test binaries only when the
 # target arch supports them. This keeps the dispatcher's undefined

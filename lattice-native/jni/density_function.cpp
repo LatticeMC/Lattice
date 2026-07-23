@@ -14,11 +14,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <new>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
+#include "core/concurrency/adaptive_row_executor.hpp"
 #include "jni_helper.hpp"
 #include "noise_handle.hpp"
 #include "world/gen/densityfunction/beardifier.hpp"
@@ -95,6 +97,18 @@ struct BoundInterpolatorColumns {
 std::mutex g_bindings_mutex;
 std::unordered_map<df::CacheState*, BoundCacheArrays> g_cache_array_bindings;
 std::unordered_map<df::CacheState*, BoundInterpolatorColumns> g_interpolator_bindings;
+std::atomic<int> g_parallel_row_active_calls{0};
+
+struct ParallelRowCallGuard {
+    int active_calls;
+
+    ParallelRowCallGuard()
+        : active_calls(g_parallel_row_active_calls.fetch_add(1, std::memory_order_acq_rel) + 1) {}
+
+    ~ParallelRowCallGuard() {
+        g_parallel_row_active_calls.fetch_sub(1, std::memory_order_acq_rel);
+    }
+};
 
 void delete_global_refs(JNIEnv* env, BoundCacheArrays& binding) {
     for (jdoubleArray array : binding.arrays) {
@@ -1357,25 +1371,73 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
     env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
 }
 
-JNIEXPORT void JNICALL
+struct SharedRootRowsJob {
+    df::NodeArena* arena = nullptr;
+    df::CacheState* caller_cache = nullptr;
+    const jint* roots = nullptr;
+    jint count = 0;
+    jdouble x = 0.0;
+    jdouble y0 = 0.0;
+    jdouble z0 = 0.0;
+    jdouble dy = 0.0;
+    jint cell_x = 0;
+    jint first_cell_z = 0;
+    jint cell_width = 0;
+    jint y_rows = 0;
+    std::vector<jdouble*>* outputs = nullptr;
+};
+
+void evaluate_shared_root_row(void* opaque, int row, int lane) noexcept {
+    auto& job = *static_cast<SharedRootRowsJob*>(opaque);
+    df::CacheState* cache = job.caller_cache;
+    if (lane != 0) {
+        thread_local df::CacheState worker_cache;
+        worker_cache.resize_for(*job.arena);
+        cache = &worker_cache;
+    }
+    cache->clear();
+
+    const double z = static_cast<double>(job.z0)
+                   + static_cast<double>(row * job.cell_width);
+    const int cell_z = static_cast<int>(job.first_cell_z + row);
+    const std::size_t offset = static_cast<std::size_t>(row)
+                             * static_cast<std::size_t>(job.y_rows);
+    for (jint i = 0; i < job.count; ++i) {
+        df::evaluate_y_column(
+            *job.arena,
+            static_cast<df::NodeRef>(job.roots[i]),
+            static_cast<double>(job.x),
+            static_cast<double>(job.y0),
+            z,
+            static_cast<double>(job.dy),
+            static_cast<int>(job.cell_x),
+            cell_z,
+            static_cast<int>(job.y_rows),
+            cache,
+            reinterpret_cast<double*>((*job.outputs)[static_cast<std::size_t>(i)]) + offset);
+    }
+}
+
+JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumnRootsFlatRows(
         JNIEnv* env, jclass /*cls*/,
         jlong handle, jlong cacheHandle,
         jintArray roots, jint count,
         jdouble x, jdouble y0, jdouble z0, jdouble dy,
         jint cellX, jint firstCellZ, jint cellWidth,
-        jint yRows, jint zRows,
+        jint yRows, jint zRows, jboolean parallelRows,
+        jint parallelism, jint minWork,
         jobjectArray out) {
     auto* arena = arena_from(handle);
     auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
     if (!arena || !cache || !roots || !out) {
         lattice::jni::throw_illegal_arg(env, "lattice density: null shared root batch input");
-        return;
+        return 0;
     }
-    if (count <= 0 || yRows <= 0 || zRows <= 0 || cellWidth <= 0) return;
+    if (count <= 0 || yRows <= 0 || zRows <= 0 || cellWidth <= 0) return 0;
     if (env->GetArrayLength(roots) < count || env->GetArrayLength(out) < count) {
         lattice::jni::throw_illegal_arg(env, "lattice density: shared root batch arrays too small");
-        return;
+        return 0;
     }
 
     const jlong required = static_cast<jlong>(yRows) * static_cast<jlong>(zRows);
@@ -1386,7 +1448,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
             if (output) env->DeleteLocalRef(output);
             for (jint j = 0; j < i; ++j) env->DeleteLocalRef(output_arrays[static_cast<std::size_t>(j)]);
             lattice::jni::throw_illegal_arg(env, "lattice density: shared root batch output too small");
-            return;
+            return 0;
         }
         output_arrays[static_cast<std::size_t>(i)] = output;
     }
@@ -1394,7 +1456,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
     jint* root_data = env->GetIntArrayElements(roots, nullptr);
     if (!root_data) {
         for (auto* output : output_arrays) env->DeleteLocalRef(output);
-        return;
+        return 0;
     }
     std::vector<jdouble*> output_data(static_cast<std::size_t>(count), nullptr);
     for (jint i = 0; i < count; ++i) {
@@ -1407,7 +1469,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
             env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
             for (auto* output : output_arrays) env->DeleteLocalRef(output);
             lattice::jni::throw_illegal_arg(env, "lattice density: invalid shared root batch node");
-            return;
+            return 0;
         }
         output_data[static_cast<std::size_t>(i)] =
                 env->GetDoubleArrayElements(output_arrays[static_cast<std::size_t>(i)], nullptr);
@@ -1418,22 +1480,46 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
             }
             env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
             for (auto* output : output_arrays) env->DeleteLocalRef(output);
-            return;
+            return 0;
         }
     }
 
-    for (jint z_row = 0; z_row < zRows; ++z_row) {
-        cache->clear();
-        const double z = static_cast<double>(z0) + static_cast<double>(z_row * cellWidth);
-        const int cell_z = static_cast<int>(firstCellZ + z_row);
-        const std::size_t offset = static_cast<std::size_t>(z_row) * static_cast<std::size_t>(yRows);
-        for (jint i = 0; i < count; ++i) {
-            df::evaluate_y_column(*arena, static_cast<df::NodeRef>(root_data[i]),
-                                  static_cast<double>(x), static_cast<double>(y0), z,
-                                  static_cast<double>(dy), static_cast<int>(cellX), cell_z,
-                                  static_cast<int>(yRows), cache,
-                                  reinterpret_cast<double*>(output_data[static_cast<std::size_t>(i)]) + offset);
-        }
+    SharedRootRowsJob job;
+    job.arena = arena;
+    job.caller_cache = cache;
+    job.roots = root_data;
+    job.count = count;
+    job.x = x;
+    job.y0 = y0;
+    job.z0 = z0;
+    job.dy = dy;
+    job.cell_x = cellX;
+    job.first_cell_z = firstCellZ;
+    job.cell_width = cellWidth;
+    job.y_rows = yRows;
+    job.outputs = &output_data;
+
+    const long long work = static_cast<long long>(count)
+                         * static_cast<long long>(yRows)
+                         * static_cast<long long>(zRows);
+    const bool supported_parallel_state = arena->num_cache_all_in_cell_slots == 0
+                                       && arena->num_interpolator_slots == 0;
+    const bool eligible = parallelRows != JNI_FALSE
+                       && supported_parallel_state
+                       && zRows > 1
+                       && parallelism > 1
+                       && work >= static_cast<long long>(std::max(1, minWork));
+    ParallelRowCallGuard active_call;
+    const int requested_lanes = eligible && active_call.active_calls == 1
+                              ? std::min<int>(parallelism, zRows)
+                              : 1;
+    const int used_lanes = lattice::concurrency::worldgen_row_executor().run(
+        static_cast<int>(zRows), requested_lanes, &job, evaluate_shared_root_row);
+
+    if (used_lanes <= 0) {
+        env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
+        for (auto* output : output_arrays) env->DeleteLocalRef(output);
+        return 0;
     }
 
     for (jint i = 0; i < count; ++i) {
@@ -1442,6 +1528,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
     }
     env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
     for (auto* output : output_arrays) env->DeleteLocalRef(output);
+    return used_lanes;
 }
 
 struct CellColumnCoordinates {
