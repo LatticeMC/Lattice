@@ -1508,7 +1508,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
                        && supported_parallel_state
                        && zRows > 1
                        && parallelism > 1
-                       && work >= static_cast<long long>(std::max(1, minWork));
+                       && work >= static_cast<long long>(std::max<jint>(1, minWork));
     ParallelRowCallGuard active_call;
     const int requested_lanes = eligible && active_call.active_calls == 1
                               ? std::min<int>(parallelism, zRows)
