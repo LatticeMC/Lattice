@@ -364,15 +364,11 @@ fun TaskContainer.registerRunTask(
     workingDir = rootProject.layout.projectDirectory
         .dir(providers.gradleProperty("paper.runWorkDir").getOrElse("run"))
         .asFile
-    val latticeJavaVersion = providers.gradleProperty("latticeJavaVersion").map(String::toInt).getOrElse(21)
     javaLauncher.set(project.javaToolchains.launcherFor {
-        languageVersion.set(JavaLanguageVersion.of(latticeJavaVersion))
+        languageVersion.set(JavaLanguageVersion.of(21))
         vendor.set(JvmVendorSpec.JETBRAINS)
     })
-    jvmArgs("-XX:+AllowEnhancedClassRedefinition", "--enable-native-access=ALL-UNNAMED")
-    if (latticeJavaVersion == 21) {
-        jvmArgs("--enable-preview")
-    }
+    jvmArgs("-XX:+AllowEnhancedClassRedefinition")
 
     if (rootProject.childProjects["test-plugin"] != null) {
         val testPluginJar = rootProject.project(":test-plugin").tasks.jar.flatMap { it.archiveFile }
