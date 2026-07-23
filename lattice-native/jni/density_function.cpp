@@ -1509,12 +1509,25 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
                        && zRows > 1
                        && parallelism > 1
                        && work >= static_cast<long long>(std::max<jint>(1, minWork));
-    ParallelRowCallGuard active_call;
-    const int requested_lanes = eligible && active_call.active_calls == 1
-                              ? std::min<int>(parallelism, zRows)
-                              : 1;
-    const int used_lanes = lattice::concurrency::worldgen_row_executor().run(
-        static_cast<int>(zRows), requested_lanes, &job, evaluate_shared_root_row);
+    int used_lanes = 1;
+    if (eligible) {
+        ParallelRowCallGuard active_call;
+        const int requested_lanes = active_call.active_calls == 1
+                                  ? std::min<int>(parallelism, zRows)
+                                  : 1;
+        if (requested_lanes > 1) {
+            used_lanes = lattice::concurrency::worldgen_row_executor().run(
+                static_cast<int>(zRows), requested_lanes, &job, evaluate_shared_root_row);
+        } else {
+            for (jint row = 0; row < zRows; ++row) {
+                evaluate_shared_root_row(&job, row, 0);
+            }
+        }
+    } else {
+        for (jint row = 0; row < zRows; ++row) {
+            evaluate_shared_root_row(&job, row, 0);
+        }
+    }
 
     if (used_lanes <= 0) {
         env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
