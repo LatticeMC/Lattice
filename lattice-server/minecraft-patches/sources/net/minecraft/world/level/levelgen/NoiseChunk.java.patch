@@ -129,7 +129,67 @@
      }
  
      @Override
-@@ -212,7 +_,12 @@
+@@ -195,24 +_,64 @@
+     }
+ 
+     public int maxPreliminarySurfaceLevel(int minX, int minZ, int maxX, int maxZ) {
++        int sizeX = (maxX - minX) / 4 + 1;
++        int sizeZ = (maxZ - minZ) / 4 + 1;
++        double[] nativeValues = new double[sizeX * sizeZ];
++        boolean nativeFilled = NativeDensityFunction.tryFillGrid(
++            nativeValues,
++            this.preliminarySurfaceLevel,
++            minX,
++            0.0,
++            minZ,
++            4.0,
++            1.0,
++            4.0,
++            QuartPos.fromBlock(minX),
++            QuartPos.fromBlock(minZ),
++            sizeX,
++            1,
++            sizeZ
++        );
++        boolean checkParity = nativeFilled && NativeDensityFunction.shouldCheckParity();
++        double[] javaValues = checkParity ? new double[nativeValues.length] : null;
+         int i = Integer.MIN_VALUE;
+-
+-        for (int i1 = minZ; i1 <= maxZ; i1 += 4) {
+-            for (int i2 = minX; i2 <= maxX; i2 += 4) {
+-                int i3 = this.preliminarySurfaceLevel(i2, i1);
+-                if (i3 > i) {
+-                    i = i3;
+-                }
++        int index = 0;
++        for (int z = minZ; z <= maxZ; z += 4) {
++            for (int x = minX; x <= maxX; x += 4) {
++                long key = ColumnPos.asLong(x, z);
++                double nativeValue = nativeFilled ? nativeValues[index] : 0.0;
++                int level;
++                if (!nativeFilled || checkParity) {
++                    double javaValue = this.preliminarySurfaceLevel.compute(new DensityFunction.SinglePointContext(x, 0, z));
++                    if (checkParity) {
++                        javaValues[index] = javaValue;
++                    }
++                    level = Mth.floor(checkParity ? nativeValue : javaValue);
++                } else {
++                    level = Mth.floor(nativeValue);
++                }
++                this.preliminarySurfaceLevelCache.put(key, level);
++                if (level > i) {
++                    i = level;
++                }
++                index++;
+             }
+         }
+-
++        if (checkParity) {
++            NativeDensityFunction.recordParity("preliminarySurfaceGrid", this.preliminarySurfaceLevel, nativeValues, javaValues);
++        }
+         return i;
+     }
+ 
      public int preliminarySurfaceLevel(int x, int z) {
          int blockPosCoord = QuartPos.toBlock(QuartPos.fromBlock(x));
          int blockPosCoord1 = QuartPos.toBlock(QuartPos.fromBlock(z));
