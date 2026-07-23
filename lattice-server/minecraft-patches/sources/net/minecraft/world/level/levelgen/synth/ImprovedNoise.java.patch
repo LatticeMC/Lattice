@@ -1,0 +1,112 @@
+--- a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+@@ -6,6 +_,24 @@
+ 
+ public final class ImprovedNoise {
+     private static final float SHIFT_UP_EPSILON = 1.0E-7F;
++    private static final double[] FLAT_SIMPLEX_GRADIENT = new double[]{
++        1.0, 1.0, 0.0, 0.0,
++        -1.0, 1.0, 0.0, 0.0,
++        1.0, -1.0, 0.0, 0.0,
++        -1.0, -1.0, 0.0, 0.0,
++        1.0, 0.0, 1.0, 0.0,
++        -1.0, 0.0, 1.0, 0.0,
++        1.0, 0.0, -1.0, 0.0,
++        -1.0, 0.0, -1.0, 0.0,
++        0.0, 1.0, 1.0, 0.0,
++        0.0, -1.0, 1.0, 0.0,
++        0.0, 1.0, -1.0, 0.0,
++        0.0, -1.0, -1.0, 0.0,
++        1.0, 1.0, 0.0, 0.0,
++        0.0, -1.0, 1.0, 0.0,
++        -1.0, 1.0, 0.0, 0.0,
++        0.0, -1.0, -1.0, 0.0
++    };
+     private final byte[] p;
+     public final double xo;
+     public final double yo;
+@@ -27,6 +_,7 @@
+             this.p[i] = this.p[i + randomInt];
+             this.p[i + randomInt] = b;
+         }
++
+     }
+ 
+     public double noise(double x, double y, double z) {
+@@ -83,24 +_,58 @@
+     }
+ 
+     private double sampleAndLerp(int gridX, int gridY, int gridZ, double deltaX, double weirdDeltaY, double deltaZ, double deltaY) {
+-        int i = this.p(gridX);
+-        int i1 = this.p(gridX + 1);
+-        int i2 = this.p(i + gridY);
+-        int i3 = this.p(i + gridY + 1);
+-        int i4 = this.p(i1 + gridY);
+-        int i5 = this.p(i1 + gridY + 1);
+-        double d = gradDot(this.p(i2 + gridZ), deltaX, weirdDeltaY, deltaZ);
+-        double d1 = gradDot(this.p(i4 + gridZ), deltaX - 1.0, weirdDeltaY, deltaZ);
+-        double d2 = gradDot(this.p(i3 + gridZ), deltaX, weirdDeltaY - 1.0, deltaZ);
+-        double d3 = gradDot(this.p(i5 + gridZ), deltaX - 1.0, weirdDeltaY - 1.0, deltaZ);
+-        double d4 = gradDot(this.p(i2 + gridZ + 1), deltaX, weirdDeltaY, deltaZ - 1.0);
+-        double d5 = gradDot(this.p(i4 + gridZ + 1), deltaX - 1.0, weirdDeltaY, deltaZ - 1.0);
+-        double d6 = gradDot(this.p(i3 + gridZ + 1), deltaX, weirdDeltaY - 1.0, deltaZ - 1.0);
+-        double d7 = gradDot(this.p(i5 + gridZ + 1), deltaX - 1.0, weirdDeltaY - 1.0, deltaZ - 1.0);
+-        double d8 = Mth.smoothstep(deltaX);
+-        double d9 = Mth.smoothstep(deltaY);
+-        double d10 = Mth.smoothstep(deltaZ);
+-        return Mth.lerp3(d8, d9, d10, d, d1, d2, d3, d4, d5, d6, d7);
++        byte[] permutation = this.p;
++        int x0 = permutation[gridX & 0xFF] & 0xFF;
++        int x1 = permutation[gridX + 1 & 0xFF] & 0xFF;
++        int xy00 = permutation[x0 + gridY & 0xFF] & 0xFF;
++        int xy01 = permutation[x0 + gridY + 1 & 0xFF] & 0xFF;
++        int xy10 = permutation[x1 + gridY & 0xFF] & 0xFF;
++        int xy11 = permutation[x1 + gridY + 1 & 0xFF] & 0xFF;
++        int gradient000 = (permutation[xy00 + gridZ & 0xFF] & 15) << 2;
++        int gradient100 = (permutation[xy10 + gridZ & 0xFF] & 15) << 2;
++        int gradient010 = (permutation[xy01 + gridZ & 0xFF] & 15) << 2;
++        int gradient110 = (permutation[xy11 + gridZ & 0xFF] & 15) << 2;
++        int gradient001 = (permutation[xy00 + gridZ + 1 & 0xFF] & 15) << 2;
++        int gradient101 = (permutation[xy10 + gridZ + 1 & 0xFF] & 15) << 2;
++        int gradient011 = (permutation[xy01 + gridZ + 1 & 0xFF] & 15) << 2;
++        int gradient111 = (permutation[xy11 + gridZ + 1 & 0xFF] & 15) << 2;
++        double deltaX1 = deltaX - 1.0;
++        double weirdDeltaY1 = weirdDeltaY - 1.0;
++        double deltaZ1 = deltaZ - 1.0;
++        double d000 = FLAT_SIMPLEX_GRADIENT[gradient000] * deltaX
++            + FLAT_SIMPLEX_GRADIENT[gradient000 + 1] * weirdDeltaY
++            + FLAT_SIMPLEX_GRADIENT[gradient000 + 2] * deltaZ;
++        double d100 = FLAT_SIMPLEX_GRADIENT[gradient100] * deltaX1
++            + FLAT_SIMPLEX_GRADIENT[gradient100 + 1] * weirdDeltaY
++            + FLAT_SIMPLEX_GRADIENT[gradient100 + 2] * deltaZ;
++        double d010 = FLAT_SIMPLEX_GRADIENT[gradient010] * deltaX
++            + FLAT_SIMPLEX_GRADIENT[gradient010 + 1] * weirdDeltaY1
++            + FLAT_SIMPLEX_GRADIENT[gradient010 + 2] * deltaZ;
++        double d110 = FLAT_SIMPLEX_GRADIENT[gradient110] * deltaX1
++            + FLAT_SIMPLEX_GRADIENT[gradient110 + 1] * weirdDeltaY1
++            + FLAT_SIMPLEX_GRADIENT[gradient110 + 2] * deltaZ;
++        double d001 = FLAT_SIMPLEX_GRADIENT[gradient001] * deltaX
++            + FLAT_SIMPLEX_GRADIENT[gradient001 + 1] * weirdDeltaY
++            + FLAT_SIMPLEX_GRADIENT[gradient001 + 2] * deltaZ1;
++        double d101 = FLAT_SIMPLEX_GRADIENT[gradient101] * deltaX1
++            + FLAT_SIMPLEX_GRADIENT[gradient101 + 1] * weirdDeltaY
++            + FLAT_SIMPLEX_GRADIENT[gradient101 + 2] * deltaZ1;
++        double d011 = FLAT_SIMPLEX_GRADIENT[gradient011] * deltaX
++            + FLAT_SIMPLEX_GRADIENT[gradient011 + 1] * weirdDeltaY1
++            + FLAT_SIMPLEX_GRADIENT[gradient011 + 2] * deltaZ1;
++        double d111 = FLAT_SIMPLEX_GRADIENT[gradient111] * deltaX1
++            + FLAT_SIMPLEX_GRADIENT[gradient111 + 1] * weirdDeltaY1
++            + FLAT_SIMPLEX_GRADIENT[gradient111 + 2] * deltaZ1;
++        double smoothX = deltaX * deltaX * deltaX * (deltaX * (deltaX * 6.0 - 15.0) + 10.0);
++        double smoothY = deltaY * deltaY * deltaY * (deltaY * (deltaY * 6.0 - 15.0) + 10.0);
++        double smoothZ = deltaZ * deltaZ * deltaZ * (deltaZ * (deltaZ * 6.0 - 15.0) + 10.0);
++        double z0y0 = d000 + smoothX * (d100 - d000);
++        double z0y1 = d010 + smoothX * (d110 - d010);
++        double z1y0 = d001 + smoothX * (d101 - d001);
++        double z1y1 = d011 + smoothX * (d111 - d011);
++        double z0 = z0y0 + smoothY * (z0y1 - z0y0);
++        double z1 = z1y0 + smoothY * (z1y1 - z1y0);
++        return z0 + smoothZ * (z1 - z0);
+     }
+ 
+     private double sampleWithDerivative(int gridX, int gridY, int gridZ, double deltaX, double deltaY, double deltaZ, double[] noiseValues) {

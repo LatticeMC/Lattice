@@ -1,0 +1,34 @@
+--- a/net/minecraft/world/level/biome/Biome.java
++++ b/net/minecraft/world/level/biome/Biome.java
+@@ -111,13 +_,25 @@
+     }
+ 
+     private float getHeightAdjustedTemperature(BlockPos pos, int seaLevel) {
+-        float f = this.climateSettings.temperatureModifier.modifyTemperature(pos, this.getBaseTemperature());
+-        int i = seaLevel + 17;
+-        if (pos.getY() > i) {
+-            float f1 = (float)(TEMPERATURE_NOISE.getValue(pos.getX() / 8.0F, pos.getZ() / 8.0F, false) * 8.0);
+-            return f - (f1 + pos.getY() - i) * 0.05F / 40.0F;
++        float modifiedBaseTemperature = this.lattice$modifiedBaseTemperature(pos);
++        float heightTemperatureNoise = pos.getY() > seaLevel + 17 ? lattice$temperatureHeightNoise(pos.getX(), pos.getZ()) : 0.0F;
++        return lattice$heightAdjustedTemperature(modifiedBaseTemperature, heightTemperatureNoise, pos.getY(), seaLevel);
++    }
++
++    public float lattice$modifiedBaseTemperature(BlockPos pos) {
++        return this.climateSettings.temperatureModifier.modifyTemperature(pos, this.getBaseTemperature());
++    }
++
++    public static float lattice$temperatureHeightNoise(int x, int z) {
++        return (float)(TEMPERATURE_NOISE.getValue(x / 8.0F, z / 8.0F, false) * 8.0);
++    }
++
++    public static float lattice$heightAdjustedTemperature(float modifiedBaseTemperature, float heightTemperatureNoise, int y, int seaLevel) {
++        int threshold = seaLevel + 17;
++        if (y > threshold) {
++            return modifiedBaseTemperature - (heightTemperatureNoise + y - threshold) * 0.05F / 40.0F;
+         } else {
+-            return f;
++            return modifiedBaseTemperature;
+         }
+     }
+ 

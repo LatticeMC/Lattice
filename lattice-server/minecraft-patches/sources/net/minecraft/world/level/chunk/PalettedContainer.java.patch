@@ -1,0 +1,49 @@
+--- a/net/minecraft/world/level/chunk/PalettedContainer.java
++++ b/net/minecraft/world/level/chunk/PalettedContainer.java
+@@ -367,17 +_,18 @@
+         int[] ints = new int[bitStorage.getSize()];
+         bitStorage.unpack(ints);
+         PaletteResize<T> paletteResize = PaletteResize.noResizeExpected();
+-        int i = -1;
+-        int i1 = -1;
++        int[] remap = new int[oldPalette.getSize()];
++        Arrays.fill(remap, -1);
+ 
+-        for (int i2 = 0; i2 < ints.length; i2++) {
+-            int i3 = ints[i2];
+-            if (i3 != i) {
+-                i = i3;
+-                i1 = newPalette.idFor(oldPalette.valueFor(i3), paletteResize);
++        for (int i = 0; i < ints.length; i++) {
++            int paletteId = ints[i];
++            int remappedId = remap[paletteId];
++            if (remappedId < 0) {
++                remappedId = newPalette.idFor(oldPalette.valueFor(paletteId), paletteResize);
++                remap[paletteId] = remappedId;
+             }
+ 
+-            ints[i2] = i1;
++            ints[i] = remappedId;
+         }
+ 
+         return ints;
+@@ -464,10 +_,17 @@
+ 
+         public void copyFrom(Palette<T> palette, BitStorage bitStorage) {
+             PaletteResize<T> paletteResize = PaletteResize.noResizeExpected();
++            int[] remap = new int[palette.getSize()];
++            Arrays.fill(remap, -1);
+ 
+             for (int i = 0; i < bitStorage.getSize(); i++) {
+-                T object = palette.valueFor(bitStorage.get(i));
+-                this.storage.set(i, this.palette.idFor(object, paletteResize));
++                int oldId = bitStorage.get(i);
++                int newId = remap[oldId];
++                if (newId < 0) {
++                    newId = this.palette.idFor(palette.valueFor(oldId), paletteResize);
++                    remap[oldId] = newId;
++                }
++                this.storage.set(i, newId);
+             }
+         }
+ 

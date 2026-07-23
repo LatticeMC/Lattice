@@ -1,0 +1,36 @@
+--- a/net/minecraft/server/level/WorldGenRegion.java
++++ b/net/minecraft/server/level/WorldGenRegion.java
+@@ -74,6 +_,7 @@
+     private final WorldGenTickAccess<Fluid> fluidTicks = new WorldGenTickAccess<>(blockPos -> this.getChunk(blockPos).getFluidTicks());
+     private final BiomeManager biomeManager;
+     private final ChunkStep generatingStep;
++    private final int directDependencyCount;
+     private @Nullable Supplier<String> currentlyGenerating;
+     private final AtomicLong subTickCount = new AtomicLong();
+     private static final Identifier WORLDGEN_REGION_RANDOM = Identifier.withDefaultNamespace("worldgen_region_random");
+@@ -110,6 +_,7 @@
+ 
+     public WorldGenRegion(ServerLevel level, StaticCache2D<GenerationChunkHolder> cache, ChunkStep generatingStep, ChunkAccess center) {
+         this.generatingStep = generatingStep;
++        this.directDependencyCount = generatingStep.directDependencies().size();
+         this.cache = cache;
+         this.center = center;
+         this.level = level;
+@@ -141,7 +_,7 @@
+     @Override
+     public @Nullable ChunkAccess getChunk(int x, int z, ChunkStatus chunkStatus, boolean requireChunk) {
+         int chessboardDistance = this.center.getPos().getChessboardDistance(x, z);
+-        ChunkStatus chunkStatus1 = chessboardDistance >= this.generatingStep.directDependencies().size()
++        ChunkStatus chunkStatus1 = chessboardDistance >= this.directDependencyCount
+             ? null
+             : this.generatingStep.directDependencies().get(chessboardDistance);
+         GenerationChunkHolder generationChunkHolder;
+@@ -177,7 +_,7 @@
+     @Override
+     public boolean hasChunk(int chunkX, int chunkZ) {
+         int chessboardDistance = this.center.getPos().getChessboardDistance(chunkX, chunkZ);
+-        return chessboardDistance < this.generatingStep.directDependencies().size();
++        return chessboardDistance < this.directDependencyCount;
+     }
+ 
+     // Paper start - if loaded util

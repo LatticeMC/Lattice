@@ -1,0 +1,57 @@
+--- a/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java
++++ b/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java
+@@ -122,6 +_,54 @@
+             return new XoroshiroRandomSource(l, this.seedHi);
+         }
+ 
++        public int lattice$sampleAquiferOffsets(int x, int y, int z) {
++            long lo = Mth.getSeed(x, y, z) ^ this.seedLo;
++            long hi = this.seedHi;
++            if ((lo | hi) == 0L) {
++                lo = RandomSupport.GOLDEN_RATIO_64;
++                hi = RandomSupport.SILVER_RATIO_64;
++            }
++
++            long product;
++            long lowBits;
++            do {
++                long oldLo = lo;
++                long oldHi = hi;
++                long output = Long.rotateLeft(oldLo + oldHi, 17) + oldLo;
++                oldHi ^= oldLo;
++                lo = Long.rotateLeft(oldLo, 49) ^ oldHi ^ oldHi << 21;
++                hi = Long.rotateLeft(oldHi, 28);
++                product = Integer.toUnsignedLong((int)output) * 10L;
++                lowBits = product & 0xFFFFFFFFL;
++            } while (lowBits < 6L);
++            int offsetX = (int)(product >>> 32);
++
++            do {
++                long oldLo = lo;
++                long oldHi = hi;
++                long output = Long.rotateLeft(oldLo + oldHi, 17) + oldLo;
++                oldHi ^= oldLo;
++                lo = Long.rotateLeft(oldLo, 49) ^ oldHi ^ oldHi << 21;
++                hi = Long.rotateLeft(oldHi, 28);
++                product = Integer.toUnsignedLong((int)output) * 9L;
++                lowBits = product & 0xFFFFFFFFL;
++            } while (lowBits < 4L);
++            int offsetY = (int)(product >>> 32);
++
++            do {
++                long oldLo = lo;
++                long oldHi = hi;
++                long output = Long.rotateLeft(oldLo + oldHi, 17) + oldLo;
++                oldHi ^= oldLo;
++                lo = Long.rotateLeft(oldLo, 49) ^ oldHi ^ oldHi << 21;
++                hi = Long.rotateLeft(oldHi, 28);
++                product = Integer.toUnsignedLong((int)output) * 10L;
++                lowBits = product & 0xFFFFFFFFL;
++            } while (lowBits < 6L);
++            int offsetZ = (int)(product >>> 32);
++            return offsetX | offsetY << 4 | offsetZ << 8;
++        }
++
+         @Override
+         public RandomSource fromHashOf(String name) {
+             RandomSupport.Seed128bit seed128bit = RandomSupport.seedFromHashOf(name);

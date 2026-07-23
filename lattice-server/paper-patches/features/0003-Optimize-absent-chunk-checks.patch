@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 13 Jul 2026 22:35:30 +0800
+Subject: [PATCH] Optimize absent chunk checks
+
+
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftWorld.java b/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
+index 01719a81cea75654a0d7eac52fd43ebf2d692b9c..a7724a36747ccc525c205d5d995befb6453c62b9 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftWorld.java
+@@ -409,6 +409,15 @@ public class CraftWorld extends CraftRegionAccessor implements World {
+         if (chunk != null) {
+             return chunk instanceof ImposterProtoChunk || chunk instanceof net.minecraft.world.level.chunk.LevelChunk;
+         }
++        // Lattice start - avoid scheduling synchronous I/O when the region header proves no chunk data exists
++        try {
++            if (com.latticemc.lattice.nativelib.ChunkDataFastCheck.isDataKnownAbsent(this.world.moonrise$getChunkDataController(), x, z)) {
++                return false;
++            }
++        } catch (final java.io.IOException | RuntimeException | LinkageError ignored) {
++            // Fall through to Paper's full load when the fast check cannot safely answer.
++        }
++        // Lattice end - avoid scheduling synchronous I/O when the region header proves no chunk data exists
+         final java.util.concurrent.CompletableFuture<ChunkAccess> future = new java.util.concurrent.CompletableFuture<>();
+         ca.spottedleaf.moonrise.common.PlatformHooks.get().scheduleChunkLoad(
+             this.world, x, z, false, ChunkStatus.EMPTY, true, ca.spottedleaf.concurrentutil.util.Priority.NORMAL, future::complete

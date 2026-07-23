@@ -1,0 +1,34 @@
+--- a/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
++++ b/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+@@ -332,6 +_,7 @@
+ 
+     private ChunkAccess doFill(Blender blender, StructureManager structureManager, RandomState random, ChunkAccess chunk, int minCellY, int cellCountY) {
+         NoiseChunk noiseChunk = chunk.getOrCreateNoiseChunk(chunkAccess -> this.createNoiseChunk(chunkAccess, structureManager, blender, random));
++        ProtoChunk protoChunk = chunk instanceof ProtoChunk proto ? proto : null;
+         Heightmap heightmapUnprimed = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
+         Heightmap heightmapUnprimed1 = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE_WG);
+         ChunkPos pos = chunk.getPos();
+@@ -339,7 +_,7 @@
+         int minBlockZ = pos.getMinBlockZ();
+         Aquifer aquifer = noiseChunk.aquifer();
+         noiseChunk.initializeForFirstCellX();
+-        BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
++        BlockPos.MutableBlockPos mutableBlockPos = protoChunk == null ? new BlockPos.MutableBlockPos() : null;
+         int cellWidth = noiseChunk.cellWidth();
+         int cellHeight = noiseChunk.cellHeight();
+         int i = 16 / cellWidth;
+@@ -389,8 +_,12 @@
+                                     heightmapUnprimed.update(i11, i7, i14, interpolatedState);
+                                     heightmapUnprimed1.update(i11, i7, i14, interpolatedState);
+                                     if (aquifer.shouldScheduleFluidUpdate() && !interpolatedState.getFluidState().isEmpty()) {
+-                                        mutableBlockPos.set(i10, i7, i13);
+-                                        chunk.markPosForPostprocessing(mutableBlockPos);
++                                        if (protoChunk != null) {
++                                            protoChunk.lattice$markPosForPostprocessing(i10, i7, i13);
++                                        } else {
++                                            mutableBlockPos.set(i10, i7, i13);
++                                            chunk.markPosForPostprocessing(mutableBlockPos);
++                                        }
+                                     }
+                                 }
+                             }

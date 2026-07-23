@@ -1,0 +1,206 @@
+--- a/net/minecraft/world/level/levelgen/DensityFunctions.java
++++ b/net/minecraft/world/level/levelgen/DensityFunctions.java
+@@ -267,6 +_,31 @@
+         @Override double minValue,
+         @Override double maxValue
+     ) implements DensityFunctions.TwoArgumentSimpleFunction {
++        private static final ThreadLocal<ScratchBuffers> SCRATCH_BUFFERS = ThreadLocal.withInitial(ScratchBuffers::new);
++
++        private static final class ScratchBuffers {
++            private double[][] buffers = new double[4][];
++            private int depth;
++
++            double[] acquire(int length) {
++                int slot = this.depth++;
++                if (slot == this.buffers.length) {
++                    this.buffers = Arrays.copyOf(this.buffers, slot * 2);
++                }
++
++                double[] buffer = this.buffers[slot];
++                if (buffer == null || buffer.length < length) {
++                    buffer = new double[length];
++                    this.buffers[slot] = buffer;
++                }
++                return buffer;
++            }
++
++            void release() {
++                this.depth--;
++            }
++        }
++
+         @Override
+         public double compute(DensityFunction.FunctionContext context) {
+             double d = this.argument1.compute(context);
+@@ -283,35 +_,112 @@
+         public void fillArray(double[] array, DensityFunction.ContextProvider contextProvider) {
+             this.argument1.fillArray(array, contextProvider);
+             switch (this.type) {
+-                case ADD:
+-                    double[] doubles = new double[array.length];
+-                    this.argument2.fillArray(doubles, contextProvider);
+-
+-                    for (int i = 0; i < array.length; i++) {
+-                        array[i] += doubles[i];
+-                    }
+-                    break;
+-                case MUL:
+-                    for (int i1 = 0; i1 < array.length; i1++) {
+-                        double d = array[i1];
+-                        array[i1] = d == 0.0 ? 0.0 : d * this.argument2.compute(contextProvider.forIndex(i1));
+-                    }
+-                    break;
+-                case MIN:
++                case ADD: {
++                    ScratchBuffers scratchBuffers = SCRATCH_BUFFERS.get();
++                    double[] doubles = scratchBuffers.acquire(array.length);
++                    try {
++                        this.argument2.fillArray(doubles, contextProvider);
++
++                        for (int i = 0; i < array.length; i++) {
++                            array[i] += doubles[i];
++                        }
++                    } finally {
++                        scratchBuffers.release();
++                    }
++                    break;
++                }
++                case MUL: {
++                    boolean hasZero = false;
++                    for (double value : array) {
++                        if (value == 0.0) {
++                            hasZero = true;
++                            break;
++                        }
++                    }
++
++                    if (hasZero) {
++                        for (int i1 = 0; i1 < array.length; i1++) {
++                            double d = array[i1];
++                            array[i1] = d == 0.0 ? 0.0 : d * this.argument2.compute(contextProvider.forIndex(i1));
++                        }
++                        break;
++                    }
++
++                    ScratchBuffers scratchBuffers = SCRATCH_BUFFERS.get();
++                    double[] doubles = scratchBuffers.acquire(array.length);
++                    try {
++                        this.argument2.fillArray(doubles, contextProvider);
++
++                        for (int i = 0; i < array.length; i++) {
++                            array[i] *= doubles[i];
++                        }
++                    } finally {
++                        scratchBuffers.release();
++                    }
++                    break;
++                }
++                case MIN: {
+                     double d1 = this.argument2.minValue();
+-
+-                    for (int i2 = 0; i2 < array.length; i2++) {
+-                        double d2 = array[i2];
+-                        array[i2] = d2 < d1 ? d2 : Math.min(d2, this.argument2.compute(contextProvider.forIndex(i2)));
+-                    }
+-                    break;
+-                case MAX:
+-                    d1 = this.argument2.maxValue();
+-
+-                    for (int i2 = 0; i2 < array.length; i2++) {
+-                        double d2 = array[i2];
+-                        array[i2] = d2 > d1 ? d2 : Math.max(d2, this.argument2.compute(contextProvider.forIndex(i2)));
+-                    }
++                    boolean hasValueBelowMinimum = false;
++                    for (double value : array) {
++                        if (value < d1) {
++                            hasValueBelowMinimum = true;
++                            break;
++                        }
++                    }
++
++                    if (hasValueBelowMinimum) {
++                        for (int i2 = 0; i2 < array.length; i2++) {
++                            double d2 = array[i2];
++                            array[i2] = d2 < d1 ? d2 : Math.min(d2, this.argument2.compute(contextProvider.forIndex(i2)));
++                        }
++                        break;
++                    }
++
++                    ScratchBuffers scratchBuffers = SCRATCH_BUFFERS.get();
++                    double[] doubles = scratchBuffers.acquire(array.length);
++                    try {
++                        this.argument2.fillArray(doubles, contextProvider);
++
++                        for (int i = 0; i < array.length; i++) {
++                            array[i] = Math.min(array[i], doubles[i]);
++                        }
++                    } finally {
++                        scratchBuffers.release();
++                    }
++                    break;
++                }
++                case MAX: {
++                    double d1 = this.argument2.maxValue();
++                    boolean hasValueAboveMaximum = false;
++                    for (double value : array) {
++                        if (value > d1) {
++                            hasValueAboveMaximum = true;
++                            break;
++                        }
++                    }
++
++                    if (hasValueAboveMaximum) {
++                        for (int i2 = 0; i2 < array.length; i2++) {
++                            double d2 = array[i2];
++                            array[i2] = d2 > d1 ? d2 : Math.max(d2, this.argument2.compute(contextProvider.forIndex(i2)));
++                        }
++                        break;
++                    }
++
++                    ScratchBuffers scratchBuffers = SCRATCH_BUFFERS.get();
++                    double[] doubles = scratchBuffers.acquire(array.length);
++                    try {
++                        this.argument2.fillArray(doubles, contextProvider);
++
++                        for (int i = 0; i < array.length; i++) {
++                            array[i] = Math.max(array[i], doubles[i]);
++                        }
++                    } finally {
++                        scratchBuffers.release();
++                    }
++                    break;
++                }
+             }
+         }
+ 
+@@ -956,6 +_,30 @@
+         @Override
+         public void fillArray(double[] array, DensityFunction.ContextProvider contextProvider) {
+             this.input.fillArray(array, contextProvider);
++
++            if (array.length == 0) {
++                return;
++            }
++
++            boolean allInRange = true;
++            boolean allOutOfRange = true;
++            for (double value : array) {
++                boolean inRange = value >= this.minInclusive && value < this.maxExclusive;
++                allInRange &= inRange;
++                allOutOfRange &= !inRange;
++                if (!allInRange && !allOutOfRange) {
++                    break;
++                }
++            }
++
++            if (allInRange) {
++                this.whenInRange.fillArray(array, contextProvider);
++                return;
++            }
++            if (allOutOfRange) {
++                this.whenOutOfRange.fillArray(array, contextProvider);
++                return;
++            }
+ 
+             for (int i = 0; i < array.length; i++) {
+                 double d = array[i];

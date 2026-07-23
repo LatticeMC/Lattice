@@ -1,0 +1,107 @@
+--- a/net/minecraft/world/level/chunk/LinearPalette.java
++++ b/net/minecraft/world/level/chunk/LinearPalette.java
+@@ -11,6 +_,14 @@
+     private final T[] values;
+     private final int bits;
+     private int size;
++    private T lastValue;
++    private int lastId = -1;
++    private T previousValue;
++    private int previousId = -1;
++    private T thirdValue;
++    private int thirdId = -1;
++    private T fourthValue;
++    private int fourthId = -1;
+ 
+     // Paper start - optimise palette reads
+     @Override
+@@ -43,8 +_,53 @@
+ 
+     @Override
+     public int idFor(T state, PaletteResize<T> resizeHandler) {
++        if (this.lastId >= 0 && this.lastValue == state) {
++            return this.lastId;
++        }
++        if (this.previousId >= 0 && this.previousValue == state) {
++            T value = this.lastValue;
++            int id = this.lastId;
++            this.lastValue = this.previousValue;
++            this.lastId = this.previousId;
++            this.previousValue = value;
++            this.previousId = id;
++            return this.lastId;
++        }
++        if (this.thirdId >= 0 && this.thirdValue == state) {
++            T value = this.previousValue;
++            int id = this.previousId;
++            this.previousValue = this.lastValue;
++            this.previousId = this.lastId;
++            this.lastValue = this.thirdValue;
++            this.lastId = this.thirdId;
++            this.thirdValue = value;
++            this.thirdId = id;
++            return this.lastId;
++        }
++        if (this.fourthId >= 0 && this.fourthValue == state) {
++            T value = this.thirdValue;
++            int id = this.thirdId;
++            this.thirdValue = this.previousValue;
++            this.thirdId = this.previousId;
++            this.previousValue = this.lastValue;
++            this.previousId = this.lastId;
++            this.lastValue = this.fourthValue;
++            this.lastId = this.fourthId;
++            this.fourthValue = value;
++            this.fourthId = id;
++            return this.lastId;
++        }
++
+         for (int i = 0; i < this.size; i++) {
+             if (this.values[i] == state) {
++                this.fourthValue = this.thirdValue;
++                this.fourthId = this.thirdId;
++                this.thirdValue = this.previousValue;
++                this.thirdId = this.previousId;
++                this.previousValue = this.lastValue;
++                this.previousId = this.lastId;
++                this.lastValue = state;
++                this.lastId = i;
+                 return i;
+             }
+         }
+@@ -53,6 +_,14 @@
+         if (ix < this.values.length) {
+             this.values[ix] = state;
+             this.size++;
++            this.fourthValue = this.thirdValue;
++            this.fourthId = this.thirdId;
++            this.thirdValue = this.previousValue;
++            this.thirdId = this.previousId;
++            this.previousValue = this.lastValue;
++            this.previousId = this.lastId;
++            this.lastValue = state;
++            this.lastId = ix;
+             return ix;
+         } else {
+             return resizeHandler.onResize(this.bits + 1, state);
+@@ -82,6 +_,14 @@
+     @Override
+     public void read(FriendlyByteBuf buffer, IdMap<T> map) {
+         this.size = buffer.readVarInt();
++        this.lastValue = null;
++        this.lastId = -1;
++        this.previousValue = null;
++        this.previousId = -1;
++        this.thirdValue = null;
++        this.thirdId = -1;
++        this.fourthValue = null;
++        this.fourthId = -1;
+ 
+         for (int i = 0; i < this.size; i++) {
+             this.values[i] = map.byIdOrThrow(buffer.readVarInt());
+@@ -117,4 +_,5 @@
+     public Palette<T> copy() {
+         return new LinearPalette<>((T[])((Object[])this.values.clone()), this.bits, this.size);
+     }
++
+ }

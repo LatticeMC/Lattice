@@ -1,0 +1,46 @@
+--- a/net/minecraft/world/level/chunk/ProtoChunk.java
++++ b/net/minecraft/world/level/chunk/ProtoChunk.java
+@@ -281,6 +_,43 @@
+         }
+     }
+ 
++    public void lattice$markPosForPostprocessing(int x, int y, int z) {
++        if (!this.isOutsideBuildHeight(y)) {
++            ChunkAccess.getOrCreateOffsetList(this.postProcessing, this.getSectionIndex(y)).add((short)((x & 15) | (y & 15) << 4 | (z & 15) << 8));
++        }
++    }
++
++    public Heightmap @Nullable [] lattice$surfaceHeightmaps() {
++        if (this.status.isOrAfter(ChunkStatus.INITIALIZE_LIGHT)) {
++            return null;
++        }
++
++        EnumSet<Heightmap.Types> types = this.getPersistedStatus().heightmapsAfter();
++        EnumSet<Heightmap.Types> missing = null;
++        for (Heightmap.Types type : types) {
++            if (this.heightmaps.get(type) == null) {
++                if (missing == null) {
++                    missing = EnumSet.noneOf(Heightmap.Types.class);
++                }
++                missing.add(type);
++            }
++        }
++        if (missing != null) {
++            Heightmap.primeHeightmaps(this, missing);
++        }
++
++        Heightmap[] result = new Heightmap[types.size()];
++        int index = 0;
++        for (Heightmap.Types type : types) {
++            Heightmap heightmap = this.heightmaps.get(type);
++            if (heightmap == null) {
++                return null;
++            }
++            result[index++] = heightmap;
++        }
++        return result;
++    }
++
+     @Override
+     public void addPackedPostProcess(ShortList offsets, int index) {
+         ChunkAccess.getOrCreateOffsetList(this.postProcessing, index).addAll(offsets);

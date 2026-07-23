@@ -1,0 +1,23 @@
+--- a/net/minecraft/world/level/chunk/BulkSectionAccess.java
++++ b/net/minecraft/world/level/chunk/BulkSectionAccess.java
+@@ -11,17 +_,19 @@
+ 
+ public class BulkSectionAccess implements AutoCloseable {
+     private final LevelAccessor level;
++    private final int sectionCount;
+     private final Long2ObjectMap<LevelChunkSection> acquiredSections = new Long2ObjectOpenHashMap<>();
+     private @Nullable LevelChunkSection lastSection;
+     private long lastSectionKey;
+ 
+     public BulkSectionAccess(LevelAccessor level) {
+         this.level = level;
++        this.sectionCount = level.getSectionsCount();
+     }
+ 
+     public @Nullable LevelChunkSection getSection(BlockPos pos) {
+         int sectionIndex = this.level.getSectionIndex(pos.getY());
+-        if (sectionIndex >= 0 && sectionIndex < this.level.getSectionsCount()) {
++        if (sectionIndex >= 0 && sectionIndex < this.sectionCount) {
+             long packedSectionPos = SectionPos.asLong(pos);
+             if (this.lastSection == null || this.lastSectionKey != packedSectionPos) {
+                 this.lastSection = this.acquiredSections.computeIfAbsent(packedSectionPos, section -> {

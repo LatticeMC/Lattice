@@ -1,0 +1,221 @@
+--- a/net/minecraft/world/level/biome/Climate.java
++++ b/net/minecraft/world/level/biome/Climate.java
+@@ -191,7 +_,7 @@
+         }
+ 
+         public T findValueIndex(Climate.TargetPoint targetPoint) {
+-            return this.findValueIndex(targetPoint, Climate.RTree.Node::distance);
++            return this.index.search(targetPoint);
+         }
+ 
+         protected T findValueIndex(Climate.TargetPoint targetPoint, Climate.DistanceMetric<T> distanceMetric) {
+@@ -247,7 +_,7 @@
+     protected static final class RTree<T> {
+         private static final int CHILDREN_PER_NODE = 6;
+         private final Climate.RTree.Node<T> root;
+-        private final ThreadLocal<Climate.RTree.@Nullable Leaf<T>> lastResult = new ThreadLocal<>();
++        private final ThreadLocal<Climate.RTree.SearchCache<T>> lastResult = ThreadLocal.withInitial(Climate.RTree.SearchCache::new);
+ 
+         private RTree(Climate.RTree.Node<T> root) {
+             this.root = root;
+@@ -385,9 +_,54 @@
+ 
+         public T search(Climate.TargetPoint targetPoint, Climate.DistanceMetric<T> distanceMetric) {
+             long[] longs = targetPoint.toParameterArray();
+-            Climate.RTree.Leaf<T> leaf = this.root.search(longs, this.lastResult.get(), distanceMetric);
+-            this.lastResult.set(leaf);
+-            return leaf.value;
++            Climate.RTree.SearchCache<T> cache = this.lastResult.get();
++            Climate.RTree.Leaf<T> leaf = this.root.search(longs, cache.leaf, distanceMetric);
++            cache.leaf = leaf;
++            cache.validTarget = false;
++            return leaf.value;
++        }
++
++        public T search(Climate.TargetPoint targetPoint) {
++            Climate.RTree.SearchCache<T> cache = this.lastResult.get();
++            if (cache.matches(targetPoint)) {
++                return cache.leaf.value;
++            }
++
++            Climate.RTree.Leaf<T> leaf = this.root.search(targetPoint, cache.leaf);
++            cache.store(targetPoint, leaf);
++            return leaf.value;
++        }
++
++        private static final class SearchCache<T> {
++            private Climate.RTree.@Nullable Leaf<T> leaf;
++            private boolean validTarget;
++            private long temperature;
++            private long humidity;
++            private long continentalness;
++            private long erosion;
++            private long depth;
++            private long weirdness;
++
++            private boolean matches(Climate.TargetPoint targetPoint) {
++                return this.validTarget
++                    && this.temperature == targetPoint.temperature()
++                    && this.humidity == targetPoint.humidity()
++                    && this.continentalness == targetPoint.continentalness()
++                    && this.erosion == targetPoint.erosion()
++                    && this.depth == targetPoint.depth()
++                    && this.weirdness == targetPoint.weirdness();
++            }
++
++            private void store(Climate.TargetPoint targetPoint, Climate.RTree.Leaf<T> leaf) {
++                this.leaf = leaf;
++                this.temperature = targetPoint.temperature();
++                this.humidity = targetPoint.humidity();
++                this.continentalness = targetPoint.continentalness();
++                this.erosion = targetPoint.erosion();
++                this.depth = targetPoint.depth();
++                this.weirdness = targetPoint.weirdness();
++                this.validTarget = true;
++            }
+         }
+ 
+         static final class Leaf<T> extends Climate.RTree.Node<T> {
+@@ -402,25 +_,108 @@
+             protected Climate.RTree.Leaf<T> search(long[] searchedValues, Climate.RTree.@Nullable Leaf<T> leaf, Climate.DistanceMetric<T> metric) {
+                 return this;
+             }
++
++            @Override
++            protected Climate.RTree.Leaf<T> search(Climate.TargetPoint targetPoint, Climate.RTree.@Nullable Leaf<T> leaf) {
++                return this;
++            }
+         }
+ 
+         abstract static class Node<T> {
+             protected final Climate.Parameter[] parameterSpace;
++            private final long min0;
++            private final long max0;
++            private final long min1;
++            private final long max1;
++            private final long min2;
++            private final long max2;
++            private final long min3;
++            private final long max3;
++            private final long min4;
++            private final long max4;
++            private final long min5;
++            private final long max5;
++            private final long min6;
++            private final long max6;
++            private final long offsetDistanceToZero;
+ 
+             protected Node(List<Climate.Parameter> parameters) {
+                 this.parameterSpace = parameters.toArray(new Climate.Parameter[0]);
++                this.min0 = this.parameterSpace[0].min();
++                this.max0 = this.parameterSpace[0].max();
++                this.min1 = this.parameterSpace[1].min();
++                this.max1 = this.parameterSpace[1].max();
++                this.min2 = this.parameterSpace[2].min();
++                this.max2 = this.parameterSpace[2].max();
++                this.min3 = this.parameterSpace[3].min();
++                this.max3 = this.parameterSpace[3].max();
++                this.min4 = this.parameterSpace[4].min();
++                this.max4 = this.parameterSpace[4].max();
++                this.min5 = this.parameterSpace[5].min();
++                this.max5 = this.parameterSpace[5].max();
++                this.min6 = this.parameterSpace[6].min();
++                this.max6 = this.parameterSpace[6].max();
++                this.offsetDistanceToZero = Mth.square(distanceToRange(this.min6, this.max6, 0L));
+             }
+ 
+             protected abstract Climate.RTree.Leaf<T> search(long[] searchedValues, Climate.RTree.@Nullable Leaf<T> leaf, Climate.DistanceMetric<T> metric);
+ 
++            protected abstract Climate.RTree.Leaf<T> search(Climate.TargetPoint targetPoint, Climate.RTree.@Nullable Leaf<T> leaf);
++
+             protected long distance(long[] values) {
+-                long l = 0L;
+-
+-                for (int i = 0; i < 7; i++) {
+-                    l += Mth.square(this.parameterSpace[i].distance(values[i]));
+-                }
+-
+-                return l;
++                long l = Mth.square(distanceToRange(this.min0, this.max0, values[0]));
++                l += Mth.square(distanceToRange(this.min1, this.max1, values[1]));
++                l += Mth.square(distanceToRange(this.min2, this.max2, values[2]));
++                l += Mth.square(distanceToRange(this.min3, this.max3, values[3]));
++                l += Mth.square(distanceToRange(this.min4, this.max4, values[4]));
++                l += Mth.square(distanceToRange(this.min5, this.max5, values[5]));
++                l += Mth.square(distanceToRange(this.min6, this.max6, values[6]));
++                return l;
++            }
++
++            protected long distance(Climate.TargetPoint targetPoint) {
++                long l = Mth.square(distanceToRange(this.min0, this.max0, targetPoint.temperature()));
++                l += Mth.square(distanceToRange(this.min1, this.max1, targetPoint.humidity()));
++                l += Mth.square(distanceToRange(this.min2, this.max2, targetPoint.continentalness()));
++                l += Mth.square(distanceToRange(this.min3, this.max3, targetPoint.erosion()));
++                l += Mth.square(distanceToRange(this.min4, this.max4, targetPoint.depth()));
++                l += Mth.square(distanceToRange(this.min5, this.max5, targetPoint.weirdness()));
++                l += this.offsetDistanceToZero;
++                return l;
++            }
++
++            protected long distance(Climate.TargetPoint targetPoint, long limit) {
++                long l = Mth.square(distanceToRange(this.min0, this.max0, targetPoint.temperature()));
++                if (l >= limit) {
++                    return l;
++                }
++                l += Mth.square(distanceToRange(this.min1, this.max1, targetPoint.humidity()));
++                if (l >= limit) {
++                    return l;
++                }
++                l += Mth.square(distanceToRange(this.min2, this.max2, targetPoint.continentalness()));
++                if (l >= limit) {
++                    return l;
++                }
++                l += Mth.square(distanceToRange(this.min3, this.max3, targetPoint.erosion()));
++                if (l >= limit) {
++                    return l;
++                }
++                l += Mth.square(distanceToRange(this.min4, this.max4, targetPoint.depth()));
++                if (l >= limit) {
++                    return l;
++                }
++                l += Mth.square(distanceToRange(this.min5, this.max5, targetPoint.weirdness()));
++                if (l >= limit) {
++                    return l;
++                }
++                return l + this.offsetDistanceToZero;
++            }
++
++            private static long distanceToRange(long min, long max, long value) {
++                long above = value - max;
++                long below = min - value;
++                return above > 0L ? above : Math.max(below, 0L);
+             }
+ 
+             @Override
+@@ -451,6 +_,26 @@
+                     if (l > l1) {
+                         Climate.RTree.Leaf<T> leaf2 = node.search(searchedValues, leaf1, metric);
+                         long l2 = node == leaf2 ? l1 : metric.distance(leaf2, searchedValues);
++                        if (l > l2) {
++                            l = l2;
++                            leaf1 = leaf2;
++                        }
++                    }
++                }
++
++                return leaf1;
++            }
++
++            @Override
++            protected Climate.RTree.Leaf<T> search(Climate.TargetPoint targetPoint, Climate.RTree.@Nullable Leaf<T> leaf) {
++                long l = leaf == null ? Long.MAX_VALUE : leaf.distance(targetPoint);
++                Climate.RTree.Leaf<T> leaf1 = leaf;
++
++                for (Climate.RTree.Node<T> node : this.children) {
++                    long l1 = node.distance(targetPoint, l);
++                    if (l > l1) {
++                        Climate.RTree.Leaf<T> leaf2 = node.search(targetPoint, leaf1);
++                        long l2 = node == leaf2 ? l1 : leaf2.distance(targetPoint);
+                         if (l > l2) {
+                             l = l2;
+                             leaf1 = leaf2;

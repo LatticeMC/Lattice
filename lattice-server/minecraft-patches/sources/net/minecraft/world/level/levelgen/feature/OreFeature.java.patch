@@ -1,0 +1,50 @@
+--- a/net/minecraft/world/level/levelgen/feature/OreFeature.java
++++ b/net/minecraft/world/level/levelgen/feature/OreFeature.java
+@@ -1,7 +_,6 @@
+ package net.minecraft.world.level.levelgen.feature;
+ 
+ import com.mojang.serialization.Codec;
+-import java.util.BitSet;
+ import java.util.function.Function;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.SectionPos;
+@@ -69,10 +_,14 @@
+         int height
+     ) {
+         int i = 0;
+-        BitSet bitSet = new BitSet(width * height * width);
++        int bitSetWidth = width + 1;
++        int bitSetHeight = height + 1;
++        int bitCount = bitSetWidth * bitSetHeight * bitSetWidth;
++        long[] visited = new long[(bitCount + Long.SIZE - 1) / Long.SIZE];
+         BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
+         int i1 = config.size;
+         double[] doubles = new double[i1 * 4];
++        OreConfiguration.TargetBlockState[] targetStates = config.targetStates.toArray(new OreConfiguration.TargetBlockState[config.targetStates.size()]);
+ 
+         for (int i2 = 0; i2 < i1; i2++) {
+             float f = (float)i2 / i1;
+@@ -130,9 +_,11 @@
+                                     for (int i6 = max2; i6 <= max5; i6++) {
+                                         double d7 = (i6 + 0.5 - d3) / d;
+                                         if (d5 * d5 + d6 * d6 + d7 * d7 < 1.0 && !level.isOutsideBuildHeight(i5)) {
+-                                            int i7 = i4 - x + (i5 - y) * width + (i6 - z) * width * height;
+-                                            if (!bitSet.get(i7)) {
+-                                                bitSet.set(i7);
++                                            int i7 = i4 - x + (i5 - y) * bitSetWidth + (i6 - z) * bitSetWidth * bitSetHeight;
++                                            int wordIndex = i7 >>> 6;
++                                            long bitMask = 1L << (i7 & 63);
++                                            if ((visited[wordIndex] & bitMask) == 0L) {
++                                                visited[wordIndex] |= bitMask;
+                                                 mutableBlockPos.set(i4, i5, i6);
+                                                 if (level.ensureCanWrite(mutableBlockPos)) {
+                                                     LevelChunkSection section = bulkSectionAccess.getSection(mutableBlockPos);
+@@ -144,7 +_,7 @@
+                                                             relativeBlockPosCoord, relativeBlockPosCoord1, relativeBlockPosCoord2
+                                                         );
+ 
+-                                                        for (OreConfiguration.TargetBlockState targetBlockState : config.targetStates) {
++                                                        for (OreConfiguration.TargetBlockState targetBlockState : targetStates) {
+                                                             if (canPlaceOre(
+                                                                 blockState, bulkSectionAccess::getBlockState, random, config, targetBlockState, mutableBlockPos
+                                                             )) {

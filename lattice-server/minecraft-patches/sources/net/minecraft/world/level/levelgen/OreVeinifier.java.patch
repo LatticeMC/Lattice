@@ -1,0 +1,18 @@
+--- a/net/minecraft/world/level/levelgen/OreVeinifier.java
++++ b/net/minecraft/world/level/levelgen/OreVeinifier.java
+@@ -25,8 +_,14 @@
+     ) {
+         BlockState blockState = SharedConstants.DEBUG_ORE_VEINS ? Blocks.AIR.defaultBlockState() : null;
+         return context -> {
+-            double d = veinToggle.compute(context);
+             int i = context.blockY();
++            if (i < OreVeinifier.VeinType.IRON.minY
++                || i > OreVeinifier.VeinType.COPPER.maxY
++                || i > OreVeinifier.VeinType.IRON.maxY && i < OreVeinifier.VeinType.COPPER.minY) {
++                return blockState;
++            }
++
++            double d = veinToggle.compute(context);
+             OreVeinifier.VeinType veinType = d > 0.0 ? OreVeinifier.VeinType.COPPER : OreVeinifier.VeinType.IRON;
+             double abs = Math.abs(d);
+             int i1 = veinType.maxY - i;

@@ -1,0 +1,57 @@
+--- a/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -91,7 +_,7 @@
+ 
+     // Paper start - block counting
+     private void updateBlockCallback(final int x, final int y, final int z, final BlockState newState,
+-                                     final BlockState oldState) {
++                                     final BlockState oldState, final boolean oldTicking, final boolean newTicking) {
+         if (oldState == newState) {
+             return;
+         }
+@@ -113,8 +_,6 @@
+             }
+         }
+ 
+-        final boolean oldTicking = oldState.isRandomlyTicking();
+-        final boolean newTicking = newState.isRandomlyTicking();
+         if (oldTicking != newTicking) {
+             final ca.spottedleaf.moonrise.common.list.ShortList tickingBlocks = this.tickingBlocks;
+             final short position = (short)(x | (z << 4) | (y << (4+4)));
+@@ -136,11 +_,17 @@
+             blockState = this.states.getAndSetUnchecked(x, y, z, state);
+         }
+ 
++        if (blockState == state) {
++            return blockState;
++        }
++
+         FluidState fluidState = blockState.getFluidState();
+         FluidState fluidState1 = state.getFluidState();
++        boolean oldTicking = blockState.isRandomlyTicking();
++        boolean newTicking = state.isRandomlyTicking();
+         if (!blockState.isAir()) {
+             this.nonEmptyBlockCount--;
+-            if (blockState.isRandomlyTicking()) {
++            if (oldTicking) {
+                 this.tickingBlockCount--;
+             }
+         }
+@@ -151,7 +_,7 @@
+ 
+         if (!state.isAir()) {
+             this.nonEmptyBlockCount++;
+-            if (state.isRandomlyTicking()) {
++            if (newTicking) {
+                 this.tickingBlockCount++;
+             }
+         }
+@@ -160,7 +_,7 @@
+             this.tickingFluidCount++;
+         }
+ 
+-        this.updateBlockCallback(x, y, z, state, blockState); // Paper - block counting
++        this.updateBlockCallback(x, y, z, state, blockState, oldTicking, newTicking); // Paper - block counting
+ 
+         return blockState;
+     }

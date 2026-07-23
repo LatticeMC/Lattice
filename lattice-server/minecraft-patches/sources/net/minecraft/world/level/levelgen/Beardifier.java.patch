@@ -20,12 +20,12 @@
          this.junctions = junctions;
          this.affectedBox = affectedBox;
 +        this.nativeBeardifier = NativeBeardifier.isAvailable() ? NativeBeardifier.create(pieces, junctions) : null;
-     }
- 
-+    public long lattice$nativeBeardifierHandle() {
-+        return this.nativeBeardifier == null ? 0L : this.nativeBeardifier.handle();
 +    }
 +
++    public long lattice$nativeBeardifierHandle() {
++        return this.nativeBeardifier == null ? 0L : this.nativeBeardifier.handle();
+     }
+ 
      @Override
 @@ -119,6 +_,13 @@
              if (!this.affectedBox.isInside(i, i1, i2)) {
