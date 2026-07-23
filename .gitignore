@@ -60,8 +60,10 @@ paper-api
 paper-server
 *.jar
 test-plugin.settings.gradle.kts
+/docs
 
 # Native libraries
+lattice-native/build-*/
 *.so
 *.dylib
 *.dll
