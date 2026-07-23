@@ -13,6 +13,7 @@
 #include <jni.h>
 
 #include <algorithm>
+#include <array>
 #include <new>
 #include <mutex>
 #include <unordered_map>
@@ -142,6 +143,7 @@ std::vector<PinnedDoubleArray> bind_cache_all_in_cell_arrays(JNIEnv* env, df::Ca
         if (!guard.data) continue;
         cache.cache_all_in_cell_arrays[i] = reinterpret_cast<const double*>(guard.data);
         cache.cache_all_in_cell_array_lengths[i] = guard.length;
+        cache.cache_all_in_cell_array_offsets[i] = 0;
     }
     return pinned;
 }
@@ -166,6 +168,7 @@ std::vector<PinnedDoubleArray> bind_bound_cache_all_in_cell_arrays(JNIEnv* env, 
         if (!guard.data) continue;
         cache.cache_all_in_cell_arrays[i] = reinterpret_cast<const double*>(guard.data);
         cache.cache_all_in_cell_array_lengths[i] = guard.length;
+        cache.cache_all_in_cell_array_offsets[i] = 0;
     }
     return pinned;
 }
@@ -173,6 +176,7 @@ std::vector<PinnedDoubleArray> bind_bound_cache_all_in_cell_arrays(JNIEnv* env, 
 void unbind_cache_all_in_cell_arrays(df::CacheState& cache) {
     for (auto& p : cache.cache_all_in_cell_arrays) p = nullptr;
     for (auto& n : cache.cache_all_in_cell_array_lengths) n = 0;
+    for (auto& n : cache.cache_all_in_cell_array_offsets) n = 0;
 }
 
 } // namespace
@@ -502,6 +506,7 @@ JNIEXPORT void lattice_density_evaluate_interpolated_columns(
                 if (length <= 0) continue;
                 cache->cache_all_in_cell_arrays[static_cast<std::size_t>(slot)] = cacheValuesPacked + cacheOffsets[index];
                 cache->cache_all_in_cell_array_lengths[static_cast<std::size_t>(slot)] = static_cast<std::size_t>(length);
+                cache->cache_all_in_cell_array_offsets[static_cast<std::size_t>(slot)] = 0;
             }
         }
 
@@ -572,6 +577,66 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetRoot(
     auto* a = arena_from(handle);
     if (!a) return;
     a->root = static_cast<df::NodeRef>(nodeRef);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeConfigureSharedLeafMemo(
+        JNIEnv* env, jclass /*cls*/, jlong handle, jintArray roots, jint count) {
+    auto* arena = arena_from(handle);
+    if (!arena || !roots || count <= 1) return 0;
+    if (env->GetArrayLength(roots) < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: shared leaf root array too small");
+        return 0;
+    }
+    lattice::jni::CriticalIntArray root_data{env, roots};
+    if (!root_data) return 0;
+
+    const std::size_t node_count = arena->nodes.size();
+    std::vector<std::uint8_t> reach_count(node_count, 0);
+    std::vector<std::uint32_t> seen(node_count, 0);
+    std::vector<df::NodeRef> stack;
+    stack.reserve(node_count);
+    std::uint32_t marker = 0;
+    for (jint i = 0; i < count; ++i) {
+        const df::NodeRef root = static_cast<df::NodeRef>(root_data.data()[i]);
+        if (root < 0 || static_cast<std::size_t>(root) >= node_count) continue;
+        if (++marker == 0) {
+            std::fill(seen.begin(), seen.end(), 0);
+            marker = 1;
+        }
+        stack.clear();
+        stack.push_back(root);
+        while (!stack.empty()) {
+            const df::NodeRef ref = stack.back();
+            stack.pop_back();
+            if (ref < 0 || static_cast<std::size_t>(ref) >= node_count) continue;
+            const std::size_t index = static_cast<std::size_t>(ref);
+            if (seen[index] == marker) continue;
+            seen[index] = marker;
+            if (reach_count[index] != 0xffu) ++reach_count[index];
+            const df::Node& node = arena->nodes[index];
+            if (node.a >= 0) stack.push_back(node.a);
+            if (node.b >= 0) stack.push_back(node.b);
+            if (node.c >= 0) stack.push_back(node.c);
+            if (node.d >= 0) stack.push_back(node.d);
+            if (node.e >= 0) stack.push_back(node.e);
+        }
+    }
+
+    jint marked = 0;
+    for (std::size_t i = 0; i < node_count; ++i) {
+        auto& node = arena->nodes[i];
+        const bool expensive_leaf = node.kind == df::NodeKind::kNoise
+            || node.kind == df::NodeKind::kShift
+            || node.kind == df::NodeKind::kShiftA
+            || node.kind == df::NodeKind::kShiftB
+            || node.kind == df::NodeKind::kShiftedNoise
+            || node.kind == df::NodeKind::kInterpolatedNoise;
+        node.shared_batch_leaf = expensive_leaf && reach_count[i] > 1;
+        if (node.shared_batch_leaf) ++marked;
+    }
+    root_data.release_ro();
+    return marked;
 }
 
 // ---- Sampling -------------------------------------------------------------
@@ -1035,6 +1100,69 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateGrid(
 }
 
 JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateGridRoots(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle, jlong cacheHandle,
+        jintArray roots, jint count,
+        jdouble x0, jdouble y0, jdouble z0,
+        jdouble dx, jdouble dy, jdouble dz,
+        jint cellX0, jint cellZ0,
+        jint nx, jint ny, jint nz,
+        jdoubleArray out) {
+    auto* arena = arena_from(handle);
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!arena || !cache || !roots || !out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null grid roots input");
+        return;
+    }
+    if (count <= 0 || nx <= 0 || ny <= 0 || nz <= 0) return;
+    if (env->GetArrayLength(roots) < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: grid roots array too small");
+        return;
+    }
+
+    lattice::jni::CriticalIntArray root_buffer{env, roots};
+    if (!root_buffer) {
+        lattice::jni::throw_illegal_state(env, "lattice density: grid roots lock failed");
+        return;
+    }
+    std::vector<df::NodeRef> root_refs(static_cast<std::size_t>(count));
+    for (jint i = 0; i < count; ++i) {
+        const auto root = static_cast<df::NodeRef>(root_buffer.data()[i]);
+        if (root < 0 || static_cast<std::size_t>(root) >= arena->nodes.size()) {
+            root_buffer.release_ro();
+            lattice::jni::throw_illegal_arg(env, "lattice density: invalid grid root node");
+            return;
+        }
+        root_refs[static_cast<std::size_t>(i)] = root;
+    }
+    root_buffer.release_ro();
+
+    const long long root_stride = static_cast<long long>(nx)
+                                * static_cast<long long>(ny)
+                                * static_cast<long long>(nz);
+    const long long required = root_stride * static_cast<long long>(count);
+    if (root_stride <= 0 || required <= 0 || static_cast<long long>(env->GetArrayLength(out)) < required) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: grid roots output too small");
+        return;
+    }
+
+    lattice::jni::CriticalDoubleArray output{env, out};
+    if (!output) {
+        lattice::jni::throw_illegal_state(env, "lattice density: grid roots output lock failed");
+        return;
+    }
+    cache->clear();
+    df::evaluate_grid_roots(
+            *arena, root_refs.data(), static_cast<int>(count),
+            static_cast<double>(x0), static_cast<double>(y0), static_cast<double>(z0),
+            static_cast<double>(dx), static_cast<double>(dy), static_cast<double>(dz),
+            static_cast<int>(cellX0), static_cast<int>(cellZ0),
+            static_cast<int>(nx), static_cast<int>(ny), static_cast<int>(nz),
+            cache, reinterpret_cast<double*>(output.data()));
+}
+
+JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn(
         JNIEnv* env, jclass /*cls*/,
         jlong handle, jlong cacheHandle,
@@ -1147,6 +1275,337 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
                               static_cast<int>(ny),
                               cache,
                               reinterpret_cast<double*>(buf.data()));
+    }
+
+    env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
+    env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumnsFlatRows(
+        JNIEnv* env, jclass /*cls*/,
+        jlongArray handles, jlongArray cacheHandles, jint count,
+        jdouble x, jdouble y0, jdouble z0, jdouble dy,
+        jint cellX, jint firstCellZ, jint cellWidth,
+        jint yRows, jint zRows,
+        jobjectArray out) {
+    if (!handles || !cacheHandles || !out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null flat row batch arrays");
+        return;
+    }
+    if (count <= 0 || yRows <= 0 || zRows <= 0 || cellWidth <= 0) return;
+
+    const jsize handle_count = env->GetArrayLength(handles);
+    const jsize cache_count = env->GetArrayLength(cacheHandles);
+    const jsize out_count = env->GetArrayLength(out);
+    if (handle_count < count || cache_count < count || out_count < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: flat row batch arrays too small");
+        return;
+    }
+
+    jlong* handle_data = env->GetLongArrayElements(handles, nullptr);
+    if (!handle_data) return;
+    jlong* cache_data = env->GetLongArrayElements(cacheHandles, nullptr);
+    if (!cache_data) {
+        env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
+        return;
+    }
+
+    const jlong required = static_cast<jlong>(yRows) * static_cast<jlong>(zRows);
+    for (jint i = 0; i < count; ++i) {
+        auto* a = arena_from(handle_data[i]);
+        if (!a) {
+            lattice::jni::throw_illegal_state(env, "lattice density: null arena in flat row batch");
+            break;
+        }
+        auto* out_row = static_cast<jdoubleArray>(env->GetObjectArrayElement(out, i));
+        if (!out_row) {
+            lattice::jni::throw_illegal_arg(env, "lattice density: null flat row batch output");
+            break;
+        }
+        bool valid = false;
+        {
+            lattice::jni::CriticalDoubleArray buffer{env, out_row};
+            if (!buffer) {
+                lattice::jni::throw_illegal_state(env, "lattice density: flat row batch output lock failed");
+            } else if (static_cast<jlong>(buffer.size()) < required) {
+                lattice::jni::throw_illegal_arg(env, "lattice density: flat row batch output too small");
+            } else {
+                auto* cache = reinterpret_cast<df::CacheState*>(cache_data[i]);
+                auto* values = reinterpret_cast<double*>(buffer.data());
+                for (jint z_row = 0; z_row < zRows; ++z_row) {
+                    if (cache) cache->clear();
+                    df::evaluate_y_column(*a, a->root,
+                                          static_cast<double>(x),
+                                          static_cast<double>(y0),
+                                          static_cast<double>(z0) + static_cast<double>(z_row * cellWidth),
+                                          static_cast<double>(dy),
+                                          static_cast<int>(cellX),
+                                          static_cast<int>(firstCellZ + z_row),
+                                          static_cast<int>(yRows),
+                                          cache,
+                                          values + static_cast<std::size_t>(z_row) * static_cast<std::size_t>(yRows));
+                }
+                valid = true;
+            }
+        }
+        env->DeleteLocalRef(out_row);
+        if (!valid) break;
+    }
+
+    env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
+    env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumnRootsFlatRows(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle, jlong cacheHandle,
+        jintArray roots, jint count,
+        jdouble x, jdouble y0, jdouble z0, jdouble dy,
+        jint cellX, jint firstCellZ, jint cellWidth,
+        jint yRows, jint zRows,
+        jobjectArray out) {
+    auto* arena = arena_from(handle);
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!arena || !cache || !roots || !out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null shared root batch input");
+        return;
+    }
+    if (count <= 0 || yRows <= 0 || zRows <= 0 || cellWidth <= 0) return;
+    if (env->GetArrayLength(roots) < count || env->GetArrayLength(out) < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: shared root batch arrays too small");
+        return;
+    }
+
+    const jlong required = static_cast<jlong>(yRows) * static_cast<jlong>(zRows);
+    std::vector<jdoubleArray> output_arrays(static_cast<std::size_t>(count), nullptr);
+    for (jint i = 0; i < count; ++i) {
+        auto* output = static_cast<jdoubleArray>(env->GetObjectArrayElement(out, i));
+        if (!output || static_cast<jlong>(env->GetArrayLength(output)) < required) {
+            if (output) env->DeleteLocalRef(output);
+            for (jint j = 0; j < i; ++j) env->DeleteLocalRef(output_arrays[static_cast<std::size_t>(j)]);
+            lattice::jni::throw_illegal_arg(env, "lattice density: shared root batch output too small");
+            return;
+        }
+        output_arrays[static_cast<std::size_t>(i)] = output;
+    }
+
+    jint* root_data = env->GetIntArrayElements(roots, nullptr);
+    if (!root_data) {
+        for (auto* output : output_arrays) env->DeleteLocalRef(output);
+        return;
+    }
+    std::vector<jdouble*> output_data(static_cast<std::size_t>(count), nullptr);
+    for (jint i = 0; i < count; ++i) {
+        const jint root = root_data[i];
+        if (root < 0 || static_cast<std::size_t>(root) >= arena->nodes.size()) {
+            for (jint j = 0; j < i; ++j) {
+                env->ReleaseDoubleArrayElements(output_arrays[static_cast<std::size_t>(j)],
+                                                output_data[static_cast<std::size_t>(j)], 0);
+            }
+            env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
+            for (auto* output : output_arrays) env->DeleteLocalRef(output);
+            lattice::jni::throw_illegal_arg(env, "lattice density: invalid shared root batch node");
+            return;
+        }
+        output_data[static_cast<std::size_t>(i)] =
+                env->GetDoubleArrayElements(output_arrays[static_cast<std::size_t>(i)], nullptr);
+        if (!output_data[static_cast<std::size_t>(i)]) {
+            for (jint j = 0; j < i; ++j) {
+                env->ReleaseDoubleArrayElements(output_arrays[static_cast<std::size_t>(j)],
+                                                output_data[static_cast<std::size_t>(j)], 0);
+            }
+            env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
+            for (auto* output : output_arrays) env->DeleteLocalRef(output);
+            return;
+        }
+    }
+
+    for (jint z_row = 0; z_row < zRows; ++z_row) {
+        cache->clear();
+        const double z = static_cast<double>(z0) + static_cast<double>(z_row * cellWidth);
+        const int cell_z = static_cast<int>(firstCellZ + z_row);
+        const std::size_t offset = static_cast<std::size_t>(z_row) * static_cast<std::size_t>(yRows);
+        for (jint i = 0; i < count; ++i) {
+            df::evaluate_y_column(*arena, static_cast<df::NodeRef>(root_data[i]),
+                                  static_cast<double>(x), static_cast<double>(y0), z,
+                                  static_cast<double>(dy), static_cast<int>(cellX), cell_z,
+                                  static_cast<int>(yRows), cache,
+                                  reinterpret_cast<double*>(output_data[static_cast<std::size_t>(i)]) + offset);
+        }
+    }
+
+    for (jint i = 0; i < count; ++i) {
+        env->ReleaseDoubleArrayElements(output_arrays[static_cast<std::size_t>(i)],
+                                        output_data[static_cast<std::size_t>(i)], 0);
+    }
+    env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
+    for (auto* output : output_arrays) env->DeleteLocalRef(output);
+}
+
+struct CellColumnCoordinates {
+    static constexpr std::size_t kInlineCapacity = 32;
+
+    std::array<double, kInlineCapacity> inline_horizontal_fraction{};
+    std::array<double, kInlineCapacity> inline_vertical_fraction{};
+    std::array<double, kInlineCapacity> inline_x{};
+    std::array<double, kInlineCapacity> inline_offset{};
+    std::vector<double> overflow_horizontal_fraction;
+    std::vector<double> overflow_vertical_fraction;
+    std::vector<double> overflow_x;
+    std::vector<double> overflow_offset;
+    double* horizontal_fraction = inline_horizontal_fraction.data();
+    double* vertical_fraction = inline_vertical_fraction.data();
+    double* x = inline_x.data();
+    double* offset = inline_offset.data();
+
+    CellColumnCoordinates(int cell_width, int cell_height, double x0)
+    {
+        const std::size_t width = static_cast<std::size_t>(cell_width);
+        const std::size_t height = static_cast<std::size_t>(cell_height);
+        const std::size_t maximum = std::max(width, height);
+        if (maximum > kInlineCapacity) {
+            overflow_horizontal_fraction.resize(width);
+            overflow_vertical_fraction.resize(height);
+            overflow_x.resize(width);
+            overflow_offset.resize(maximum);
+            horizontal_fraction = overflow_horizontal_fraction.data();
+            vertical_fraction = overflow_vertical_fraction.data();
+            x = overflow_x.data();
+            offset = overflow_offset.data();
+        }
+        for (int i = 0; i < cell_width; ++i) {
+            const std::size_t index = static_cast<std::size_t>(i);
+            const double value = static_cast<double>(i);
+            horizontal_fraction[index] = value / static_cast<double>(cell_width);
+            x[index] = x0 + value;
+            offset[index] = value;
+        }
+        for (int i = 0; i < cell_height; ++i) {
+            const std::size_t index = static_cast<std::size_t>(i);
+            vertical_fraction[index] = static_cast<double>(cell_height - 1 - i)
+                                     / static_cast<double>(cell_height);
+            offset[index] = static_cast<double>(i);
+        }
+    }
+};
+
+bool fill_interpolated_root_column(df::NodeArena& arena,
+                                   df::CacheState& cache,
+                                   int cell_width,
+                                   int cell_height,
+                                   int cell_count_xz,
+                                   int cell_count_y,
+                                   const CellColumnCoordinates& coordinates,
+                                   double* dst) noexcept {
+    if (arena.root < 0 || static_cast<std::size_t>(arena.root) >= arena.nodes.size()) return false;
+    const df::Node& root = arena.nodes[static_cast<std::size_t>(arena.root)];
+    if (root.kind != df::NodeKind::kInterpolated || root.cache_slot_id < 0
+        || static_cast<std::size_t>(root.cache_slot_id) >= cache.interpolators.size()) return false;
+
+    const std::size_t cell_value_count = static_cast<std::size_t>(cell_width)
+                                       * static_cast<std::size_t>(cell_height)
+                                       * static_cast<std::size_t>(cell_width);
+    for (int lz = 0; lz < cell_count_xz; ++lz) {
+        for (int ly = 0; ly < cell_count_y; ++ly) {
+            df::on_sampled_cell_corners(cache, ly, lz);
+            const auto& it = cache.interpolators[static_cast<std::size_t>(root.cache_slot_id)];
+            std::size_t index = (static_cast<std::size_t>(lz) * static_cast<std::size_t>(cell_count_y)
+                               + static_cast<std::size_t>(ly)) * cell_value_count;
+            for (int iy = 0; iy < cell_height; ++iy) {
+                const double fy = coordinates.vertical_fraction[static_cast<std::size_t>(iy)];
+                const double x0z0 = it.x0y0z0 + fy * (it.x0y1z0 - it.x0y0z0);
+                const double x1z0 = it.x1y0z0 + fy * (it.x1y1z0 - it.x1y0z0);
+                const double x0z1 = it.x0y0z1 + fy * (it.x0y1z1 - it.x0y0z1);
+                const double x1z1 = it.x1y0z1 + fy * (it.x1y1z1 - it.x1y0z1);
+                for (int ix = 0; ix < cell_width; ++ix) {
+                    const double fx = coordinates.horizontal_fraction[static_cast<std::size_t>(ix)];
+                    const double z0 = x0z0 + fx * (x1z0 - x0z0);
+                    const double z1 = x0z1 + fx * (x1z1 - x0z1);
+                    for (int iz = 0; iz < cell_width; ++iz) {
+                        const double fz = coordinates.horizontal_fraction[static_cast<std::size_t>(iz)];
+                        dst[index++] = z0 + fz * (z1 - z0);
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumnsFlat(
+        JNIEnv* env, jclass /*cls*/,
+        jlongArray handles, jlongArray cacheHandles, jint count,
+        jdouble x, jdouble y0, jdouble z, jdouble dy,
+        jint cellX, jint cellZ,
+        jint ny,
+        jobjectArray out,
+        jint outputOffset) {
+    if (!handles || !cacheHandles || !out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null flat batch arrays");
+        return;
+    }
+    if (count <= 0 || ny <= 0) return;
+    if (outputOffset < 0) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: negative flat output offset");
+        return;
+    }
+
+    const jsize handle_count = env->GetArrayLength(handles);
+    const jsize cache_count = env->GetArrayLength(cacheHandles);
+    const jsize out_count = env->GetArrayLength(out);
+    if (handle_count < count || cache_count < count || out_count < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: flat batch arrays too small");
+        return;
+    }
+
+    jlong* handle_data = env->GetLongArrayElements(handles, nullptr);
+    if (!handle_data) return;
+    jlong* cache_data = env->GetLongArrayElements(cacheHandles, nullptr);
+    if (!cache_data) {
+        env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
+        return;
+    }
+
+    const jlong required = static_cast<jlong>(outputOffset) + static_cast<jlong>(ny);
+    for (jint i = 0; i < count; ++i) {
+        auto* a = arena_from(handle_data[i]);
+        if (!a) {
+            lattice::jni::throw_illegal_state(env, "lattice density: null arena in flat batch");
+            break;
+        }
+        auto* out_row = static_cast<jdoubleArray>(env->GetObjectArrayElement(out, i));
+        if (!out_row) {
+            lattice::jni::throw_illegal_arg(env, "lattice density: null flat batch output row");
+            break;
+        }
+        bool valid = false;
+        {
+            lattice::jni::CriticalDoubleArray buffer{env, out_row};
+            if (!buffer) {
+                lattice::jni::throw_illegal_state(env, "lattice density: flat batch output lock failed");
+            } else if (static_cast<jlong>(buffer.size()) < required) {
+                lattice::jni::throw_illegal_arg(env, "lattice density: flat batch output row too small");
+            } else {
+                auto* cache = reinterpret_cast<df::CacheState*>(cache_data[i]);
+                if (cache) cache->clear();
+                df::evaluate_y_column(*a, a->root,
+                                      static_cast<double>(x),
+                                      static_cast<double>(y0),
+                                      static_cast<double>(z),
+                                      static_cast<double>(dy),
+                                      static_cast<int>(cellX),
+                                      static_cast<int>(cellZ),
+                                      static_cast<int>(ny),
+                                      cache,
+                                      reinterpret_cast<double*>(buffer.data()) + outputOffset);
+                valid = true;
+            }
+        }
+        env->DeleteLocalRef(out_row);
+        if (!valid) break;
     }
 
     env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
@@ -1369,6 +1828,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
         jint cellX, jint firstCellZ,
         jint cellWidth, jint cellHeight,
         jint cellCountXZ, jint cellCountY,
+        jboolean clearPerCell,
         jobjectArray cacheAllInCellValues,
         jdoubleArray out) {
     auto* a = arena_from(handle);
@@ -1389,6 +1849,9 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
     const long long required = static_cast<long long>(cellCountXZ)
                              * static_cast<long long>(cellCountY)
                              * cell_value_count;
+    const CellColumnCoordinates coordinates(static_cast<int>(cellWidth),
+                                            static_cast<int>(cellHeight),
+                                            static_cast<double>(x0));
     auto pinned_cache_arrays = cacheAllInCellValues
         ? bind_cache_all_in_cell_arrays(env, *cache, cacheAllInCellValues)
         : bind_bound_cache_all_in_cell_arrays(env, *cache);
@@ -1412,30 +1875,47 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
     ctx.cellHeight = static_cast<int>(cellHeight);
 
     double* dst = reinterpret_cast<double*>(buf.data());
+    if (fill_interpolated_root_column(*a, *cache,
+                                      static_cast<int>(cellWidth),
+                                      static_cast<int>(cellHeight),
+                                      static_cast<int>(cellCountXZ),
+                                      static_cast<int>(cellCountY),
+                                      coordinates, dst)) {
+        unbind_cache_all_in_cell_arrays(*cache);
+        return;
+    }
     for (int lz = 0; lz < cellCountXZ; ++lz) {
         ctx.cellZ = static_cast<int>(firstCellZ + lz);
         const double cell_z0 = z0 + static_cast<double>(lz * cellWidth);
         for (int ly = 0; ly < cellCountY; ++ly) {
+            if (clearPerCell == JNI_TRUE) cache->clear_evaluation_caches();
             df::start_interpolation(*cache);
             df::on_sampled_cell_corners(*cache, ly, lz);
             const double y_top = yMin + static_cast<double>(ly * cellHeight + cellHeight - 1);
             const std::size_t base = (static_cast<std::size_t>(lz) * static_cast<std::size_t>(cellCountY)
                                    + static_cast<std::size_t>(ly))
                                   * static_cast<std::size_t>(cell_value_count);
+            if (cacheAllInCellValues) {
+                for (std::size_t slot = 0; slot < cache->cache_all_in_cell_array_offsets.size(); ++slot) {
+                    if (cache->cache_all_in_cell_arrays[slot]) {
+                        cache->cache_all_in_cell_array_offsets[slot] = base;
+                    }
+                }
+            }
             std::size_t index = base;
             for (int iy = 0; iy < cellHeight; ++iy) {
                 const int in_cell_y = cellHeight - 1 - iy;
                 ctx.inCellY = in_cell_y;
-                ctx.y = y_top - static_cast<double>(iy);
-                df::interpolate_y(*cache, static_cast<double>(in_cell_y) / static_cast<double>(cellHeight));
+                ctx.y = y_top - coordinates.offset[static_cast<std::size_t>(iy)];
+                df::interpolate_y(*cache, coordinates.vertical_fraction[static_cast<std::size_t>(iy)]);
                 for (int ix = 0; ix < cellWidth; ++ix) {
                     ctx.inCellX = ix;
-                    ctx.x = x0 + static_cast<double>(ix);
-                    df::interpolate_x(*cache, static_cast<double>(ix) / static_cast<double>(cellWidth));
+                    ctx.x = coordinates.x[static_cast<std::size_t>(ix)];
+                    df::interpolate_x(*cache, coordinates.horizontal_fraction[static_cast<std::size_t>(ix)]);
                     for (int iz = 0; iz < cellWidth; ++iz) {
                         ctx.inCellZ = iz;
-                        ctx.z = cell_z0 + static_cast<double>(iz);
-                        df::interpolate_z(*cache, static_cast<double>(iz) / static_cast<double>(cellWidth));
+                        ctx.z = cell_z0 + coordinates.offset[static_cast<std::size_t>(iz)];
+                        df::interpolate_z(*cache, coordinates.horizontal_fraction[static_cast<std::size_t>(iz)]);
                         dst[index++] = df::evaluate(*a, a->root, ctx);
                     }
                 }
@@ -1482,6 +1962,9 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
     const long long required = static_cast<long long>(cellCountXZ)
                              * static_cast<long long>(cellCountY)
                              * cell_value_count;
+    const CellColumnCoordinates coordinates(static_cast<int>(cellWidth),
+                                            static_cast<int>(cellHeight),
+                                            static_cast<double>(x0));
 
     for (jsize i = 0; i < count; ++i) {
         auto* a = arena_from(handle_data[i]);
@@ -1530,6 +2013,15 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
         ctx.cellHeight = static_cast<int>(cellHeight);
 
         double* dst = reinterpret_cast<double*>(buf.data());
+        if (fill_interpolated_root_column(*a, *cache,
+                                          static_cast<int>(cellWidth),
+                                          static_cast<int>(cellHeight),
+                                          static_cast<int>(cellCountXZ),
+                                          static_cast<int>(cellCountY),
+                                          coordinates, dst)) {
+            unbind_cache_all_in_cell_arrays(*cache);
+            continue;
+        }
         for (int lz = 0; lz < cellCountXZ; ++lz) {
             ctx.cellZ = static_cast<int>(firstCellZ + lz);
             const double cell_z0 = z0 + static_cast<double>(lz * cellWidth);
@@ -1544,16 +2036,16 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
                 for (int iy = 0; iy < cellHeight; ++iy) {
                     const int in_cell_y = cellHeight - 1 - iy;
                     ctx.inCellY = in_cell_y;
-                    ctx.y = y_top - static_cast<double>(iy);
-                    df::interpolate_y(*cache, static_cast<double>(in_cell_y) / static_cast<double>(cellHeight));
+                    ctx.y = y_top - coordinates.offset[static_cast<std::size_t>(iy)];
+                    df::interpolate_y(*cache, coordinates.vertical_fraction[static_cast<std::size_t>(iy)]);
                     for (int ix = 0; ix < cellWidth; ++ix) {
                         ctx.inCellX = ix;
-                        ctx.x = x0 + static_cast<double>(ix);
-                        df::interpolate_x(*cache, static_cast<double>(ix) / static_cast<double>(cellWidth));
+                        ctx.x = coordinates.x[static_cast<std::size_t>(ix)];
+                        df::interpolate_x(*cache, coordinates.horizontal_fraction[static_cast<std::size_t>(ix)]);
                         for (int iz = 0; iz < cellWidth; ++iz) {
                             ctx.inCellZ = iz;
-                            ctx.z = cell_z0 + static_cast<double>(iz);
-                            df::interpolate_z(*cache, static_cast<double>(iz) / static_cast<double>(cellWidth));
+                            ctx.z = cell_z0 + coordinates.offset[static_cast<std::size_t>(iz)];
+                            df::interpolate_z(*cache, coordinates.horizontal_fraction[static_cast<std::size_t>(iz)]);
                             dst[index++] = df::evaluate(*a, a->root, ctx);
                         }
                     }

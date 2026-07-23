@@ -357,8 +357,8 @@ Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluate(
     return result;
 }
 
-JNIEXPORT jintArray JNICALL
-Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluateBatch(
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluateBatchInto(
         JNIEnv* env, jclass /*cls*/,
         jlong handle,
         jint count,
@@ -367,18 +367,20 @@ Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluateBatch(
         jdouble surfaceSecondaryNoise,
         jdoubleArray jNamedNoiseArr,
         jbyteArray jColumnBools,
-        jintArray jBlockData) {
+        jintArray jBlockData,
+        jintArray jOutput) {
     auto* a = arena_from(handle);
-    if (!a) return nullptr;
-    if (count <= 0) return env->NewIntArray(0);
-    if (!jColumnCtx || !jColumnBools || !jBlockData) return nullptr;
-    if (env->GetArrayLength(jColumnCtx) < 6 || env->GetArrayLength(jColumnBools) < 2 || env->GetArrayLength(jBlockData) < count * 5) {
-        return nullptr;
+    if (!a || count <= 0) return;
+    if (!jColumnCtx || !jColumnBools || !jBlockData || !jOutput) return;
+    if (env->GetArrayLength(jColumnCtx) < 6 || env->GetArrayLength(jColumnBools) < 2
+            || env->GetArrayLength(jBlockData) < count * 5 || env->GetArrayLength(jOutput) < count) {
+        return;
     }
 
     jint* columnCtx = env->GetIntArrayElements(jColumnCtx, nullptr);
     jbyte* columnBools = env->GetByteArrayElements(jColumnBools, nullptr);
     jint* blockData = env->GetIntArrayElements(jBlockData, nullptr);
+    jint* output = env->GetIntArrayElements(jOutput, nullptr);
     jdouble* namedNoise = nullptr;
     jsize namedNoiseLen = 0;
     if (jNamedNoiseArr) {
@@ -387,24 +389,14 @@ Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluateBatch(
             namedNoise = env->GetDoubleArrayElements(jNamedNoiseArr, nullptr);
         }
     }
-    if (!columnCtx || !columnBools || !blockData) {
+    if (!columnCtx || !columnBools || !blockData || !output) {
         if (namedNoise) env->ReleaseDoubleArrayElements(jNamedNoiseArr, namedNoise, JNI_ABORT);
+        if (output) env->ReleaseIntArrayElements(jOutput, output, 0);
         if (blockData) env->ReleaseIntArrayElements(jBlockData, blockData, JNI_ABORT);
         if (columnBools) env->ReleaseByteArrayElements(jColumnBools, columnBools, JNI_ABORT);
         if (columnCtx) env->ReleaseIntArrayElements(jColumnCtx, columnCtx, JNI_ABORT);
-        return nullptr;
+        return;
     }
-
-    jintArray result = env->NewIntArray(count);
-    if (!result) {
-        if (namedNoise) env->ReleaseDoubleArrayElements(jNamedNoiseArr, namedNoise, JNI_ABORT);
-        env->ReleaseIntArrayElements(jBlockData, blockData, JNI_ABORT);
-        env->ReleaseByteArrayElements(jColumnBools, columnBools, JNI_ABORT);
-        env->ReleaseIntArrayElements(jColumnCtx, columnCtx, JNI_ABORT);
-        return nullptr;
-    }
-
-    std::vector<jint> out(static_cast<std::size_t>(count));
 
     mr::SampleContext ctx{};
     ctx.x = columnCtx[0];
@@ -429,15 +421,14 @@ Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeEvaluateBatch(
         ctx.stone_depth_floor = blockData[off + 2];
         ctx.stone_depth_ceiling = blockData[off + 3];
         ctx.temperature = blockData[off + 4] != 0 ? 0.0 : 1.0;
-        out[static_cast<std::size_t>(i)] = mr::evaluate(*a, ctx);
+        output[i] = mr::evaluate(*a, ctx);
     }
 
-    env->SetIntArrayRegion(result, 0, count, out.data());
     if (namedNoise) env->ReleaseDoubleArrayElements(jNamedNoiseArr, namedNoise, JNI_ABORT);
+    env->ReleaseIntArrayElements(jOutput, output, 0);
     env->ReleaseIntArrayElements(jBlockData, blockData, JNI_ABORT);
     env->ReleaseByteArrayElements(jColumnBools, columnBools, JNI_ABORT);
     env->ReleaseIntArrayElements(jColumnCtx, columnCtx, JNI_ABORT);
-    return result;
 }
 
 } // extern "C"

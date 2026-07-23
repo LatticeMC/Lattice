@@ -213,6 +213,7 @@ struct Node {
     // -1 = no slot (treat as passthrough). Each cache node gets its own
     // slot, so two separate Cache2D nodes have independent caches.
     int cache_slot_id = -1;
+    bool shared_batch_leaf = false;
 };
 
 /// Owning container for a tree of `Node`s. Construction is bottom-up
@@ -227,6 +228,7 @@ struct NodeArena {
     int num_cache_once_slots       = 0;
     int num_cache_all_in_cell_slots = 0;
     int num_flat_cache_slots       = 0;
+    int num_shared_leaf_slots      = 0;
     /// Counter for kInterpolated nodes. Each interpolator gets a slot
     /// id which the per-chunk InterpolationState array indexes by.
     /// Mirrors Mojang's `ChunkNoiseSampler.interpolators` list.
@@ -253,6 +255,14 @@ struct NodeArena {
             case NodeKind::kCacheOnce:      n.cache_slot_id = num_cache_once_slots++;      break;
             case NodeKind::kCacheAllInCell: n.cache_slot_id = num_cache_all_in_cell_slots++; break;
             case NodeKind::kFlatCache:      n.cache_slot_id = num_flat_cache_slots++;      break;
+            case NodeKind::kNoise:
+            case NodeKind::kShift:
+            case NodeKind::kShiftA:
+            case NodeKind::kShiftB:
+            case NodeKind::kShiftedNoise:
+            case NodeKind::kInterpolatedNoise:
+                n.cache_slot_id = num_shared_leaf_slots++;
+                break;
             case NodeKind::kInterpolated:
                 n.cache_slot_id = num_interpolator_slots++;
                 interpolator_inputs.push_back(n.a);
@@ -312,22 +322,38 @@ struct FlatCacheEntry {
 };
 
 struct CacheAllInCellEntry {
-    bool         valid = false;
+    std::uint32_t generation = 0;
     std::uint64_t key = 0;
     double       value = 0.0;
+};
+
+struct SharedLeafColumnEntry {
+    bool valid = false;
+    double x = 0.0;
+    double y0 = 0.0;
+    double z = 0.0;
+    double dy = 0.0;
+    int cellX = 0;
+    int cellZ = 0;
+    int ny = 0;
+    std::vector<double> values;
 };
 
 struct CacheAllInCellMap {
     std::vector<CacheAllInCellEntry> entries;
     std::size_t used = 0;
+    std::uint32_t generation = 1;
 
     [[nodiscard]] static std::uint64_t hash_key(std::uint64_t key) noexcept {
         return key * 11400714819323198485ull;
     }
 
     void clear() noexcept {
-        for (auto& e : entries) e.valid = false;
         used = 0;
+        if (++generation == 0) {
+            for (auto& e : entries) e.generation = 0;
+            generation = 1;
+        }
     }
 
     void ensure_capacity(std::size_t expected_entries) {
@@ -337,6 +363,7 @@ struct CacheAllInCellMap {
         if (cap == 0) cap = 1;
         if (entries.size() < cap) {
             entries.assign(cap, {});
+            used = 0;
         } else {
             clear();
         }
@@ -348,7 +375,7 @@ struct CacheAllInCellMap {
         std::size_t pos = static_cast<std::size_t>(hash_key(key)) & mask;
         while (true) {
             auto& e = entries[pos];
-            if (!e.valid) return nullptr;
+            if (e.generation != generation) return nullptr;
             if (e.key == key) return &e.value;
             pos = (pos + 1u) & mask;
         }
@@ -363,8 +390,8 @@ struct CacheAllInCellMap {
         std::size_t pos = static_cast<std::size_t>(hash_key(key)) & mask;
         while (true) {
             auto& e = entries[pos];
-            if (!e.valid) {
-                e.valid = true;
+            if (e.generation != generation) {
+                e.generation = generation;
                 e.key = key;
                 e.value = 0.0;
                 ++used;
@@ -384,7 +411,7 @@ private:
         entries.assign(cap, {});
         used = 0;
         for (const auto& e : old) {
-            if (!e.valid) continue;
+            if (e.generation != generation) continue;
             double& slot = get_or_insert(e.key);
             slot = e.value;
         }
@@ -454,11 +481,13 @@ struct CacheState {
     std::vector<Cache2DEntry>   cache_2d;
     std::vector<CacheOnceEntry> cache_once;
     std::vector<FlatCacheEntry> flat_cache;
+    std::vector<SharedLeafColumnEntry> shared_leaf_columns;
     // CacheAllInCell uses a per-slot flat open-addressing map keyed by a
     // packed (cellX, cellZ, y) triple.
     std::vector<CacheAllInCellMap> cache_all_in_cell;
     std::vector<const double*> cache_all_in_cell_arrays;
     std::vector<std::size_t> cache_all_in_cell_array_lengths;
+    std::vector<std::size_t> cache_all_in_cell_array_offsets;
 
     /// Per-slot Interpolator state (one entry per kInterpolated node).
     std::vector<InterpolatorState> interpolators;
@@ -491,9 +520,11 @@ struct CacheState {
         cache_2d.resize(arena.num_cache_2d_slots);
         cache_once.resize(arena.num_cache_once_slots);
         flat_cache.resize(arena.num_flat_cache_slots);
+        shared_leaf_columns.resize(arena.num_shared_leaf_slots);
         cache_all_in_cell.resize(arena.num_cache_all_in_cell_slots);
         cache_all_in_cell_arrays.resize(arena.num_cache_all_in_cell_slots, nullptr);
         cache_all_in_cell_array_lengths.resize(arena.num_cache_all_in_cell_slots, 0);
+        cache_all_in_cell_array_offsets.resize(arena.num_cache_all_in_cell_slots, 0);
         interpolators.resize(arena.num_interpolator_slots);
     }
 
@@ -512,18 +543,24 @@ struct CacheState {
     }
 
     /// Invalidate every entry. Call when moving from one chunk to the next.
-    void clear() noexcept {
+    void clear_evaluation_caches() noexcept {
         for (auto& e : cache_2d)        e.valid = false;
         for (auto& e : cache_once)      e.valid = false;
         for (auto& e : flat_cache)      e.valid = false;
+        for (auto& e : shared_leaf_columns) e.valid = false;
         for (auto& m : cache_all_in_cell) m.clear();
+        scratch_column_depth = 0;
+    }
+
+    void clear() noexcept {
+        clear_evaluation_caches();
         for (auto& p : cache_all_in_cell_arrays) p = nullptr;
         for (auto& n : cache_all_in_cell_array_lengths) n = 0;
+        for (auto& n : cache_all_in_cell_array_offsets) n = 0;
         scratch_x.clear();
         scratch_y.clear();
         scratch_z.clear();
         scratch_value.clear();
-        scratch_column_depth = 0;
         // Interpolator buffers retain their allocation; only the
         // logical loop state is reset.
         is_in_interpolation_loop = false;
@@ -593,12 +630,33 @@ void evaluate_grid(const NodeArena& arena, NodeRef root,
                    CacheState* cache,
                    double* out) noexcept;
 
+/// Evaluate multiple roots from one arena into a root-major flat buffer.
+/// Each root occupies nx*ny*nz values laid out as [x][z][y].
+void evaluate_grid_roots(const NodeArena& arena,
+                         const NodeRef* roots,
+                         int root_count,
+                         double x0, double y0, double z0,
+                         double dx, double dy, double dz,
+                         int cellX0, int cellZ0,
+                         int nx, int ny, int nz,
+                         CacheState* cache,
+                         double* out) noexcept;
+
 void evaluate_y_column(const NodeArena& arena, NodeRef root,
                        double x, double y0, double z, double dy,
                        int cellX, int cellZ,
                        int ny,
                        CacheState* cache,
                        double* out) noexcept;
+
+/// Scalar/portable column fallback used after a SIMD evaluator has already
+/// rejected a subtree. This avoids probing the same SIMD path twice.
+void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
+                                double x, double y0, double z, double dy,
+                                int cellX, int cellZ,
+                                int ny,
+                                CacheState* cache,
+                                double* out) noexcept;
 
 bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                             double x, double y0, double z, double dy,

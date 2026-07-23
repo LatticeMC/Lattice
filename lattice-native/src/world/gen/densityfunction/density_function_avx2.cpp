@@ -93,8 +93,41 @@ inline bool evaluate_child_column(const NodeArena& arena, NodeRef child,
                                   int cellX, int cellZ, int ny,
                                   CacheState* cache, double* out) noexcept {
     if (evaluate_y_column_avx2(arena, child, x, y0, z, dy, cellX, cellZ, ny, cache, out)) return true;
-    evaluate_y_column(arena, child, x, y0, z, dy, cellX, cellZ, ny, cache, out);
+    evaluate_y_column_fallback(arena, child, x, y0, z, dy, cellX, cellZ, ny, cache, out);
     return true;
+}
+
+inline SharedLeafColumnEntry* shared_leaf_entry(const Node& node, CacheState* cache) noexcept {
+    if (!node.shared_batch_leaf || !cache || node.cache_slot_id < 0
+        || static_cast<std::size_t>(node.cache_slot_id) >= cache->shared_leaf_columns.size()) return nullptr;
+    return &cache->shared_leaf_columns[static_cast<std::size_t>(node.cache_slot_id)];
+}
+
+inline bool load_shared_leaf(const Node& node, CacheState* cache,
+                             double x, double y0, double z, double dy,
+                             int cellX, int cellZ, int ny, double* out) noexcept {
+    auto* entry = shared_leaf_entry(node, cache);
+    if (!entry || !entry->valid || entry->x != x || entry->y0 != y0 || entry->z != z
+        || entry->dy != dy || entry->cellX != cellX || entry->cellZ != cellZ
+        || entry->ny != ny || entry->values.size() < static_cast<std::size_t>(ny)) return false;
+    std::copy_n(entry->values.data(), ny, out);
+    return true;
+}
+
+inline void store_shared_leaf(const Node& node, CacheState* cache,
+                              double x, double y0, double z, double dy,
+                              int cellX, int cellZ, int ny, const double* values) {
+    auto* entry = shared_leaf_entry(node, cache);
+    if (!entry) return;
+    entry->x = x;
+    entry->y0 = y0;
+    entry->z = z;
+    entry->dy = dy;
+    entry->cellX = cellX;
+    entry->cellZ = cellZ;
+    entry->ny = ny;
+    entry->values.assign(values, values + ny);
+    entry->valid = true;
 }
 
 struct ColumnScratchLease {
@@ -186,9 +219,11 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
             return true;
         }
 
-        case NodeKind::kNoise:
+        case NodeKind::kNoise: {
+            if (load_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out)) return true;
             if (!n.noise_ptr) {
                 fill_column(0.0, ny, out);
+                store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
                 return true;
             }
             noise::sample_y_column(*n.noise_ptr,
@@ -198,21 +233,27 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                                    dy * n.d1,
                                    static_cast<std::size_t>(ny),
                                    out);
+            store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
             return true;
+        }
 
         case NodeKind::kShiftA:
         case NodeKind::kShiftB: {
+            if (load_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out)) return true;
             const double value = !n.noise_ptr ? 0.0
                 : (n.kind == NodeKind::kShiftA
                     ? noise::sample(*n.noise_ptr, x * 0.25, 0.0, z * 0.25) * 4.0
                     : noise::sample(*n.noise_ptr, z * 0.25, x * 0.25, 0.0) * 4.0);
             fill_column(value, ny, out);
+            store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
             return true;
         }
 
-        case NodeKind::kShift:
+        case NodeKind::kShift: {
+            if (load_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out)) return true;
             if (!n.noise_ptr) {
                 fill_column(0.0, ny, out);
+                store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
                 return true;
             }
             noise::sample_y_column(*n.noise_ptr,
@@ -230,11 +271,15 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                 }
                 for (; i < ny; ++i) out[i] *= 4.0;
             }
+            store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
             return true;
+        }
 
         case NodeKind::kShiftedNoise: {
+            if (load_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out)) return true;
             if (!n.noise_ptr) {
                 fill_column(0.0, ny, out);
+                store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
                 return true;
             }
             ColumnScratchLease sx(cache, ny);
@@ -277,6 +322,7 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                 zs[idx] = z * n.d0 + sz.data()[idx];
             }
             noise::sample_batch(*n.noise_ptr, xs.data(), ys.data(), zs.data(), count, out);
+            store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
             return true;
         }
 
@@ -523,8 +569,10 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
         }
 
         case NodeKind::kInterpolatedNoise: {
+            if (load_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out)) return true;
             if (!n.interp_noise_ptr) {
                 fill_column(0.0, ny, out);
+                store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
                 return true;
             }
             noise::sample_y_column(*n.interp_noise_ptr,
@@ -534,6 +582,7 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                                    dy,
                                    static_cast<std::size_t>(ny),
                                    out);
+            store_shared_leaf(n, cache, x, y0, z, dy, cellX, cellZ, ny, out);
             return true;
         }
 

@@ -31,8 +31,7 @@ struct OctaveBatchScratch {
         tmp.resize(count);
     }
 
-    void resize_y_tmp(std::size_t count) {
-        y.resize(count);
+    void resize_tmp(std::size_t count) {
         tmp.resize(count);
     }
 };
@@ -209,31 +208,40 @@ void sample_y_column_scalar(const OctavePerlinNoiseSampler& s,
                             double x, double y0, double z, double dy,
                             std::size_t count, double* out) noexcept {
     if (!out) return;
-    std::fill(out, out + count, 0.0);
-    if (count == 0 || s.octave_count == 0 || !s.octaves || !s.amplitudes) return;
+    if (count == 0) return;
+    if (s.octave_count == 0 || !s.octaves || !s.amplitudes) {
+        std::fill(out, out + count, 0.0);
+        return;
+    }
 
     OctaveBatchScratch& scratch = g_octave_batch_scratch;
-    scratch.resize_y_tmp(count);
+    scratch.resize_tmp(count);
     double freq = s.lacunarity;
     double amp = s.persistence;
+    bool initialized = false;
     for (std::size_t octave = 0; octave < s.octave_count; ++octave) {
         const double amplitude = s.amplitudes[octave];
         if (amplitude != 0.0) {
-            for (std::size_t i = 0; i < count; ++i) {
-                scratch.y[i] = maintain_precision((y0 + static_cast<double>(i) * dy) * freq);
-            }
-            sample_y_array(s.octaves[octave],
-                           maintain_precision(x * freq),
-                           scratch.y.data(),
-                           maintain_precision(z * freq),
-                           count,
-                           scratch.tmp.data());
+            double* octave_out = initialized ? scratch.tmp.data() : out;
+            sample_y_column(s.octaves[octave],
+                            maintain_precision(x * freq),
+                            maintain_precision(y0 * freq),
+                            maintain_precision(z * freq),
+                            dy * freq,
+                            count,
+                            octave_out);
             const double scale = amplitude * amp;
-            for (std::size_t i = 0; i < count; ++i) out[i] += scale * scratch.tmp[i];
+            if (initialized) {
+                for (std::size_t i = 0; i < count; ++i) out[i] += scale * octave_out[i];
+            } else {
+                for (std::size_t i = 0; i < count; ++i) out[i] *= scale;
+                initialized = true;
+            }
         }
         freq *= 2.0;
         amp *= 0.5;
     }
+    if (!initialized) std::fill(out, out + count, 0.0);
 }
 
 void sample_y_column(const OctavePerlinNoiseSampler& s,

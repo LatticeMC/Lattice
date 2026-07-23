@@ -669,6 +669,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             if (slot_id < static_cast<int>(ctx.cache->cache_all_in_cell_arrays.size())) {
                 const double* values = ctx.cache->cache_all_in_cell_arrays[static_cast<std::size_t>(slot_id)];
                 const std::size_t length = ctx.cache->cache_all_in_cell_array_lengths[static_cast<std::size_t>(slot_id)];
+                const std::size_t offset = ctx.cache->cache_all_in_cell_array_offsets[static_cast<std::size_t>(slot_id)];
                 if (values && ctx.inCellX >= 0 && ctx.inCellY >= 0 && ctx.inCellZ >= 0
                     && ctx.inCellX < ctx.cellWidth && ctx.inCellY < ctx.cellHeight && ctx.inCellZ < ctx.cellWidth) {
                     const std::size_t index = (static_cast<std::size_t>(ctx.cellHeight - 1 - ctx.inCellY)
@@ -676,7 +677,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
                                              + static_cast<std::size_t>(ctx.inCellX))
                                             * static_cast<std::size_t>(ctx.cellWidth)
                                             + static_cast<std::size_t>(ctx.inCellZ);
-                    if (index < length) return values[index];
+                    if (offset <= length && index < length - offset) return values[offset + index];
                 }
             }
             if (n.a < 0) return 0.0;
@@ -904,6 +905,42 @@ void evaluate_grid(const NodeArena& arena, NodeRef root,
     }
 }
 
+void evaluate_grid_roots(const NodeArena& arena,
+                         const NodeRef* roots,
+                         int root_count,
+                         double x0, double y0, double z0,
+                         double dx, double dy, double dz,
+                         int cellX0, int cellZ0,
+                         int nx, int ny, int nz,
+                         CacheState* cache,
+                         double* out) noexcept {
+    if (!roots || !out || root_count <= 0 || nx <= 0 || ny <= 0 || nz <= 0) return;
+    const std::size_t root_stride = static_cast<std::size_t>(nx)
+                                  * static_cast<std::size_t>(ny)
+                                  * static_cast<std::size_t>(nz);
+    for (int ix = 0; ix < nx; ++ix) {
+        const double x = x0 + static_cast<double>(ix) * dx;
+        const int cell_x = cellX0 + ix;
+        for (int iz = 0; iz < nz; ++iz) {
+            const double z = z0 + static_cast<double>(iz) * dz;
+            const int cell_z = cellZ0 + iz;
+            if (cache) cache->clear_evaluation_caches();
+            const std::size_t column_offset = (static_cast<std::size_t>(ix) * static_cast<std::size_t>(nz)
+                                              + static_cast<std::size_t>(iz))
+                                            * static_cast<std::size_t>(ny);
+            for (int root_index = 0; root_index < root_count; ++root_index) {
+                double* column = out + static_cast<std::size_t>(root_index) * root_stride + column_offset;
+                const NodeRef root = roots[root_index];
+                if (root < 0 || static_cast<std::size_t>(root) >= arena.nodes.size()) {
+                    std::fill_n(column, ny, 0.0);
+                    continue;
+                }
+                evaluate_y_column(arena, root, x, y0, z, dy, cell_x, cell_z, ny, cache, column);
+            }
+        }
+    }
+}
+
 void evaluate_y_column(const NodeArena& arena, NodeRef root,
                        double x, double y0, double z, double dy,
                        int cellX, int cellZ,
@@ -916,18 +953,33 @@ void evaluate_y_column(const NodeArena& arena, NodeRef root,
         return;
     }
 
-    Context ctx{};
-    ctx.cache = cache;
-    ctx.x = x;
-    ctx.z = z;
-    ctx.cellX = cellX;
-    ctx.cellZ = cellZ;
 #if defined(LATTICE_HAS_DENSITY_AVX2)
     if (lattice::cpu::features().avx2
         && evaluate_y_column_avx2(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) {
         return;
     }
 #endif
+    evaluate_y_column_fallback(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out);
+}
+
+void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
+                                double x, double y0, double z, double dy,
+                                int cellX, int cellZ,
+                                int ny,
+                                CacheState* cache,
+                                double* out) noexcept {
+    if (!out || ny <= 0) return;
+    if (root < 0) {
+        for (int i = 0; i < ny; ++i) out[i] = 0.0;
+        return;
+    }
+
+    Context ctx{};
+    ctx.cache = cache;
+    ctx.x = x;
+    ctx.z = z;
+    ctx.cellX = cellX;
+    ctx.cellZ = cellZ;
     if (evaluate_y_column_fast(arena, root, ctx, y0, dy, ny, out)) return;
     for (int iy = 0; iy < ny; ++iy) {
         ctx.y = y0 + static_cast<double>(iy) * dy;

@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "lattice/dispatch.hpp"
@@ -367,6 +368,39 @@ TEST_CASE("density: CacheAllInCell stores and retrieves per key") {
     CHECK(cs.cache_all_in_cell[0].used == 2);
 }
 
+TEST_CASE("density: CacheAllInCell clear invalidates entries without releasing storage") {
+    CacheAllInCellMap map;
+    map.get_or_insert(17) = 4.0;
+    map.get_or_insert(29) = 8.0;
+    const auto* storage = map.entries.data();
+    const auto capacity = map.entries.size();
+
+    map.clear();
+
+    CHECK(map.used == 0);
+    CHECK(map.find(17) == nullptr);
+    CHECK(map.entries.data() == storage);
+    CHECK(map.entries.size() == capacity);
+    map.get_or_insert(17) = 12.0;
+    REQUIRE(map.find(17) != nullptr);
+    CHECK(*map.find(17) == 12.0);
+    CHECK(map.used == 1);
+}
+
+TEST_CASE("density: CacheAllInCell clear handles generation wrap") {
+    CacheAllInCellMap map;
+    map.get_or_insert(7) = 3.0;
+    map.generation = std::numeric_limits<std::uint32_t>::max();
+
+    map.clear();
+
+    CHECK(map.generation == 1);
+    CHECK(map.find(7) == nullptr);
+    map.get_or_insert(7) = 9.0;
+    REQUIRE(map.find(7) != nullptr);
+    CHECK(*map.find(7) == 9.0);
+}
+
 TEST_CASE("density: mul short-circuits when left side is zero") {
     NodeArena arena;
     Node left{}; left.kind = NodeKind::kConstant; left.d0 = 0.0;
@@ -600,6 +634,45 @@ TEST_CASE("density: evaluate_grid honours FlatCache within an iz step") {
     CHECK(out3[0] == 999.0);
 }
 
+TEST_CASE("density: evaluate_grid keeps cache wrapper keys coherent across the grid") {
+    NodeArena a;
+    Node gradient{};
+    gradient.kind = NodeKind::kYClampedGradient;
+    gradient.i0 = 0;
+    gradient.i1 = 100;
+    gradient.d0 = 0.0;
+    gradient.d1 = 100.0;
+    NodeRef root = a.push(gradient);
+
+    Node once{}; once.kind = NodeKind::kCacheOnce; once.a = root;
+    root = a.push(once);
+    Node cache2d{}; cache2d.kind = NodeKind::kCache2D; cache2d.a = root;
+    root = a.push(cache2d);
+    Node flat{}; flat.kind = NodeKind::kFlatCache; flat.a = root;
+    a.root = a.push(flat);
+
+    CacheState cs;
+    cs.resize_for(a);
+    constexpr int nx = 3, nz = 2;
+    double out[nx * nz];
+    evaluate_grid(a, a.root,
+                  40.0, 17.0, 80.0,
+                  4.0, 1.0, 4.0,
+                  10, 20, nx, 1, nz, &cs, out);
+
+    for (double value : out) CHECK(value == 17.0);
+    REQUIRE(cs.cache_once.size() == 1);
+    CHECK(cs.cache_once[0].x == 48.0);
+    CHECK(cs.cache_once[0].y == 17.0);
+    CHECK(cs.cache_once[0].z == 84.0);
+    REQUIRE(cs.cache_2d.size() == 1);
+    CHECK(cs.cache_2d[0].x == 48);
+    CHECK(cs.cache_2d[0].z == 84);
+    REQUIRE(cs.flat_cache.size() == 1);
+    CHECK(cs.flat_cache[0].cellX == 12);
+    CHECK(cs.flat_cache[0].cellZ == 21);
+}
+
 TEST_CASE("density: evaluate_grid with null root zero-fills") {
     NodeArena empty;
     constexpr int n = 6;
@@ -617,6 +690,56 @@ TEST_CASE("density: evaluate_grid with non-positive dims is a no-op") {
                   /*nx*/ 0, /*ny*/ 1, /*nz*/ 1,
                   nullptr, out);
     CHECK(out[0] == -1.0); // untouched
+}
+
+TEST_CASE("density: evaluate_grid_roots writes root-major xyz columns") {
+    NodeArena arena;
+
+    Node gradient{};
+    gradient.kind = NodeKind::kYClampedGradient;
+    gradient.i0 = -8;
+    gradient.i1 = 8;
+    gradient.d0 = -1.0;
+    gradient.d1 = 1.0;
+    const NodeRef gradient_ref = arena.push(gradient);
+
+    Node constant{};
+    constant.kind = NodeKind::kConstant;
+    constant.d0 = 3.0;
+    const NodeRef constant_ref = arena.push(constant);
+
+    Node sum{};
+    sum.kind = NodeKind::kAdd;
+    sum.a = gradient_ref;
+    sum.b = constant_ref;
+    const NodeRef sum_ref = arena.push(sum);
+
+    const std::array<NodeRef, 2> roots{gradient_ref, sum_ref};
+    constexpr int nx = 2;
+    constexpr int ny = 5;
+    constexpr int nz = 3;
+    constexpr std::size_t stride = nx * ny * nz;
+    std::array<double, stride * roots.size()> values{};
+    CacheState cache;
+    cache.resize_for(arena);
+
+    evaluate_grid_roots(arena, roots.data(), static_cast<int>(roots.size()),
+                        12.0, -8.0, -20.0,
+                        4.0, 4.0, 4.0,
+                        3, -5,
+                        nx, ny, nz,
+                        &cache, values.data());
+
+    for (int ix = 0; ix < nx; ++ix) {
+        for (int iz = 0; iz < nz; ++iz) {
+            for (int iy = 0; iy < ny; ++iy) {
+                const std::size_t offset = (static_cast<std::size_t>(ix) * nz + iz) * ny + iy;
+                const double expected = -1.0 + static_cast<double>(iy) * 0.5;
+                REQUIRE(values[offset] == doctest::Approx(expected).epsilon(1e-12));
+                REQUIRE(values[stride + offset] == doctest::Approx(expected + 3.0).epsilon(1e-12));
+            }
+        }
+    }
 }
 
 // ---- Worldgen-10: Spline -------------------------------------------------

@@ -135,6 +135,12 @@ set_target_properties(lattice PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
 )
+if(WIN32)
+    set_target_properties(lattice PROPERTIES PREFIX "")
+endif()
+if(MINGW)
+    target_link_options(lattice PRIVATE -static-libstdc++ -static-libgcc)
+endif()
 
 if(LATTICE_ENABLE_LTO)
     include(CheckIPOSupported)
