@@ -77,3 +77,4 @@ replay_pid*.log
 
 # Compiled classes
 io/
+tools/*.class
