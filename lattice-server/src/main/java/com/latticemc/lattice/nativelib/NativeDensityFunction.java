@@ -2109,6 +2109,10 @@ public final class NativeDensityFunction {
         return nativeAddSpline(handle, splineRef);
     }
 
+    private static int addFindTopSurface(long handle, int density, int upperBound, int lowerBound, int cellHeight) {
+        return nativeAddFindTopSurface(handle, density, upperBound, lowerBound, cellHeight);
+    }
+
     private static int addBeardifier(long handle, long beardifierHandle) {
         return nativeAddBeardifier(handle, beardifierHandle);
     }
@@ -2350,6 +2354,17 @@ public final class NativeDensityFunction {
                 if (input < 0) return -1;
                 return addClamp(handle, input, (Double) invoke(function, "minValue"), (Double) invoke(function, "maxValue"));
             }
+            if (name.endsWith("DensityFunctions$FindTopSurface")) {
+                int density = compile((DensityFunction) invoke(function, "density"));
+                int upperBound = compile((DensityFunction) invoke(function, "upperBound"));
+                if (density < 0 || upperBound < 0) return -1;
+                return addFindTopSurface(
+                        handle,
+                        density,
+                        upperBound,
+                        (Integer) invoke(function, "lowerBound"),
+                        (Integer) invoke(function, "cellHeight"));
+            }
             if (name.endsWith("DensityFunctions$Spline")) {
                 if (!SPLINE_ENABLED) return -1;
                 int spline = compileSpline(invoke(function, "spline"));
@@ -2515,6 +2530,7 @@ public final class NativeDensityFunction {
     private static native int nativeAddFixedFloatSpline(long handle, float value);
     private static native int nativeAddImplSpline(long handle, int locationFunctionNodeRef, float[] locations, float[] derivatives, int[] valueSplineRefs);
     private static native int nativeAddSpline(long handle, int splineRef);
+    private static native int nativeAddFindTopSurface(long handle, int density, int upperBound, int lowerBound, int cellHeight);
     private static native int nativeAddBeardifier(long handle, long beardifierHandle);
     private static native int nativeCacheSlot(long handle, int nodeRef);
     private static native void nativePrepareInterpolators(long cacheHandle, int horizontalCellCount, int verticalCellCount);
