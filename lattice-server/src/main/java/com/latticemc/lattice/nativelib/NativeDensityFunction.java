@@ -1982,19 +1982,46 @@ public final class NativeDensityFunction {
         }
     }
 
-    private static Object invoke(Object owner, String methodName) {
+    /// Resolved accessor for one (owner class, member name) pair: either a
+    /// zero-arg method or a field. Resolving is done once and cached, because
+    /// the previous per-call `getDeclaredMethod` probe threw a
+    /// NoSuchMethodException for every field-backed accessor (spline,
+    /// coordinate, values, locations, derivatives, ...) and the exception
+    /// message construction (`Class.methodToString`) showed up in worldgen
+    /// JFR at ~1.3%. The resolved member reads only tree structure, never
+    /// computed density values, so this has no parity impact.
+    private record AccessorKey(Class<?> owner, String name) {}
+
+    private static final ConcurrentHashMap<AccessorKey, java.lang.reflect.AccessibleObject> ACCESSOR_CACHE =
+            new ConcurrentHashMap<>();
+
+    private static java.lang.reflect.AccessibleObject resolveAccessor(AccessorKey key) {
         try {
-            Method method = owner.getClass().getDeclaredMethod(methodName);
+            Method method = key.owner().getDeclaredMethod(key.name());
             method.setAccessible(true);
-            return method.invoke(owner);
-        } catch (ReflectiveOperationException methodFailure) {
+            return method;
+        } catch (NoSuchMethodException methodFailure) {
             try {
-                Field field = owner.getClass().getDeclaredField(methodName);
+                Field field = key.owner().getDeclaredField(key.name());
                 field.setAccessible(true);
-                return field.get(owner);
-            } catch (ReflectiveOperationException fieldFailure) {
-                throw new IllegalStateException(owner.getClass().getName() + "." + methodName + " changed shape", fieldFailure);
+                return field;
+            } catch (NoSuchFieldException fieldFailure) {
+                throw new IllegalStateException(key.owner().getName() + "." + key.name() + " changed shape", fieldFailure);
             }
+        }
+    }
+
+    private static Object invoke(Object owner, String methodName) {
+        java.lang.reflect.AccessibleObject accessor =
+                ACCESSOR_CACHE.computeIfAbsent(new AccessorKey(owner.getClass(), methodName),
+                        NativeDensityFunction::resolveAccessor);
+        try {
+            if (accessor instanceof Method method) {
+                return method.invoke(owner);
+            }
+            return ((Field) accessor).get(owner);
+        } catch (ReflectiveOperationException accessFailure) {
+            throw new IllegalStateException(owner.getClass().getName() + "." + methodName + " access failed", accessFailure);
         }
     }
 
