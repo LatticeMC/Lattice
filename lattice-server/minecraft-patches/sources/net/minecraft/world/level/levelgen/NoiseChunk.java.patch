@@ -20,7 +20,7 @@
  import org.jspecify.annotations.Nullable;
  
  public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunction.FunctionContext {
-@@ -30,12 +_,15 @@
+@@ -30,12 +_,17 @@
      final int firstNoiseX;
      final int firstNoiseZ;
      final List<NoiseChunk.NoiseInterpolator> interpolators;
@@ -29,6 +29,8 @@
      private final Map<DensityFunction, DensityFunction> wrapped = new HashMap<>();
 -    private final Long2IntMap preliminarySurfaceLevelCache = new Long2IntOpenHashMap();
 +    private final Long2IntOpenHashMap preliminarySurfaceLevelCache = new Long2IntOpenHashMap();
++    private final double[] preliminarySurfaceNativeValue = new double[1];
++    private final double[] preliminarySurfaceJavaValue = new double[1];
      private final Aquifer aquifer;
      private final DensityFunction preliminarySurfaceLevel;
 -    private final NoiseChunk.BlockStateFiller blockStateRule;
@@ -129,7 +131,7 @@
      }
  
      @Override
-@@ -195,24 +_,64 @@
+@@ -195,30 +_,97 @@
      }
  
      public int maxPreliminarySurfaceLevel(int minX, int minZ, int maxX, int maxZ) {
@@ -203,6 +205,40 @@
      }
  
      private int computePreliminarySurfaceLevel(long packedChunkPos) {
+         int x = ColumnPos.getX(packedChunkPos);
+         int z = ColumnPos.getZ(packedChunkPos);
+-        return Mth.floor(this.preliminarySurfaceLevel.compute(new DensityFunction.SinglePointContext(x, 0, z)));
++        boolean nativeFilled = NativeDensityFunction.tryFillGrid(
++            this.preliminarySurfaceNativeValue,
++            this.preliminarySurfaceLevel,
++            x,
++            0.0,
++            z,
++            1.0,
++            1.0,
++            1.0,
++            QuartPos.fromBlock(x),
++            QuartPos.fromBlock(z),
++            1,
++            1,
++            1
++        );
++        boolean checkParity = nativeFilled && NativeDensityFunction.shouldCheckParity();
++        if (!nativeFilled || checkParity) {
++            this.preliminarySurfaceJavaValue[0] = this.preliminarySurfaceLevel.compute(new DensityFunction.SinglePointContext(x, 0, z));
++        }
++        if (checkParity) {
++            NativeDensityFunction.recordParity(
++                "preliminarySurfacePoint",
++                this.preliminarySurfaceLevel,
++                this.preliminarySurfaceNativeValue,
++                this.preliminarySurfaceJavaValue
++            );
++        }
++        return Mth.floor(nativeFilled ? this.preliminarySurfaceNativeValue[0] : this.preliminarySurfaceJavaValue[0]);
+     }
+ 
+     @Override
 @@ -312,16 +_,20 @@
      public void updateForY(int cellEndBlockY, double y) {
          this.inCellY = cellEndBlockY - this.cellStartBlockY;
