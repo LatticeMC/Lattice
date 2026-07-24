@@ -3,6 +3,8 @@ package com.latticemc.lattice.nativelib;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.DensityFunctions;
 import org.junit.jupiter.api.BeforeAll;
@@ -11,6 +13,8 @@ import org.junit.jupiter.api.Test;
 class NativeFindTopSurfaceTestSuite {
     @BeforeAll
     static void loadNativeLibrary() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
         LatticeNative.load();
         assertTrue(LatticeNative.isLoaded(), LatticeNative.failureReason());
     }
