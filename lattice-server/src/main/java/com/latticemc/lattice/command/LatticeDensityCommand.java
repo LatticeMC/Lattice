@@ -1,6 +1,7 @@
 package com.latticemc.lattice.command;
 
 import com.latticemc.lattice.nativelib.NativeDensityFunction;
+import com.latticemc.lattice.nativelib.NativePathfinder;
 import com.latticemc.lattice.nativelib.WorldgenProfiler;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -50,6 +51,15 @@ public final class LatticeDensityCommand extends Command {
     @Override
     public boolean execute(CommandSender sender, String commandLabel, String[] args) {
         if (!testPermission(sender)) return true;
+        if (args.length >= 1 && "pathfinder".equalsIgnoreCase(args[0])) {
+            if (args.length == 2 && "reset".equalsIgnoreCase(args[1])) {
+                NativePathfinder.resetStats();
+                sender.sendMessage("Lattice pathfinder stats reset");
+                return true;
+            }
+            sender.sendMessage(NativePathfinder.stats());
+            return true;
+        }
         if (args.length < 1 || !"density".equalsIgnoreCase(args[0])) {
             sendUsage(sender);
             return true;
@@ -121,9 +131,12 @@ public final class LatticeDensityCommand extends Command {
     @Override
     public List<String> tabComplete(CommandSender sender, String alias, String[] args) {
         if (!testPermissionSilent(sender)) return Collections.emptyList();
-        if (args.length == 1) return filter(List.of("density"), args[0]);
+        if (args.length == 1) return filter(List.of("density", "pathfinder"), args[0]);
         if (args.length == 2 && "density".equalsIgnoreCase(args[0])) {
             return filter(DENSITY_ACTIONS, args[1]);
+        }
+        if (args.length == 2 && "pathfinder".equalsIgnoreCase(args[0])) {
+            return filter(List.of("reset"), args[1]);
         }
         if (args.length == 3 && "density".equalsIgnoreCase(args[0])) {
             if ("parityInterval".equalsIgnoreCase(args[1])) return filter(List.of("1", "128", "1024", "4096"), args[2]);
