@@ -67,7 +67,7 @@ Lattice 遵循标准的 Purpur 补丁系统。服务端修改以文件补丁的�
 
 | 模块 | 目标 |
 |---|---|
-| Zlib 编解码器 | 大数据包压缩（基于 libdeflate，待集成） |
+| Zlib 编解码器 | RegionFile 区块压缩（基于 libdeflate） |
 | NBT 解析器 | 二进制 NBT 反序列化 |
 | 紧凑存储 | 位打包 `long[]` 操作（标量、BMI2、AVX2、NEON） |
 | 光照等级传播器 | 基于 BFS 的光照等级传播 |
@@ -84,6 +84,7 @@ Lattice 遵循标准的 Purpur 补丁系统。服务端修改以文件补丁的�
 | 视野射线 | 带 Section 级跳过的 DDA 射线步进 |
 | 密度函数 | 批量网格填充与求值器 |
 | 区块噪声采样器 | NoiseRouter 包装外观 |
+| Beardifier | 结构附近地形融合（beard blending） |
 | 矿脉采样器 | 基于 Xoroshiro128++ 的逐方块矿脉判定 |
 | 材质规则 | 地表构建器规则树 |
 | 插值噪声 | 旧版 1.16 风格混合噪声 |

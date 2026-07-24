@@ -67,7 +67,7 @@ The `lattice-native` C++ library accelerates 20+ Minecraft server systems:
 
 | Module | Target |
 |---|---|
-| Zlib Codec | Large packet compression via libdeflate (pending integration) |
+| Zlib Codec | RegionFile chunk compression via libdeflate |
 | NBT Parser | Binary NBT deserialisation |
 | Packed Storage | Bit-packed `long[]` operations (scalar, BMI2, AVX2, NEON) |
 | Level Propagator | BFS-based light level propagation |
@@ -84,6 +84,7 @@ The `lattice-native` C++ library accelerates 20+ Minecraft server systems:
 | Line-of-Sight | DDA raytrace with section-level skip |
 | Density Function | Batched grid fill and evaluator |
 | Chunk Noise Sampler | NoiseRouter bundle facade |
+| Beardifier | Structure-adjacent terrain beard blending |
 | Ore Vein Sampler | Per-block vein decision with Xoroshiro128++ |
 | Material Rules | Surface builder rule tree |
 | Interpolated Noise | Legacy 1.16-style blended noise |
