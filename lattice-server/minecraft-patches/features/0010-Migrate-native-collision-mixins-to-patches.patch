@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 13:59:13 +0800
+Subject: [PATCH] Migrate native collision mixins to patches
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java b/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
+index de764da80793d272ff597b4a0742ce785838799a..227263470ab3d65c36a597e24517ca41db8e60a0 100644
+--- a/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
++++ b/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
+@@ -1,5 +1,7 @@
+ package ca.spottedleaf.moonrise.patches.collisions;
+ 
++import com.latticemc.lattice.nativelib.LatticeNative;
++import com.latticemc.lattice.nativelib.NativeCollisionSweep;
+ import ca.spottedleaf.moonrise.common.util.WorldUtil;
+ import ca.spottedleaf.moonrise.patches.chunk_system.world.ChunkSystemEntityGetter;
+ import ca.spottedleaf.moonrise.patches.collisions.block.CollisionBlockState;
+@@ -1685,6 +1687,21 @@ public final class CollisionUtil {
+     }
+ 
+     public static double performAABBCollisionsX(final AABB currentBoundingBox, double value, final List<AABB> potentialCollisions) {
++        if (NativeCollisionSweep.isAvailable()
++            && Math.abs(value) >= NativeCollisionSweep.COLLISION_EPSILON
++            && potentialCollisions.size() >= 8) {
++            try {
++                double[] moving = {
++                    currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
++                    currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ
++                };
++                double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
++                return NativeCollisionSweep.calcMaxOffset(0, moving, value, obstacles, potentialCollisions.size());
++            } catch (Exception exception) {
++                LatticeNative.logFallbackOnce("collision_sweep_x", exception.getMessage());
++            }
++        }
++
+         for (int i = 0, len = potentialCollisions.size(); i < len; ++i) {
+             final AABB target = potentialCollisions.get(i);
+             value = collideX(target, currentBoundingBox, value);
+@@ -1694,6 +1711,21 @@ public final class CollisionUtil {
+     }
+ 
+     public static double performAABBCollisionsY(final AABB currentBoundingBox, double value, final List<AABB> potentialCollisions) {
++        if (NativeCollisionSweep.isAvailable()
++            && Math.abs(value) >= NativeCollisionSweep.COLLISION_EPSILON
++            && potentialCollisions.size() >= 8) {
++            try {
++                double[] moving = {
++                    currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
++                    currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ
++                };
++                double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
++                return NativeCollisionSweep.calcMaxOffset(1, moving, value, obstacles, potentialCollisions.size());
++            } catch (Exception exception) {
++                LatticeNative.logFallbackOnce("collision_sweep_y", exception.getMessage());
++            }
++        }
++
+         for (int i = 0, len = potentialCollisions.size(); i < len; ++i) {
+             final AABB target = potentialCollisions.get(i);
+             value = collideY(target, currentBoundingBox, value);
+@@ -1703,6 +1735,21 @@ public final class CollisionUtil {
+     }
+ 
+     public static double performAABBCollisionsZ(final AABB currentBoundingBox, double value, final List<AABB> potentialCollisions) {
++        if (NativeCollisionSweep.isAvailable()
++            && Math.abs(value) >= NativeCollisionSweep.COLLISION_EPSILON
++            && potentialCollisions.size() >= 8) {
++            try {
++                double[] moving = {
++                    currentBoundingBox.minX, currentBoundingBox.minY, currentBoundingBox.minZ,
++                    currentBoundingBox.maxX, currentBoundingBox.maxY, currentBoundingBox.maxZ
++                };
++                double[] obstacles = NativeCollisionSweep.flattenAabbs(potentialCollisions);
++                return NativeCollisionSweep.calcMaxOffset(2, moving, value, obstacles, potentialCollisions.size());
++            } catch (Exception exception) {
++                LatticeNative.logFallbackOnce("collision_sweep_z", exception.getMessage());
++            }
++        }
++
+         for (int i = 0, len = potentialCollisions.size(); i < len; ++i) {
+             final AABB target = potentialCollisions.get(i);
+             value = collideZ(target, currentBoundingBox, value);
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index c6b4c471f6b6d98c05037b80101fe3192a926be3..f95f1ac9f9c2777e6107c1255092ebc7672d9934 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -1,5 +1,7 @@
+ package net.minecraft.world.entity;
+ 
++import com.latticemc.lattice.nativelib.LatticeNative;
++import com.latticemc.lattice.nativelib.NativeCollisionSweep;
+ import com.google.common.collect.ImmutableList;
+ import com.google.common.collect.Lists;
+ import com.google.common.collect.Sets;
+@@ -1677,7 +1679,10 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     }
+ 
+     private static Vec3 collideWithShapes(Vec3 deltaMovement, AABB entityBB, List<VoxelShape> shapes) {
+-        if (shapes.isEmpty()) {
++        Vec3 nativeResult = tryNativeCollisionSweep(deltaMovement, entityBB, shapes);
++        if (nativeResult != null) {
++            return nativeResult;
++        } else if (shapes.isEmpty()) {
+             return deltaMovement;
+         } else {
+             Vec3 vec3 = Vec3.ZERO;
+@@ -1694,6 +1699,50 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         }
+     }
+ 
++    private static @Nullable Vec3 tryNativeCollisionSweep(Vec3 deltaMovement, AABB entityBB, List<VoxelShape> shapes) {
++        if (!NativeCollisionSweep.isAvailable() || shapes.isEmpty()) {
++            return null;
++        }
++
++        int obstacleCount = 0;
++        for (VoxelShape shape : shapes) {
++            List<AABB> aabbs = shape.toAabbs();
++            if (aabbs.size() != 1) {
++                return null;
++            }
++            obstacleCount++;
++        }
++        if (obstacleCount < 8) {
++            return null;
++        }
++
++        double[] obstacles = new double[obstacleCount * NativeCollisionSweep.AABB_STRIDE];
++        int index = 0;
++        for (VoxelShape shape : shapes) {
++            AABB box = shape.toAabbs().get(0);
++            int base = index++ * NativeCollisionSweep.AABB_STRIDE;
++            obstacles[base] = box.minX;
++            obstacles[base + 1] = box.minY;
++            obstacles[base + 2] = box.minZ;
++            obstacles[base + 3] = box.maxX;
++            obstacles[base + 4] = box.maxY;
++            obstacles[base + 5] = box.maxZ;
++        }
++
++        double[] moving = {
++            entityBB.minX, entityBB.minY, entityBB.minZ,
++            entityBB.maxX, entityBB.maxY, entityBB.maxZ
++        };
++        double[] adjusted = {deltaMovement.x, deltaMovement.y, deltaMovement.z};
++        try {
++            NativeCollisionSweep.adjustMovement(moving, adjusted, obstacles, obstacleCount);
++            return new Vec3(adjusted[0], adjusted[1], adjusted[2]);
++        } catch (Exception exception) {
++            LatticeNative.logFallbackOnce("entity_collision", exception.getMessage());
++            return null;
++        }
++    }
++
+     protected float nextStep() {
+         return (int)this.moveDist + 1;
+     }

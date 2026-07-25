@@ -7,8 +7,6 @@
   "verbose": true,
   "mixins": [],
   "server": [
-    "EntityCollisionMixin",
-    "CollisionUtilMixin",
     "NearestAttackableTargetGoalMixin",
     "AvoidEntityGoalMixin",
     "TemptGoalMixin",
