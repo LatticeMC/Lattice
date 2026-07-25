@@ -21,9 +21,7 @@ class AquiferCenterCacheParityTest {
         for (int x : boundaries) {
             for (int y : boundaries) {
                 for (int z : boundaries) {
-                    int[] expected = vanillaNearest(source, x, y, z);
-                    assertArrayEquals(expected, cached.nearest(x, y, z));
-                    assertArrayEquals(expected, cached.lazyFourthNearest(x, y, z));
+                    assertArrayEquals(vanillaNearest(source, x, y, z), cached.nearest(x, y, z));
                 }
             }
         }
@@ -32,9 +30,7 @@ class AquiferCenterCacheParityTest {
             int x = random.nextInt(193) - 96;
             int y = random.nextInt(385) - 192;
             int z = random.nextInt(193) - 96;
-            int[] expected = vanillaNearest(source, x, y, z);
-            assertArrayEquals(expected, cached.nearest(x, y, z));
-            assertArrayEquals(expected, cached.lazyFourthNearest(x, y, z));
+            assertArrayEquals(vanillaNearest(source, x, y, z), cached.nearest(x, y, z));
         }
     }
 
@@ -50,9 +46,7 @@ class AquiferCenterCacheParityTest {
             int x = (baseGridX << 4) + 5;
             int y = baseGridY * 12 - 1;
             int z = (baseGridZ << 4) + 5;
-            int[] expected = vanillaNearest(source, x, y, z);
-            assertArrayEquals(expected, cached.nearest(x, y, z));
-            assertArrayEquals(expected, cached.lazyFourthNearest(x, y, z));
+            assertArrayEquals(vanillaNearest(source, x, y, z), cached.nearest(x, y, z));
         }
     }
 
@@ -154,60 +148,6 @@ class AquiferCenterCacheParityTest {
                 insertNearest(nearest, indices, deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ, index);
             }
             return interleave(nearest, indices);
-        }
-
-        private int[] lazyFourthNearest(int x, int y, int z) {
-            int baseGridX = (x - 5) >> 4;
-            int baseGridY = Math.floorDiv(y + 1, 12);
-            int baseGridZ = (z - 5) >> 4;
-            int offset = this.getCenters(baseGridX, baseGridY, baseGridZ);
-            int centerOffset = offset;
-            int[] nearest = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE};
-            int[] indices = new int[3];
-
-            for (int i = 0; i < CENTER_COUNT; i++) {
-                int deltaX = this.centers[offset++] - x;
-                int deltaY = this.centers[offset++] - y;
-                int deltaZ = this.centers[offset++] - z;
-                int index = this.centers[offset++];
-                int distance = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
-                if (nearest[0] >= distance) {
-                    nearest[2] = nearest[1];
-                    nearest[1] = nearest[0];
-                    nearest[0] = distance;
-                    indices[2] = indices[1];
-                    indices[1] = indices[0];
-                    indices[0] = index;
-                } else if (nearest[1] >= distance) {
-                    nearest[2] = nearest[1];
-                    nearest[1] = distance;
-                    indices[2] = indices[1];
-                    indices[1] = index;
-                } else if (nearest[2] >= distance) {
-                    nearest[2] = distance;
-                    indices[2] = index;
-                }
-            }
-
-            int fourthDistance = Integer.MAX_VALUE;
-            int fourthIndex = 0;
-            for (int i = 0; i < CENTER_COUNT; i++) {
-                int deltaX = this.centers[centerOffset++] - x;
-                int deltaY = this.centers[centerOffset++] - y;
-                int deltaZ = this.centers[centerOffset++] - z;
-                int index = this.centers[centerOffset++];
-                if (index != indices[0] && index != indices[1] && index != indices[2]) {
-                    int distance = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
-                    if (fourthDistance >= distance) {
-                        fourthDistance = distance;
-                        fourthIndex = index;
-                    }
-                }
-            }
-
-            return new int[] {
-                nearest[0], indices[0], nearest[1], indices[1], nearest[2], indices[2], fourthDistance, fourthIndex
-            };
         }
 
         private int getCenters(int baseGridX, int baseGridY, int baseGridZ) {
