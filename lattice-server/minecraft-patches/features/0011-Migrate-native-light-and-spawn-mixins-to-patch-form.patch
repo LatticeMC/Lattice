@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 14:19:45 +0800
+Subject: [PATCH] Migrate native light and spawn mixins to patch form
+
+
+diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java
+index 14e21c5439cfdf870feeccf638d6494a0c003d64..d45c4c26be6422a9f543542d1731033aceccb468 100644
+--- a/net/minecraft/world/level/NaturalSpawner.java
++++ b/net/minecraft/world/level/NaturalSpawner.java
+@@ -1,5 +1,7 @@
+ package net.minecraft.world.level;
+ 
++import com.latticemc.lattice.nativelib.LatticeNative;
++import com.latticemc.lattice.nativelib.NativeSpawnFilter;
+ import com.mojang.logging.LogUtils;
+ import it.unimi.dsi.fastutil.objects.Object2IntMap;
+ import it.unimi.dsi.fastutil.objects.Object2IntMaps;
+@@ -18,6 +20,7 @@ import net.minecraft.core.QuartPos;
+ import net.minecraft.core.registries.BuiltInRegistries;
+ import net.minecraft.core.registries.Registries;
+ import net.minecraft.server.level.ServerLevel;
++import net.minecraft.server.level.ServerPlayer;
+ import net.minecraft.tags.BiomeTags;
+ import net.minecraft.tags.BlockTags;
+ import net.minecraft.util.Mth;
+@@ -216,6 +219,53 @@ public final class NaturalSpawner {
+         MobCategory category, ServerLevel level, LevelChunk chunk, NaturalSpawner.SpawnPredicate filter, NaturalSpawner.AfterSpawnCallback callback, final int maxSpawns, final Consumer<Entity> trackEntity
+     ) {
+         // Paper end - Optional per player mob spawns
++        // Lattice start - native player-distance fast reject
++        if (LatticeNative.isLoaded() && NativeSpawnFilter.isAvailable()) {
++            BlockPos chunkCenter = chunk.getPos().getMiddleBlockPosition(level.getMinY());
++            double centerX = chunkCenter.getX() + 0.5;
++            double centerY = chunkCenter.getY();
++            double centerZ = chunkCenter.getZ() + 0.5;
++            List<ServerPlayer> players = level.players();
++            if (players.isEmpty()) {
++                return;
++            }
++
++            double maxDistanceSquared = category.getDespawnDistance() * category.getDespawnDistance();
++            double[] playerPositions = new double[players.size() * 3];
++            for (int i = 0; i < players.size(); ++i) {
++                playerPositions[i * 3] = players.get(i).getX();
++                playerPositions[i * 3 + 1] = players.get(i).getY();
++                playerPositions[i * 3 + 2] = players.get(i).getZ();
++            }
++
++            double[] candidatePosition = {centerX, centerY, centerZ};
++            long[] acceptable = new long[1];
++            try {
++                int accepted = NativeSpawnFilter.filterCandidates(
++                    candidatePosition,
++                    1,
++                    null,
++                    null,
++                    null,
++                    null,
++                    0,
++                    0,
++                    null,
++                    0,
++                    playerPositions,
++                    players.size(),
++                    maxDistanceSquared,
++                    acceptable
++                );
++                if (accepted == 0) {
++                    return;
++                }
++            } catch (Exception exception) {
++                LatticeNative.logFallbackOnce("spawn_filter", exception.getMessage());
++            }
++        }
++        // Lattice end - native player-distance fast reject
++
+         BlockPos randomPosWithin = getRandomPosWithin(level, chunk);
+         if (randomPosWithin.getY() >= level.getMinY() + 1) {
+             spawnCategoryForPosition(category, level, chunk, randomPosWithin, filter, callback, maxSpawns, trackEntity); // Paper - Optional per player mob spawns
+diff --git a/net/minecraft/world/level/lighting/DynamicGraphMinFixedPoint.java b/net/minecraft/world/level/lighting/DynamicGraphMinFixedPoint.java
+index f7de641d30577be3c4c6a44efdffaed7662d8aae..57069f9a3ee7125f451fc73978ef2491601f4d60 100644
+--- a/net/minecraft/world/level/lighting/DynamicGraphMinFixedPoint.java
++++ b/net/minecraft/world/level/lighting/DynamicGraphMinFixedPoint.java
+@@ -1,5 +1,9 @@
+ package net.minecraft.world.level.lighting;
+ 
++import com.latticemc.lattice.bridge.LightEngineCallbacks;
++import com.latticemc.lattice.bridge.NativeLightEngineBridge;
++import com.latticemc.lattice.nativelib.LatticeNative;
++import com.latticemc.lattice.nativelib.NativeLightEngine;
+ import it.unimi.dsi.fastutil.longs.Long2ByteMap;
+ import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
+ import it.unimi.dsi.fastutil.longs.LongArrayList;
+@@ -7,13 +11,15 @@ import it.unimi.dsi.fastutil.longs.LongList;
+ import java.util.function.LongPredicate;
+ import net.minecraft.util.Mth;
+ 
+-public abstract class DynamicGraphMinFixedPoint {
++public abstract class DynamicGraphMinFixedPoint implements LightEngineCallbacks {
+     public static final long SOURCE = Long.MAX_VALUE;
+     private static final int NO_COMPUTED_LEVEL = 255;
+     protected final int levelCount;
+     private final LeveledPriorityQueue priorityQueue;
+     private final Long2ByteMap computedLevels;
+     private volatile boolean hasWork;
++    private NativeLightEngine nativeEngine;
++    private boolean nativeEngineDisabled;
+ 
+     protected DynamicGraphMinFixedPoint(int firstQueuedLevel, int width, final int height) {
+         if (firstQueuedLevel >= 254) {
+@@ -31,6 +37,15 @@ public abstract class DynamicGraphMinFixedPoint {
+             };
+             this.computedLevels.defaultReturnValue((byte)-1);
+         }
++
++        if (LatticeNative.isLoaded()) {
++            try {
++                this.nativeEngine = new NativeLightEngineBridge(this, firstQueuedLevel, width, height);
++            } catch (Exception e) {
++                LatticeNative.logFallbackOnce("light_engine", "failed to create native engine: " + e.getMessage());
++                this.nativeEngineDisabled = true;
++            }
++        }
+     }
+ 
+     protected void removeFromQueue(long position) {
+@@ -123,6 +138,21 @@ public abstract class DynamicGraphMinFixedPoint {
+     }
+ 
+     protected final int runUpdates(int toUpdateCount) {
++        if (LatticeNative.isLoaded() && !this.nativeEngineDisabled && this.nativeEngine != null) {
++            if (!this.nativeEngine.isNativeActive()) {
++                this.nativeEngineDisabled = true;
++            } else {
++                try {
++                    return this.nativeEngine.applyPendingUpdates(toUpdateCount);
++                } catch (IllegalStateException e) {
++                    LatticeNative.logFallbackOnce("light_engine",
++                            "native BFS failed, falling back to JVM: " + e.getMessage());
++                    this.nativeEngine.disable();
++                    this.nativeEngineDisabled = true;
++                    // fall through to vanilla
++                }
++            }
++        }
+         if (this.priorityQueue.isEmpty()) {
+             return toUpdateCount;
+         } else {
+@@ -167,4 +197,37 @@ public abstract class DynamicGraphMinFixedPoint {
+     protected abstract void setLevel(long chunkPos, int level);
+ 
+     protected abstract int computeLevelFromNeighbor(long startPos, long endPos, int startLevel);
++
++    // ---- LightEngineCallbacks implementation ----
++
++    @Override
++    public int callbackGetPropagatedLevel(long source, long target, int level) {
++        return this.computeLevelFromNeighbor(source, target, level);
++    }
++
++    @Override
++    public void callbackPropagateLevel(long nativePtr, long source, long target,
++                                       int level, boolean decrease) {
++        this.checkNeighborsAfterUpdate(target, level, decrease);
++    }
++
++    @Override
++    public boolean callbackIsMarker(long id) {
++        return this.isSource(id);
++    }
++
++    @Override
++    public int callbackRecalculateLevel(long id, long excludedId, int maxLevel) {
++        return this.getComputedLevel(id, excludedId, maxLevel);
++    }
++
++    @Override
++    public int callbackGetCommittedLevel(long id) {
++        return this.getLevel(id);
++    }
++
++    @Override
++    public void callbackSetCommittedLevel(long id, int level) {
++        this.setLevel(id, level);
++    }
+ }

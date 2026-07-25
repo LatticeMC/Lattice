@@ -64,8 +64,6 @@
     "AbstractHorseFollowMommyMixin",
     "PolarBearMixin",
     "ParrotMixin",
-    "LightEngineMixin",
-    "NaturalSpawnerMixin",
     "OfferFlowerGoalMixin",
     "EndermiteMixin"
   ],

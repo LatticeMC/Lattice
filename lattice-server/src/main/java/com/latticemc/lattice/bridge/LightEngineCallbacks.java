@@ -1,4 +1,4 @@
-package com.latticemc.lattice.mixin;
+package com.latticemc.lattice.bridge;
 
 public interface LightEngineCallbacks {
     int callbackGetPropagatedLevel(long source, long target, int level);
