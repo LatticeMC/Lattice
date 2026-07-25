@@ -1,5 +1,6 @@
 package com.latticemc.lattice.mixin;
 
+import com.latticemc.lattice.bridge.HeightmapAccessor;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeHeightmap;
 import com.latticemc.lattice.nativelib.NativeWorldgenToggle;

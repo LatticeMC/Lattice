@@ -1,5 +1,7 @@
 package com.latticemc.lattice.mixin;
 
+import com.latticemc.lattice.bridge.ImprovedNoiseAccessor;
+import com.latticemc.lattice.bridge.PerlinNoiseAccessor;
 import com.latticemc.lattice.nativelib.NativeInterpolatedNoise;
 import com.latticemc.lattice.nativelib.NativeOctavePerlinNoise;
 import it.unimi.dsi.fastutil.doubles.DoubleList;

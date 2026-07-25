@@ -1,5 +1,7 @@
 package com.latticemc.lattice.mixin;
 
+import com.latticemc.lattice.bridge.ImprovedNoiseAccessor;
+import com.latticemc.lattice.bridge.PerlinNoiseAccessor;
 import com.latticemc.lattice.nativelib.NativeDoublePerlinNoise;
 import it.unimi.dsi.fastutil.doubles.DoubleList;
 import net.minecraft.util.RandomSource;

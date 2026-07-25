@@ -1,5 +1,6 @@
 package com.latticemc.lattice.mixin;
 
+import com.latticemc.lattice.bridge.ImprovedNoiseAccessor;
 import com.latticemc.lattice.nativelib.NativeOctavePerlinNoise;
 import com.latticemc.lattice.nativelib.NativeScalarNoiseControl;
 import com.mojang.datafixers.util.Pair;

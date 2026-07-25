@@ -1,5 +1,6 @@
 package com.latticemc.lattice.mixin;
 
+import com.latticemc.lattice.bridge.SurfaceSystemAccessor;
 import com.latticemc.lattice.nativelib.CompiledSurfaceRules;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeMaterialRules;

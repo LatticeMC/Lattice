@@ -1,0 +1,204 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 12:53:42 +0800
+Subject: [PATCH] Replace mixin accessors with direct interfaces
+
+Route Heightmap, SurfaceSystem, ImprovedNoise, and PerlinNoise through
+direct bridge interfaces instead of mixin @Accessor/@Invoker.
+
+PerlinNoise also gains the amplitudesArray field (C2ME/Gale/Leaf-derived
+amplitude-array optimization) so that bridge PerlinNoiseAccessor can
+expose lattice$getAmplitudesArray() for native worldgen support; this is
+a prerequisite of the accessor shape and a bit-equivalent hot-loop win.
+
+diff --git a/net/minecraft/world/level/levelgen/Heightmap.java b/net/minecraft/world/level/levelgen/Heightmap.java
+index 25c537496ccea6fe27111b21fe2e47b3f6a914a1..a4f6e74ff105c19a50ac025f8b5f0cde8b6ef937 100644
+--- a/net/minecraft/world/level/levelgen/Heightmap.java
++++ b/net/minecraft/world/level/levelgen/Heightmap.java
+@@ -25,7 +25,7 @@ import net.minecraft.world.level.block.state.BlockState;
+ import net.minecraft.world.level.chunk.ChunkAccess;
+ import org.slf4j.Logger;
+ 
+-public class Heightmap {
++public class Heightmap implements com.latticemc.lattice.bridge.HeightmapAccessor {
+     private static final Logger LOGGER = LogUtils.getLogger();
+     static final Predicate<BlockState> NOT_AIR = state -> !state.isAir();
+     static final Predicate<BlockState> MATERIAL_MOTION_BLOCKING = BlockBehaviour.BlockStateBase::blocksMotion;
+@@ -133,6 +133,16 @@ public class Heightmap {
+         }
+     }
+ 
++    @Override
++    public Predicate<BlockState> lattice$isOpaque() {
++        return this.isOpaque;
++    }
++
++    @Override
++    public void lattice$setRawData(ChunkAccess chunk, Heightmap.Types type, long[] data) {
++        this.setRawData(chunk, type, data);
++    }
++
+     public long[] getRawData() {
+         return this.data.getRaw();
+     }
+diff --git a/net/minecraft/world/level/levelgen/SurfaceSystem.java b/net/minecraft/world/level/levelgen/SurfaceSystem.java
+index 44b79c197e0b887c28581647880851363b012a79..8ef5d158b26c5cb4f2029c73d3cbf04c9c74b707 100644
+--- a/net/minecraft/world/level/levelgen/SurfaceSystem.java
++++ b/net/minecraft/world/level/levelgen/SurfaceSystem.java
+@@ -23,7 +23,7 @@ import net.minecraft.world.level.dimension.DimensionType;
+ import net.minecraft.world.level.levelgen.carver.CarvingContext;
+ import net.minecraft.world.level.levelgen.synth.NormalNoise;
+ 
+-public class SurfaceSystem {
++public class SurfaceSystem implements com.latticemc.lattice.bridge.SurfaceSystemAccessor {
+     private static final BlockState WHITE_TERRACOTTA = Blocks.WHITE_TERRACOTTA.defaultBlockState();
+     private static final BlockState ORANGE_TERRACOTTA = Blocks.ORANGE_TERRACOTTA.defaultBlockState();
+     private static final BlockState TERRACOTTA = Blocks.TERRACOTTA.defaultBlockState();
+@@ -63,6 +63,21 @@ public class SurfaceSystem {
+         this.icebergSurfaceNoise = randomState.getOrCreateNoise(Noises.ICEBERG_SURFACE);
+     }
+ 
++    @Override
++    public int lattice$seaLevel() {
++        return this.seaLevel;
++    }
++
++    @Override
++    public NormalNoise lattice$surfaceNoise() {
++        return this.surfaceNoise;
++    }
++
++    @Override
++    public NormalNoise lattice$surfaceSecondaryNoise() {
++        return this.surfaceSecondaryNoise;
++    }
++
+     public void buildSurface(
+         RandomState randomState,
+         BiomeManager biomeManager,
+diff --git a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+index 4f4bb37f70d7a9334b4dd33e865a36290a198ffb..8d1ec147f230d9bed0a4c740be7cd41ab8c4951f 100644
+--- a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+@@ -4,7 +4,7 @@ import com.google.common.annotations.VisibleForTesting;
+ import net.minecraft.util.Mth;
+ import net.minecraft.util.RandomSource;
+ 
+-public final class ImprovedNoise {
++public final class ImprovedNoise implements com.latticemc.lattice.bridge.ImprovedNoiseAccessor {
+     private static final float SHIFT_UP_EPSILON = 1.0E-7F;
+     private static final double[] FLAT_SIMPLEX_GRADIENT = new double[]{
+         1.0, 1.0, 0.0, 0.0,
+@@ -48,6 +48,11 @@ public final class ImprovedNoise {
+ 
+     }
+ 
++    @Override
++    public byte[] lattice$getPermutation() {
++        return this.p;
++    }
++
+     public double noise(double x, double y, double z) {
+         return this.noise(x, y, z, 0.0, 0.0);
+     }
+diff --git a/net/minecraft/world/level/levelgen/synth/PerlinNoise.java b/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
+index 4c5268704af9b6a88c00878459254851c0592da1..c38023b6d616dfc8479da4dc33b40859a369d35e 100644
+--- a/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
+@@ -18,7 +18,7 @@ import net.minecraft.util.RandomSource;
+ import net.minecraft.world.level.levelgen.PositionalRandomFactory;
+ import org.jspecify.annotations.Nullable;
+ 
+-public class PerlinNoise {
++public class PerlinNoise implements com.latticemc.lattice.bridge.PerlinNoiseAccessor {
+     private static final int ROUND_OFF = 33554432;
+     private final @Nullable ImprovedNoise[] noiseLevels;
+     private final int firstOctave;
+@@ -26,6 +26,7 @@ public class PerlinNoise {
+     private final double lowestFreqValueFactor;
+     private final double lowestFreqInputFactor;
+     private final double maxValue;
++    private final double[] amplitudesArray;
+ 
+     @Deprecated
+     public static PerlinNoise createLegacyForBlendedNoise(RandomSource random, IntStream octaves) {
+@@ -81,6 +82,7 @@ public class PerlinNoise {
+     protected PerlinNoise(RandomSource random, Pair<Integer, DoubleList> octavesAndAmplitudes, boolean useNewFactory) {
+         this.firstOctave = octavesAndAmplitudes.getFirst();
+         this.amplitudes = octavesAndAmplitudes.getSecond();
++        this.amplitudesArray = this.amplitudes.toDoubleArray();
+         int size = this.amplitudes.size();
+         int i = -this.firstOctave;
+         this.noiseLevels = new ImprovedNoise[size];
+@@ -133,12 +135,52 @@ public class PerlinNoise {
+         return this.maxValue;
+     }
+ 
++    @Override
++    public ImprovedNoise[] lattice$getNoiseLevels() {
++        return this.noiseLevels;
++    }
++
++    @Override
++    public DoubleList lattice$getAmplitudes() {
++        return this.amplitudes;
++    }
++
++    @Override
++    public double[] lattice$getAmplitudesArray() {
++        return this.amplitudesArray;
++    }
++
++    @Override
++    public double lattice$getLowestFreqInputFactor() {
++        return this.lowestFreqInputFactor;
++    }
++
++    @Override
++    public double lattice$getLowestFreqValueFactor() {
++        return this.lowestFreqValueFactor;
++    }
++
+     private static void skipOctave(RandomSource random) {
+         random.consumeCount(262);
+     }
+ 
+     public double getValue(double x, double y, double z) {
+-        return this.getValue(x, y, z, 0.0, 0.0, false);
++        double d = 0.0;
++        double d1 = this.lowestFreqInputFactor;
++        double d2 = this.lowestFreqValueFactor;
++
++        for (int i = 0; i < this.noiseLevels.length; i++) {
++            ImprovedNoise improvedNoise = this.noiseLevels[i];
++            if (improvedNoise != null) {
++                double d3 = improvedNoise.noise(wrap(x * d1), wrap(y * d1), wrap(z * d1), 0.0, 0.0);
++                d += this.amplitudesArray[i] * d3 * d2;
++            }
++
++            d1 *= 2.0;
++            d2 /= 2.0;
++        }
++
++        return d;
+     }
+ 
+     @Deprecated
+@@ -151,7 +193,7 @@ public class PerlinNoise {
+             ImprovedNoise improvedNoise = this.noiseLevels[i];
+             if (improvedNoise != null) {
+                 double d3 = improvedNoise.noise(wrap(x * d1), useFixedY ? -improvedNoise.yo : wrap(y * d1), wrap(z * d1), yScale * d1, yMax * d1);
+-                d += this.amplitudes.getDouble(i) * d3 * d2;
++                d += this.amplitudesArray[i] * d3 * d2;
+             }
+ 
+             d1 *= 2.0;
+@@ -172,7 +214,7 @@ public class PerlinNoise {
+         for (int i = 0; i < this.noiseLevels.length; i++) {
+             ImprovedNoise improvedNoise = this.noiseLevels[i];
+             if (improvedNoise != null) {
+-                d += this.amplitudes.getDouble(i) * multiplier * d1;
++                d += this.amplitudesArray[i] * multiplier * d1;
+             }
+ 
+             d1 /= 2.0;
