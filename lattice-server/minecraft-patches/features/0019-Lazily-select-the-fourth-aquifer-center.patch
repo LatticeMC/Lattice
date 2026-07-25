@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 26 Jul 2026 02:16:20 +0800
+Subject: [PATCH] Lazily select the fourth aquifer center
+
+
+diff --git a/net/minecraft/world/level/levelgen/Aquifer.java b/net/minecraft/world/level/levelgen/Aquifer.java
+index d8e853e617c29db129f0efa408bc08f7b06040d3..d92bd3ebd9d2f4d622af0d537854ef7bc9417567 100644
+--- a/net/minecraft/world/level/levelgen/Aquifer.java
++++ b/net/minecraft/world/level/levelgen/Aquifer.java
+@@ -175,11 +175,9 @@ public interface Aquifer {
+                     int i6 = Integer.MAX_VALUE;
+                     int i7 = Integer.MAX_VALUE;
+                     int i8 = Integer.MAX_VALUE;
+-                    int i9 = Integer.MAX_VALUE;
+                     int i10 = 0;
+                     int i11 = 0;
+                     int i12 = 0;
+-                    int i13 = 0;
+ 
+                     int centerOffset = this.getAquiferCenters(i3, i4, i5);
+                     for (int i14 = 0; i14 < CENTER_COUNT; i14++) {
+@@ -189,29 +187,20 @@ public interface Aquifer {
+                         int index = this.centerCache[centerOffset++];
+                         int i23 = i20 * i20 + i21 * i21 + i22 * i22;
+                         if (i6 >= i23) {
+-                            i13 = i12;
+                             i12 = i11;
+                             i11 = i10;
+                             i10 = index;
+-                            i9 = i8;
+                             i8 = i7;
+                             i7 = i6;
+                             i6 = i23;
+                         } else if (i7 >= i23) {
+-                            i13 = i12;
+                             i12 = i11;
+                             i11 = index;
+-                            i9 = i8;
+                             i8 = i7;
+                             i7 = i23;
+                         } else if (i8 >= i23) {
+-                            i13 = i12;
+                             i12 = index;
+-                            i9 = i8;
+                             i8 = i23;
+-                        } else if (i9 >= i23) {
+-                            i13 = index;
+-                            i9 = i23;
+                         }
+                     }
+ 
+@@ -262,9 +251,17 @@ public interface Aquifer {
+                             boolean flag1 = d3 >= FLOWING_UPDATE_SIMULARITY && !aquiferStatus2.equals(aquiferStatus3);
+                             boolean flag2 = d2 >= FLOWING_UPDATE_SIMULARITY && !aquiferStatus.equals(aquiferStatus3);
+                             if (!flag && !flag1 && !flag2) {
+-                                this.shouldScheduleFluidUpdate = d2 >= FLOWING_UPDATE_SIMULARITY
+-                                    && similarity(i6, i9) >= FLOWING_UPDATE_SIMULARITY
+-                                    && !aquiferStatus.equals(this.getAquiferStatus(i13));
++                                if (d2 >= FLOWING_UPDATE_SIMULARITY) {
++                                    long fourthCenter = this.findFourthAquiferCenter(
++                                        centerOffset - CENTER_CACHE_STRIDE, i, i1, i2, i10, i11, i12
++                                    );
++                                    int fourthDistance = (int)(fourthCenter >>> 32);
++                                    int fourthIndex = (int)fourthCenter;
++                                    this.shouldScheduleFluidUpdate = similarity(i6, fourthDistance) >= FLOWING_UPDATE_SIMULARITY
++                                        && !aquiferStatus.equals(this.getAquiferStatus(fourthIndex));
++                                } else {
++                                    this.shouldScheduleFluidUpdate = false;
++                                }
+                             } else {
+                                 this.shouldScheduleFluidUpdate = true;
+                             }
+@@ -328,6 +325,27 @@ public interface Aquifer {
+             return offset;
+         }
+ 
++        private long findFourthAquiferCenter(
++            int centerOffset, int x, int y, int z, int firstIndex, int secondIndex, int thirdIndex
++        ) {
++            int fourthDistance = Integer.MAX_VALUE;
++            int fourthIndex = 0;
++            for (int center = 0; center < CENTER_COUNT; center++) {
++                int deltaX = this.centerCache[centerOffset++] - x;
++                int deltaY = this.centerCache[centerOffset++] - y;
++                int deltaZ = this.centerCache[centerOffset++] - z;
++                int index = this.centerCache[centerOffset++];
++                if (index != firstIndex && index != secondIndex && index != thirdIndex) {
++                    int distance = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
++                    if (fourthDistance >= distance) {
++                        fourthDistance = distance;
++                        fourthIndex = index;
++                    }
++                }
++            }
++            return (long)fourthDistance << 32 | fourthIndex & 0xFFFFFFFFL;
++        }
++
+         private static double similarity(int firstDistance, int secondDistance) {
+             double d = 25.0;
+             return 1.0 - (secondDistance - firstDistance) / 25.0;
