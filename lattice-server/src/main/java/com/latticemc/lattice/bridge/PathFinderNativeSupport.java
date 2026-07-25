@@ -1,7 +1,8 @@
-package com.latticemc.lattice.mixin;
+package com.latticemc.lattice.bridge;
 
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativePathfinder;
+import com.latticemc.lattice.nativelib.PathfinderJfrEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -10,21 +11,14 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.PathNavigationRegion;
 import net.minecraft.world.level.pathfinder.Node;
-import net.minecraft.world.level.pathfinder.NodeEvaluator;
 import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.level.pathfinder.PathFinder;
 import net.minecraft.world.level.pathfinder.PathType;
 import net.minecraft.world.level.pathfinder.PathfindingContext;
 import net.minecraft.world.level.pathfinder.WalkNodeEvaluator;
-import org.spongepowered.asm.mixin.Final;
-import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
-import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.jspecify.annotations.Nullable;
 
-@Mixin(PathFinder.class)
-public abstract class PathFinderMixin {
+public final class PathFinderNativeSupport {
     private static final int MIN_NATIVE_REGION_AXIS = 32;
     private static final int PATH_TYPE_STRIDE_MARGIN = 2;
     private static final PathType[] PATH_TYPES = PathType.values();
@@ -32,71 +26,92 @@ public abstract class PathFinderMixin {
     private static final ThreadLocal<float[]> PATHFINDING_MALUS_BUFFER = ThreadLocal.withInitial(() -> new float[PATH_TYPES.length]);
     private static final ThreadLocal<PathfinderBuffers> PATHFINDER_BUFFERS = ThreadLocal.withInitial(PathfinderBuffers::new);
 
-    @Shadow @Final public NodeEvaluator nodeEvaluator;
-    @Shadow private int maxVisitedNodes;
+    private PathFinderNativeSupport() {}
 
-    @Inject(method = "findPath", at = @At("HEAD"), cancellable = true)
-    private void lattice$nativeFindPath(PathNavigationRegion region,
-                                        Mob mob,
-                                        Set<BlockPos> targets,
-                                        float maxRange,
-                                        int reachRange,
-                                        float maxVisitedNodesMultiplier,
-                                        CallbackInfoReturnable<Path> cir) {
+    public static @Nullable Path tryFindPath(PathFinder pathFinder,
+                                             int maxVisitedNodes,
+                                             PathNavigationRegion region,
+                                             Mob mob,
+                                             Set<BlockPos> targets,
+                                             float maxRange,
+                                             int reachRange,
+                                             float maxVisitedNodesMultiplier) {
         if (targets.isEmpty()
                 || VERIFY_SHADOW.get()
-                || !(this.nodeEvaluator instanceof WalkNodeEvaluator walkNodeEvaluator)
+                || !(pathFinder.nodeEvaluator instanceof WalkNodeEvaluator walkNodeEvaluator)
                 || !NativePathfinder.isAvailable()) {
-            return;
+            return null;
         }
 
         boolean prepared = false;
+        boolean attempted = false;
+        boolean nativeAccepted = false;
+        boolean targetReached = false;
+        int pathLength = 0;
+        int targetCount = targets.size();
+        long totalStart = System.nanoTime();
+        PathfinderJfrEvent jfrEvent = PathfinderJfrEvent.begin(targetCount, maxRange);
         try {
-            this.nodeEvaluator.prepare(region, mob);
+            pathFinder.nodeEvaluator.prepare(region, mob);
             prepared = true;
-            Node start = this.nodeEvaluator.getStart();
-            if (start == null) return;
+            Node start = pathFinder.nodeEvaluator.getStart();
+            if (start == null) return null;
 
             PathfinderBuffers buffers = PATHFINDER_BUFFERS.get();
-            int targetCount = buffers.copyTargets(targets);
+            targetCount = buffers.copyTargets(targets);
             NativePathfinder.recordAttempt();
-            NativePathfinder.PathResult result = this.lattice$runNative(
-                    region, mob, walkNodeEvaluator, start, buffers, targetCount, maxRange, reachRange, maxVisitedNodesMultiplier);
+            attempted = true;
+            NativePathfinder.PathResult result = runNative(
+                    maxVisitedNodes, region, mob, walkNodeEvaluator, start, buffers, targetCount, maxRange, reachRange,
+                    maxVisitedNodesMultiplier, jfrEvent);
             if (result == null || result.length() == 0 || result.targetIndex() < 0 || result.targetIndex() >= targetCount) {
                 NativePathfinder.recordFallback();
-                return;
+                return null;
             }
 
-            Path path = this.lattice$toPath(result, buffers.target(result.targetIndex()));
-            this.nodeEvaluator.done();
+            Path path = toPath(result, buffers.target(result.targetIndex()));
+            pathLength = result.length();
+            targetReached = result.reachedTarget();
+            pathFinder.nodeEvaluator.done();
             prepared = false;
 
-            if (LatticeNative.VERIFY && !this.lattice$matchesVanilla(region, mob, targets, maxRange, reachRange, maxVisitedNodesMultiplier, path)) {
+            if (LatticeNative.VERIFY && !matchesVanilla(pathFinder, region, mob, targets, maxRange, reachRange, maxVisitedNodesMultiplier, path)) {
                 NativePathfinder.recordVerifyMismatch();
                 throw new AssertionError("lattice.verify: native pathfinder mismatch");
             }
 
             NativePathfinder.recordSuccess();
-            cir.setReturnValue(path);
+            nativeAccepted = true;
+            return path;
         } catch (Throwable throwable) {
             NativePathfinder.recordFallback();
             LatticeNative.logFallbackOnce("native_pathfinder", throwable.getMessage());
+            return null;
         } finally {
             if (prepared) {
-                this.nodeEvaluator.done();
+                pathFinder.nodeEvaluator.done();
+            }
+            if (attempted) {
+                long totalNanos = System.nanoTime() - totalStart;
+                NativePathfinder.recordCompletedRequest(totalNanos);
+                if (jfrEvent != null) {
+                    jfrEvent.finish(totalNanos, nativeAccepted, targetReached, pathLength);
+                }
             }
         }
     }
 
-    private NativePathfinder.PathResult lattice$runNative(PathNavigationRegion region,
-                                                          Mob mob,
-                                                          WalkNodeEvaluator evaluator,
-                                                          Node start,
-                                                          PathfinderBuffers buffers,
-                                                          int targetCount,
-                                                          float maxRange,
-                                                          int reachRange,
-                                                          float maxVisitedNodesMultiplier) {
+    private static NativePathfinder.PathResult runNative(int configuredMaxVisitedNodes,
+                                                         PathNavigationRegion region,
+                                                         Mob mob,
+                                                         WalkNodeEvaluator evaluator,
+                                                         Node start,
+                                                         PathfinderBuffers buffers,
+                                                         int targetCount,
+                                                         float maxRange,
+                                                         int reachRange,
+                                                         float maxVisitedNodesMultiplier,
+                                                         PathfinderJfrEvent jfrEvent) {
         int margin = Mth.ceil(maxRange) + PATH_TYPE_STRIDE_MARGIN;
         int minX = start.x;
         int maxX = start.x;
@@ -131,25 +146,27 @@ public abstract class PathFinderMixin {
         byte[] pathTypes = buffers.pathTypes(volume);
         PathfindingContext context = new PathfindingContext(region, mob);
         long precomputeStart = System.nanoTime();
-        for (int y = minY; y <= maxY; ++y) {
-            for (int z = minZ; z <= maxZ; ++z) {
-                for (int x = minX; x <= maxX; ++x) {
-                    PathType type = evaluator.getPathTypeOfMob(context, x, y, z, mob);
-                    if (!this.lattice$isNativePathTypeSupported(evaluator, type)) {
-                        NativePathfinder.recordPrecomputeNanos(System.nanoTime() - precomputeStart);
-                        return null;
+        try {
+            for (int y = minY; y <= maxY; ++y) {
+                for (int z = minZ; z <= maxZ; ++z) {
+                    for (int x = minX; x <= maxX; ++x) {
+                        PathType type = evaluator.getPathTypeOfMob(context, x, y, z, mob);
+                        if (!isNativePathTypeSupported(evaluator, type)) return null;
+                        int index = ((y - minY) * sizeZ + (z - minZ)) * sizeX + (x - minX);
+                        pathTypes[index] = (byte)type.ordinal();
                     }
-                    int index = ((y - minY) * sizeZ + (z - minZ)) * sizeX + (x - minX);
-                    pathTypes[index] = (byte)type.ordinal();
                 }
             }
+        } finally {
+            long precomputeNanos = System.nanoTime() - precomputeStart;
+            NativePathfinder.recordPrecomputeNanos(precomputeNanos);
+            if (jfrEvent != null) jfrEvent.recordPrecompute(precomputeNanos);
         }
-        NativePathfinder.recordPrecomputeNanos(System.nanoTime() - precomputeStart);
 
         int[] targetX = buffers.targetX(targetCount);
         int[] targetY = buffers.targetY(targetCount);
         int[] targetZ = buffers.targetZ(targetCount);
-        int maxVisitedNodes = (int)(this.maxVisitedNodes * maxVisitedNodesMultiplier);
+        int maxVisitedNodes = (int)(configuredMaxVisitedNodes * maxVisitedNodesMultiplier);
         int[] outPath = buffers.outPath(maxVisitedNodes);
         for (int i = 0; i < targetCount; ++i) {
             BlockPos target = buffers.target(i);
@@ -166,13 +183,15 @@ public abstract class PathFinderMixin {
                     targetX, targetY, targetZ, targetCount,
                     maxRange, maxVisitedNodes, reachRange,
                     Mth.floor(mob.getBbWidth() + 1.0F), Mth.floor(mob.getBbHeight() + 1.0F), mob.maxUpStep(),
-                    mob.getMaxFallDistance(), this.lattice$pathfindingMalusFor(mob), outPath);
+                    mob.getMaxFallDistance(), pathfindingMalusFor(mob), outPath);
         } finally {
-            NativePathfinder.recordNativeNanos(System.nanoTime() - nativeStart);
+            long nativeNanos = System.nanoTime() - nativeStart;
+            NativePathfinder.recordNativeNanos(nativeNanos);
+            if (jfrEvent != null) jfrEvent.recordNative(nativeNanos);
         }
     }
 
-    private float[] lattice$pathfindingMalusFor(Mob mob) {
+    private static float[] pathfindingMalusFor(Mob mob) {
         float[] malus = PATHFINDING_MALUS_BUFFER.get();
         if (malus.length < PATH_TYPES.length) {
             malus = new float[PATH_TYPES.length];
@@ -184,7 +203,7 @@ public abstract class PathFinderMixin {
         return malus;
     }
 
-    private boolean lattice$isNativePathTypeSupported(WalkNodeEvaluator evaluator, PathType type) {
+    private static boolean isNativePathTypeSupported(WalkNodeEvaluator evaluator, PathType type) {
         return type == PathType.BLOCKED
                 || type == PathType.OPEN
                 || type == PathType.WALKABLE
@@ -194,23 +213,24 @@ public abstract class PathFinderMixin {
                 || (type == PathType.WATER && evaluator.canFloat());
     }
 
-    private boolean lattice$matchesVanilla(PathNavigationRegion region,
-                                           Mob mob,
-                                           Set<BlockPos> targets,
-                                           float maxRange,
-                                           int reachRange,
-                                           float maxVisitedNodesMultiplier,
-                                           Path nativePath) {
+    private static boolean matchesVanilla(PathFinder pathFinder,
+                                          PathNavigationRegion region,
+                                          Mob mob,
+                                          Set<BlockPos> targets,
+                                          float maxRange,
+                                          int reachRange,
+                                          float maxVisitedNodesMultiplier,
+                                          Path nativePath) {
         VERIFY_SHADOW.set(true);
         try {
-            Path vanillaPath = ((PathFinder)(Object)this).findPath(region, mob, targets, maxRange, reachRange, maxVisitedNodesMultiplier);
-            return this.lattice$samePath(nativePath, vanillaPath);
+            Path vanillaPath = pathFinder.findPath(region, mob, targets, maxRange, reachRange, maxVisitedNodesMultiplier);
+            return samePath(nativePath, vanillaPath);
         } finally {
             VERIFY_SHADOW.set(false);
         }
     }
 
-    private boolean lattice$samePath(Path nativePath, Path vanillaPath) {
+    private static boolean samePath(Path nativePath, Path vanillaPath) {
         if (nativePath == vanillaPath) return true;
         if (nativePath == null || vanillaPath == null) return false;
         if (nativePath.canReach() != vanillaPath.canReach()) return false;
@@ -226,7 +246,7 @@ public abstract class PathFinderMixin {
         return true;
     }
 
-    private Path lattice$toPath(NativePathfinder.PathResult result, BlockPos target) {
+    private static Path toPath(NativePathfinder.PathResult result, BlockPos target) {
         List<Node> nodes = new ArrayList<>(result.length());
         Node previous = null;
         for (int i = 0; i < result.length(); ++i) {

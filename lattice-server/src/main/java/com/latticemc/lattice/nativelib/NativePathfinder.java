@@ -5,10 +5,14 @@ import net.minecraft.world.level.pathfinder.PathType;
 
 public final class NativePathfinder {
     public static final int EXPECTED_NATIVE_ABI = 6;
+    private static final int HISTOGRAM_BUCKETS = Long.SIZE;
     private static final LongAdder ATTEMPTS = new LongAdder();
     private static final LongAdder SUCCESSES = new LongAdder();
     private static final LongAdder FALLBACKS = new LongAdder();
     private static final LongAdder VERIFY_MISMATCHES = new LongAdder();
+    private static final LongAdder COMPLETED_REQUESTS = new LongAdder();
+    private static final LongAdder TOTAL_NANOS = new LongAdder();
+    private static final LongAdder[] TOTAL_MICROS_HISTOGRAM = createHistogram();
     private static final LongAdder PRECOMPUTE_CALLS = new LongAdder();
     private static final LongAdder PRECOMPUTE_NANOS = new LongAdder();
     private static final LongAdder NATIVE_CALLS = new LongAdder();
@@ -117,6 +121,14 @@ public final class NativePathfinder {
         VERIFY_MISMATCHES.increment();
     }
 
+    public static void recordCompletedRequest(long nanos) {
+        long clampedNanos = Math.max(0L, nanos);
+        long micros = clampedNanos / 1_000L;
+        COMPLETED_REQUESTS.increment();
+        TOTAL_NANOS.add(clampedNanos);
+        TOTAL_MICROS_HISTOGRAM[histogramBucket(micros)].increment();
+    }
+
     public static void recordPrecomputeNanos(long nanos) {
         PRECOMPUTE_CALLS.increment();
         PRECOMPUTE_NANOS.add(Math.max(0L, nanos));
@@ -131,11 +143,19 @@ public final class NativePathfinder {
         long attempts = ATTEMPTS.sum();
         long successes = SUCCESSES.sum();
         return "attempts=" + attempts
+                + " completed=" + COMPLETED_REQUESTS.sum()
                 + " successes=" + successes
                 + " fallbacks=" + FALLBACKS.sum()
                 + " verifyMismatches=" + VERIFY_MISMATCHES.sum()
+                + " avgTotalMicros=" + averageMicros(TOTAL_NANOS.sum(), COMPLETED_REQUESTS.sum())
+                + " p50TotalMicros~=" + percentileMicros(50)
+                + " p95TotalMicros~=" + percentileMicros(95)
+                + " p99TotalMicros~=" + percentileMicros(99)
+                + " precomputeCalls=" + PRECOMPUTE_CALLS.sum()
                 + " avgPrecomputeMicros=" + averageMicros(PRECOMPUTE_NANOS.sum(), PRECOMPUTE_CALLS.sum())
-                + " avgNativeMicros=" + averageMicros(NATIVE_NANOS.sum(), NATIVE_CALLS.sum());
+                + " nativeCalls=" + NATIVE_CALLS.sum()
+                + " avgNativeMicros=" + averageMicros(NATIVE_NANOS.sum(), NATIVE_CALLS.sum())
+                + " jfrEvent=" + PathfinderJfrEvent.NAME;
     }
 
     public static void resetStats() {
@@ -143,14 +163,40 @@ public final class NativePathfinder {
         SUCCESSES.reset();
         FALLBACKS.reset();
         VERIFY_MISMATCHES.reset();
+        COMPLETED_REQUESTS.reset();
+        TOTAL_NANOS.reset();
         PRECOMPUTE_CALLS.reset();
         PRECOMPUTE_NANOS.reset();
         NATIVE_CALLS.reset();
         NATIVE_NANOS.reset();
+        for (LongAdder bucket : TOTAL_MICROS_HISTOGRAM) bucket.reset();
     }
 
     private static long averageMicros(long nanos, long count) {
         return count <= 0L ? 0L : nanos / count / 1_000L;
+    }
+
+    private static LongAdder[] createHistogram() {
+        LongAdder[] histogram = new LongAdder[HISTOGRAM_BUCKETS];
+        for (int i = 0; i < histogram.length; i++) histogram[i] = new LongAdder();
+        return histogram;
+    }
+
+    private static int histogramBucket(long micros) {
+        if (micros <= 1L) return 0;
+        return Math.min(HISTOGRAM_BUCKETS - 1, Long.SIZE - Long.numberOfLeadingZeros(micros - 1L));
+    }
+
+    private static long percentileMicros(int percentile) {
+        long count = COMPLETED_REQUESTS.sum();
+        if (count <= 0L) return 0L;
+        long rank = Math.max(1L, (count * percentile + 99L) / 100L);
+        long cumulative = 0L;
+        for (int i = 0; i < TOTAL_MICROS_HISTOGRAM.length; i++) {
+            cumulative += TOTAL_MICROS_HISTOGRAM[i].sum();
+            if (cumulative >= rank) return i == HISTOGRAM_BUCKETS - 1 ? Long.MAX_VALUE : 1L << i;
+        }
+        return Long.MAX_VALUE;
     }
 
     private static PathResult decode(int[] raw, long header) {

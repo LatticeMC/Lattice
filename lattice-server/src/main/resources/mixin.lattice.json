@@ -13,7 +13,6 @@
     "CollisionUtilMixin",
     "LevelLineOfSightCacheMixin",
     "SensingMixin",
-    "PathFinderMixin",
     "ServerEntityGetterMixin",
     "NearestAttackableTargetGoalMixin",
     "AvoidEntityGoalMixin",
