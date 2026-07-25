@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sweepikun <laomgba@outlook.com>
 Date: Sat, 25 Jul 2026 14:19:45 +0800
-Subject: [PATCH] Migrate native light and spawn mixins to patch form
+Subject: [PATCH] Accelerate light propagation and spawn checks with native
+ code
 
 
 diff --git a/net/minecraft/world/level/NaturalSpawner.java b/net/minecraft/world/level/NaturalSpawner.java

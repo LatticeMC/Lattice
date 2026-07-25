@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sweepikun <laomgba@outlook.com>
 Date: Sat, 25 Jul 2026 13:18:00 +0800
-Subject: [PATCH] Migrate tracked entity visibility mixin to patch
+Subject: [PATCH] Accelerate tracked-entity visibility checks with native code
 
 
 diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java

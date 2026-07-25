@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sweepikun <laomgba@outlook.com>
 Date: Sat, 25 Jul 2026 15:10:38 +0800
-Subject: [PATCH] Migrate heightmap and native noise mixins to patches
+Subject: [PATCH] Accelerate heightmap priming and noise sampling with native
+ code
 
 
 diff --git a/net/minecraft/world/level/levelgen/Heightmap.java b/net/minecraft/world/level/levelgen/Heightmap.java

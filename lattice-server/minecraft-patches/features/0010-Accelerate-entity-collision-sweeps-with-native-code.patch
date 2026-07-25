@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sweepikun <laomgba@outlook.com>
 Date: Sat, 25 Jul 2026 13:59:13 +0800
-Subject: [PATCH] Migrate native collision mixins to patches
+Subject: [PATCH] Accelerate entity collision sweeps with native code
 
 
 diff --git a/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java b/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java

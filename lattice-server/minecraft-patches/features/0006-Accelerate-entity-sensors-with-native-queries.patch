@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sweepikun <laomgba@outlook.com>
 Date: Sat, 25 Jul 2026 13:12:51 +0800
-Subject: [PATCH] Migrate native entity sensors to patches
+Subject: [PATCH] Accelerate entity sensors with native queries
 
 
 diff --git a/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java b/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java

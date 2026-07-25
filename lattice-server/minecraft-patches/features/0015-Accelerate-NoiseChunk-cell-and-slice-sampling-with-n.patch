@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sweepikun <laomgba@outlook.com>
 Date: Sat, 25 Jul 2026 16:12:54 +0800
-Subject: [PATCH] Migrate native NoiseChunk hot paths to patches (slice 0024)
+Subject: [PATCH] Accelerate NoiseChunk cell and slice sampling with native
+ code
 
 
 diff --git a/net/minecraft/world/level/levelgen/NoiseChunk.java b/net/minecraft/world/level/levelgen/NoiseChunk.java

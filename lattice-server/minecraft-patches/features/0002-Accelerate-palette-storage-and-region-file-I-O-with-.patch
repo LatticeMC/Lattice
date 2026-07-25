@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sweepikun <laomgba@outlook.com>
 Date: Sat, 25 Jul 2026 09:43:16 +0800
-Subject: [PATCH] Migrate startup, palette, and region I/O mixins to patches
+Subject: [PATCH] Accelerate palette storage and region file I/O with native
+ code
 
 
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java

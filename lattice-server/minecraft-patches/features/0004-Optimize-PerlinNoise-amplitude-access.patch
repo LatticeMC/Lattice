@@ -1,15 +1,12 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sweepikun <laomgba@outlook.com>
 Date: Sat, 25 Jul 2026 12:53:42 +0800
-Subject: [PATCH] Replace mixin accessors with direct interfaces
+Subject: [PATCH] Optimize PerlinNoise amplitude access
 
-Route Heightmap, SurfaceSystem, ImprovedNoise, and PerlinNoise through
-direct bridge interfaces instead of mixin @Accessor/@Invoker.
-
-PerlinNoise also gains the amplitudesArray field (C2ME/Gale/Leaf-derived
-amplitude-array optimization) so that bridge PerlinNoiseAccessor can
-expose lattice$getAmplitudesArray() for native worldgen support; this is
-a prerequisite of the accessor shape and a bit-equivalent hot-loop win.
+PerlinNoise gains a flat amplitudesArray field (C2ME/Gale/Leaf-derived
+amplitude-array optimization) and exposes it, the ImprovedNoise
+permutation, and the Heightmap and SurfaceSystem accessors that native
+worldgen support consumes. Bit-equivalent hot-loop win.
 
 diff --git a/net/minecraft/world/level/levelgen/Heightmap.java b/net/minecraft/world/level/levelgen/Heightmap.java
 index 25c537496ccea6fe27111b21fe2e47b3f6a914a1..a4f6e74ff105c19a50ac025f8b5f0cde8b6ef937 100644
