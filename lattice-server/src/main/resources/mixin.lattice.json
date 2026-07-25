@@ -22,8 +22,6 @@
     "EnderDragonMixin",
     "ExperienceOrbMixin",
     "MinecraftServerStartMixin",
-    "ImprovedNoiseMixin",
-    "PerlinNoiseMixin",
     "BatMixin",
     "SilverfishMixin",
     "AbstractHorseFollowMommyMixin",

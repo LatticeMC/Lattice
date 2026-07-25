@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 17:13:33 +0800
+Subject: [PATCH] Migrate native ImprovedNoise/PerlinNoise scalar routing to
+ patches (slice noise-native)
+
+
+diff --git a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+index 8d1ec147f230d9bed0a4c740be7cd41ab8c4951f..c5101d650334a4d91deccb821bced41d3e62ecbf 100644
+--- a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+@@ -1,6 +1,8 @@
+ package net.minecraft.world.level.levelgen.synth;
+ 
+ import com.google.common.annotations.VisibleForTesting;
++import com.latticemc.lattice.nativelib.NativePerlinNoise;
++import com.latticemc.lattice.nativelib.NativeScalarNoiseControl;
+ import net.minecraft.util.Mth;
+ import net.minecraft.util.RandomSource;
+ 
+@@ -28,6 +30,7 @@ public final class ImprovedNoise implements com.latticemc.lattice.bridge.Improve
+     public final double xo;
+     public final double yo;
+     public final double zo;
++    private final NativePerlinNoise lattice$native;
+ 
+     public ImprovedNoise(RandomSource random) {
+         this.xo = random.nextDouble() * 256.0;
+@@ -46,6 +49,7 @@ public final class ImprovedNoise implements com.latticemc.lattice.bridge.Improve
+             this.p[i + randomInt] = b;
+         }
+ 
++        this.lattice$native = NativePerlinNoise.tryCreate(this.p, this.xo, this.yo, this.zo);
+     }
+ 
+     @Override
+@@ -54,11 +58,25 @@ public final class ImprovedNoise implements com.latticemc.lattice.bridge.Improve
+     }
+ 
+     public double noise(double x, double y, double z) {
++        if (NativeScalarNoiseControl.perlinEnabled()) {
++            NativePerlinNoise nativeSampler = this.lattice$native;
++            if (nativeSampler != null) {
++                return nativeSampler.sample(x, y, z);
++            }
++        }
++
+         return this.noise(x, y, z, 0.0, 0.0);
+     }
+ 
+     @Deprecated
+     public double noise(double x, double y, double z, double yScale, double yMax) {
++        if (NativeScalarNoiseControl.perlinEnabled()) {
++            NativePerlinNoise nativeSampler = this.lattice$native;
++            if (nativeSampler != null) {
++                return nativeSampler.sampleYScaled(x, y, z, yScale, yMax);
++            }
++        }
++
+         double d = x + this.xo;
+         double d1 = y + this.yo;
+         double d2 = z + this.zo;
+@@ -86,6 +104,18 @@ public final class ImprovedNoise implements com.latticemc.lattice.bridge.Improve
+     }
+ 
+     public double noiseWithDerivative(double x, double y, double z, double[] values) {
++        if (NativeScalarNoiseControl.perlinEnabled()) {
++            NativePerlinNoise nativeSampler = this.lattice$native;
++            if (nativeSampler != null && values != null && values.length >= 3) {
++                double[] derivative = new double[3];
++                double value = nativeSampler.sampleDerivative(x, y, z, derivative);
++                values[0] += derivative[0];
++                values[1] += derivative[1];
++                values[2] += derivative[2];
++                return value;
++            }
++        }
++
+         double d = x + this.xo;
+         double d1 = y + this.yo;
+         double d2 = z + this.zo;
+diff --git a/net/minecraft/world/level/levelgen/synth/PerlinNoise.java b/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
+index c38023b6d616dfc8479da4dc33b40859a369d35e..a5a77e300ffb46167350ae7c939de1bed7b7f029 100644
+--- a/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
+@@ -2,6 +2,9 @@ package net.minecraft.world.level.levelgen.synth;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.collect.ImmutableList;
++import com.latticemc.lattice.bridge.ImprovedNoiseAccessor;
++import com.latticemc.lattice.nativelib.NativeOctavePerlinNoise;
++import com.latticemc.lattice.nativelib.NativeScalarNoiseControl;
+ import com.mojang.datafixers.util.Pair;
+ import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
+ import it.unimi.dsi.fastutil.doubles.DoubleList;
+@@ -27,6 +30,7 @@ public class PerlinNoise implements com.latticemc.lattice.bridge.PerlinNoiseAcce
+     private final double lowestFreqInputFactor;
+     private final double maxValue;
+     private final double[] amplitudesArray;
++    private final NativeOctavePerlinNoise lattice$native;
+ 
+     @Deprecated
+     public static PerlinNoise createLegacyForBlendedNoise(RandomSource random, IntStream octaves) {
+@@ -129,6 +133,39 @@ public class PerlinNoise implements com.latticemc.lattice.bridge.PerlinNoiseAcce
+         this.lowestFreqInputFactor = Math.pow(2.0, -i);
+         this.lowestFreqValueFactor = Math.pow(2.0, size - 1) / (Math.pow(2.0, size) - 1.0);
+         this.maxValue = this.edgeValue(2.0);
++        this.lattice$native = this.lattice$createNative();
++    }
++
++    private NativeOctavePerlinNoise lattice$createNative() {
++        int count = this.amplitudes.size();
++        if (count <= 0 || this.noiseLevels.length != count) {
++            return null;
++        }
++
++        double[] origins = new double[count * 3];
++        byte[] permutations = new byte[count * 256];
++        double[] amps = new double[count];
++        for (int i = 0; i < count; i++) {
++            amps[i] = this.amplitudes.getDouble(i);
++            ImprovedNoise octave = this.noiseLevels[i];
++            if (octave == null) {
++                continue;
++            }
++
++            origins[i * 3] = octave.xo;
++            origins[i * 3 + 1] = octave.yo;
++            origins[i * 3 + 2] = octave.zo;
++            byte[] permutation = ((ImprovedNoiseAccessor) (Object) octave).lattice$getPermutation();
++            System.arraycopy(permutation, 0, permutations, i * 256, 256);
++        }
++
++        return NativeOctavePerlinNoise.tryCreate(
++            origins,
++            permutations,
++            amps,
++            this.lowestFreqInputFactor,
++            this.lowestFreqValueFactor
++        );
+     }
+ 
+     protected double maxValue() {
+@@ -165,6 +202,13 @@ public class PerlinNoise implements com.latticemc.lattice.bridge.PerlinNoiseAcce
+     }
+ 
+     public double getValue(double x, double y, double z) {
++        if (NativeScalarNoiseControl.perlinEnabled()) {
++            NativeOctavePerlinNoise nativeSampler = this.lattice$native;
++            if (nativeSampler != null) {
++                return nativeSampler.sample(x, y, z);
++            }
++        }
++
+         double d = 0.0;
+         double d1 = this.lowestFreqInputFactor;
+         double d2 = this.lowestFreqValueFactor;
+@@ -185,6 +229,13 @@ public class PerlinNoise implements com.latticemc.lattice.bridge.PerlinNoiseAcce
+ 
+     @Deprecated
+     public double getValue(double x, double y, double z, double yScale, double yMax, boolean useFixedY) {
++        if (NativeScalarNoiseControl.perlinEnabled()) {
++            NativeOctavePerlinNoise nativeSampler = this.lattice$native;
++            if (nativeSampler != null) {
++                return nativeSampler.sampleFull(x, y, z, yScale, yMax, useFixedY);
++            }
++        }
++
+         double d = 0.0;
+         double d1 = this.lowestFreqInputFactor;
+         double d2 = this.lowestFreqValueFactor;
