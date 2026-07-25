@@ -1,4 +1,4 @@
-package com.latticemc.lattice.mixin;
+package com.latticemc.lattice.bridge;
 
 import net.minecraft.core.Registry;
 import net.minecraft.world.level.biome.Biome;

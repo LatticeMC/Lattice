@@ -1,4 +1,4 @@
-package com.latticemc.lattice.mixin;
+package com.latticemc.lattice.bridge;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
