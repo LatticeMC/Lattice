@@ -13,9 +13,9 @@ import java.util.zip.InflaterInputStream;
 /**
  * First-batch native fast path for RegionFile zlib compression.
  *
- * <p>This Lattice migration only needs the DEFLATE/zlib helpers used by
- * {@code RegionFileMixin}. NBT indexing and other second-stage features stay
- * out of this first batch on purpose.</p>
+ * <p>This Lattice migration only needs the DEFLATE/zlib helpers used by the
+ * direct {@code RegionFile} patch. NBT indexing and other second-stage features
+ * stay out of this first batch on purpose.</p>
  */
 public final class NativeChunkSerializer {
 

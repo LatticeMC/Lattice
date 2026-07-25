@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.WeakHashMap;
+import net.minecraft.world.level.levelgen.Beardifier;
 import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.NoiseChunk;
 import net.minecraft.world.level.levelgen.synth.NormalNoise;
@@ -2398,9 +2399,7 @@ public final class NativeDensityFunction {
                 return spline < 0 ? -1 : addSpline(handle, spline);
             }
             if (name.equals("net.minecraft.world.level.levelgen.Beardifier")) {
-                long beardifierHandle = function instanceof NativeBeardifierAccess access
-                        ? access.lattice$nativeBeardifierHandleFromMixin()
-                        : ((Number) invoke(function, "lattice$nativeBeardifierHandle")).longValue();
+                long beardifierHandle = ((Beardifier) function).lattice$nativeBeardifierHandle();
                 return beardifierHandle == 0L ? -1 : addBeardifier(handle, beardifierHandle);
             }
             if (name.endsWith("DensityFunctions$BlendAlpha")) return addBlendAlpha(handle);
