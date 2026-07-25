@@ -25,7 +25,6 @@
     "DragonSittingScanningPhaseMixin",
     "EnderDragonMixin",
     "ExperienceOrbMixin",
-    "TrackedEntityVisibilityMixin",
     "SurfaceSystemMixin",
     "PalettedContainerDataAccessor",
     "PalettedContainerAccessor",
