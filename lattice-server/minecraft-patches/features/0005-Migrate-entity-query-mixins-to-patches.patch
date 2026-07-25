@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 13:03:52 +0800
+Subject: [PATCH] Migrate entity query mixins to patches
+
+
+diff --git a/net/minecraft/server/level/ServerEntityGetter.java b/net/minecraft/server/level/ServerEntityGetter.java
+index 878000d1b5ec5d7944fc4da9ff9936fe78d044fc..1b8c3bbf04c04d5c532d5941f2ade91cef27fce3 100644
+--- a/net/minecraft/server/level/ServerEntityGetter.java
++++ b/net/minecraft/server/level/ServerEntityGetter.java
+@@ -54,6 +54,27 @@ public interface ServerEntityGetter extends EntityGetter {
+     default <T extends LivingEntity> @Nullable T getNearestEntity(
+         List<? extends T> entities, TargetingConditions targetingConditions, @Nullable LivingEntity source, double x, double y, double z
+     ) {
++        if (entities.size() >= 8) {
++            double range = 0.0D;
++            for (T entity : entities) {
++                double dx = Math.abs(entity.getX() - x);
++                double dy = Math.abs(entity.getY() - y);
++                double dz = Math.abs(entity.getZ() - z);
++                range = Math.max(range, Math.max(dx, Math.max(dy, dz)) + 2.0D);
++            }
++            AABB area = AABB.ofSize(new net.minecraft.world.phys.Vec3(x, y, z), range * 2.0D, range * 2.0D, range * 2.0D);
++            return com.latticemc.lattice.mixin.NativeGoalQuerySupport.findNearestEntityNullableSource(
++                source,
++                this.getLevel(),
++                entities,
++                targetingConditions,
++                area,
++                x,
++                y,
++                z
++            );
++        }
++
+         double d = -1.0;
+         T livingEntity = null;
+ 
+diff --git a/net/minecraft/world/level/EntityGetter.java b/net/minecraft/world/level/EntityGetter.java
+index 1ad405fba4d7f8e7f4e8dc97b3a73692c16de104..4cd011c7875691b1489f0d961ad294eaad2be64b 100644
+--- a/net/minecraft/world/level/EntityGetter.java
++++ b/net/minecraft/world/level/EntityGetter.java
+@@ -119,6 +119,17 @@ public interface EntityGetter extends ca.spottedleaf.moonrise.patches.chunk_syst
+     // Paper end - Affects Spawning API
+ 
+     default @Nullable Player getNearestPlayer(double x, double y, double z, double distance, @Nullable Predicate<Entity> predicate) {
++        if (distance >= 0.0D) {
++            return com.latticemc.lattice.mixin.NativeGoalQuerySupport.findNearestPlayer(
++                this,
++                x,
++                y,
++                z,
++                distance,
++                player -> predicate == null || predicate.test(player)
++            );
++        }
++
+         double d = -1.0;
+         Player player = null;
+ 
+@@ -186,6 +197,18 @@ public interface EntityGetter extends ca.spottedleaf.moonrise.patches.chunk_syst
+     // Paper end - Affects Spawning API
+ 
+     default boolean hasNearbyAlivePlayer(double x, double y, double z, double distance) {
++        if (distance >= 0.0D) {
++            return com.latticemc.lattice.mixin.NativeGoalQuerySupport.findNearestPlayer(
++                this,
++                x,
++                y,
++                z,
++                distance,
++                player -> EntitySelector.NO_SPECTATORS.test(player)
++                    && EntitySelector.LIVING_ENTITY_STILL_ALIVE.test(player)
++            ) != null;
++        }
++
+         for (Player player : this.players()) {
+             if (EntitySelector.NO_SPECTATORS.test(player) && EntitySelector.LIVING_ENTITY_STILL_ALIVE.test(player) && EntitySelector.notAfk.test(player)) { // Purpur - AFK API
+                 double d = player.distanceToSqr(x, y, z);
+diff --git a/net/minecraft/world/level/entity/EntitySection.java b/net/minecraft/world/level/entity/EntitySection.java
+index 93d8fb5a188765212008bb2012e52d05823bb103..6cb10214fa9cc75c69182fef325f2d4c6d9f4821 100644
+--- a/net/minecraft/world/level/entity/EntitySection.java
++++ b/net/minecraft/world/level/entity/EntitySection.java
+@@ -34,6 +34,14 @@ public class EntitySection<T extends EntityAccess> {
+     }
+ 
+     public AbortableIterationConsumer.Continuation getEntities(AABB bounds, AbortableIterationConsumer<T> consumer) {
++        if (com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
++            java.util.ArrayList<T> entities = new java.util.ArrayList<>(this.storage);
++            AbortableIterationConsumer.Continuation result = scanEntitiesNative(entities, bounds, consumer);
++            if (result != null) {
++                return result;
++            }
++        }
++
+         for (T entityAccess : this.storage) {
+             if (entityAccess.getBoundingBox().intersects(bounds) && consumer.accept(entityAccess).shouldAbort()) {
+                 return AbortableIterationConsumer.Continuation.ABORT;
+@@ -50,6 +58,21 @@ public class EntitySection<T extends EntityAccess> {
+         if (collection.isEmpty()) {
+             return AbortableIterationConsumer.Continuation.CONTINUE;
+         } else {
++            if (com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
++                java.util.ArrayList<U> entities = new java.util.ArrayList<>(collection.size());
++                for (T entityAccess : collection) {
++                    U cast = (U)test.tryCast(entityAccess);
++                    if (cast != null) {
++                        entities.add(cast);
++                    }
++                }
++
++                AbortableIterationConsumer.Continuation result = scanEntitiesNative(entities, bounds, consumer);
++                if (result != null) {
++                    return result;
++                }
++            }
++
+             for (T entityAccess : collection) {
+                 U entityAccess1 = (U)test.tryCast(entityAccess);
+                 if (entityAccess1 != null && entityAccess.getBoundingBox().intersects(bounds) && consumer.accept(entityAccess1).shouldAbort()) {
+@@ -61,6 +84,46 @@ public class EntitySection<T extends EntityAccess> {
+         }
+     }
+ 
++    private static <E extends EntityAccess> AbortableIterationConsumer.Continuation scanEntitiesNative(
++        java.util.ArrayList<E> entities,
++        AABB bounds,
++        AbortableIterationConsumer<? super E> consumer
++    ) {
++        int entityCount = entities.size();
++        if (entityCount < 8) {
++            return null;
++        }
++
++        double[] query = {
++            bounds.minX, bounds.minY, bounds.minZ,
++            bounds.maxX, bounds.maxY, bounds.maxZ
++        };
++        double[] entityAabbs = new double[entityCount * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE];
++        for (int i = 0; i < entityCount; ++i) {
++            AABB box = entities.get(i).getBoundingBox();
++            int base = i * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE;
++            entityAabbs[base] = box.minX;
++            entityAabbs[base + 1] = box.minY;
++            entityAabbs[base + 2] = box.minZ;
++            entityAabbs[base + 3] = box.maxX;
++            entityAabbs[base + 4] = box.maxY;
++            entityAabbs[base + 5] = box.maxZ;
++        }
++
++        long[] visibility = new long[com.latticemc.lattice.nativelib.NativeAabbQuery.rowLongs(entityCount)];
++        com.latticemc.lattice.nativelib.NativeAabbQuery.scan(query, 1, entityAabbs, entityCount, visibility);
++        for (int i = 0; i < entityCount; ++i) {
++            if (((visibility[i >>> 6] >>> (i & 63)) & 1L) == 0L) {
++                continue;
++            }
++            if (consumer.accept(entities.get(i)).shouldAbort()) {
++                return AbortableIterationConsumer.Continuation.ABORT;
++            }
++        }
++
++        return AbortableIterationConsumer.Continuation.CONTINUE;
++    }
++
+     public boolean isEmpty() {
+         return this.storage.isEmpty();
+     }

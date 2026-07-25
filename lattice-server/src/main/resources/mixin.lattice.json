@@ -7,13 +7,10 @@
   "verbose": true,
   "mixins": [],
   "server": [
-    "EntityGetterMixin",
-    "EntitySectionMixin",
     "EntityCollisionMixin",
     "CollisionUtilMixin",
     "LevelLineOfSightCacheMixin",
     "SensingMixin",
-    "ServerEntityGetterMixin",
     "NearestAttackableTargetGoalMixin",
     "AvoidEntityGoalMixin",
     "TemptGoalMixin",
