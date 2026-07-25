@@ -16,8 +16,6 @@
     "TemptGoalMixin",
     "LookAtPlayerGoalMixin",
     "BegGoalMixin",
-    "NearestLivingEntitySensorMixin",
-    "PlayerSensorMixin",
     "DolphinSwimWithPlayerGoalMixin",
     "EndermanLookForPlayerGoalMixin",
     "PandaLookAtPlayerGoalMixin",
