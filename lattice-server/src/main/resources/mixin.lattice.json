@@ -21,7 +21,6 @@
     "DragonSittingScanningPhaseMixin",
     "EnderDragonMixin",
     "ExperienceOrbMixin",
-    "BeardifierMixin",
     "MinecraftServerStartMixin",
     "ImprovedNoiseMixin",
     "PerlinNoiseMixin",
