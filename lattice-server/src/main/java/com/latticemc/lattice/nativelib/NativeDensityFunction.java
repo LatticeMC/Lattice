@@ -1,7 +1,7 @@
 package com.latticemc.lattice.nativelib;
 
-import com.latticemc.lattice.mixin.NativeInterpolatedNoiseAccess;
-import com.latticemc.lattice.mixin.NativeNormalNoiseAccess;
+import com.latticemc.lattice.bridge.NativeInterpolatedNoiseAccess;
+import com.latticemc.lattice.bridge.NativeNormalNoiseAccess;
 import java.lang.ref.Cleaner;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;

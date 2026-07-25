@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 15:10:38 +0800
+Subject: [PATCH] Migrate heightmap and native noise mixins to patches
+
+
+diff --git a/net/minecraft/world/level/levelgen/Heightmap.java b/net/minecraft/world/level/levelgen/Heightmap.java
+index a4f6e74ff105c19a50ac025f8b5f0cde8b6ef937..2cfb0c6589d07c0e80d114e96d669cb25924e840 100644
+--- a/net/minecraft/world/level/levelgen/Heightmap.java
++++ b/net/minecraft/world/level/levelgen/Heightmap.java
+@@ -1,5 +1,9 @@
+ package net.minecraft.world.level.levelgen;
+ 
++import com.latticemc.lattice.bridge.WorldgenNativeSupport;
++import com.latticemc.lattice.nativelib.LatticeNative;
++import com.latticemc.lattice.nativelib.NativeWorldgenToggle;
++import com.latticemc.lattice.nativelib.WorldgenProfiler;
+ import com.mojang.logging.LogUtils;
+ import com.mojang.serialization.Codec;
+ import io.netty.buffer.ByteBuf;
+@@ -41,6 +45,18 @@ public class Heightmap implements com.latticemc.lattice.bridge.HeightmapAccessor
+     }
+ 
+     public static void primeHeightmaps(ChunkAccess chunk, Set<Heightmap.Types> types) {
++        long nativeStart = WorldgenProfiler.start();
++        try {
++            if (NativeWorldgenToggle.heightmapEnabled() && !types.isEmpty() && LatticeNative.isLoaded()) {
++                WorldgenNativeSupport.primeHeightmaps(chunk, types);
++                return;
++            }
++        } catch (Exception | LinkageError exception) {
++            LatticeNative.logFallbackOnce("native_heightmap", exception.getMessage());
++        } finally {
++            WorldgenProfiler.end("heightmap.primeHeightmaps", nativeStart);
++        }
++
+         if (!types.isEmpty()) {
+             int size = types.size();
+             ObjectList<Heightmap> list = new ObjectArrayList<>(size);
+diff --git a/net/minecraft/world/level/levelgen/synth/BlendedNoise.java b/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
+index f37f54c90f7d2577d2d968feb5266ec3eea68bd8..fb9935cdc091c7f3c23d5213b84ad7c9ac5c8f6c 100644
+--- a/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
+@@ -1,5 +1,8 @@
+ package net.minecraft.world.level.levelgen.synth;
+ 
++import com.latticemc.lattice.bridge.NativeInterpolatedNoiseAccess;
++import com.latticemc.lattice.bridge.WorldgenNativeSupport;
++import com.latticemc.lattice.nativelib.NativeInterpolatedNoise;
+ import com.google.common.annotations.VisibleForTesting;
+ import com.mojang.serialization.Codec;
+ import com.mojang.serialization.MapCodec;
+@@ -12,7 +15,7 @@ import net.minecraft.util.RandomSource;
+ import net.minecraft.world.level.levelgen.DensityFunction;
+ import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
+ 
+-public class BlendedNoise implements DensityFunction.SimpleFunction {
++public class BlendedNoise implements DensityFunction.SimpleFunction, NativeInterpolatedNoiseAccess {
+     private static final Codec<Double> SCALE_RANGE = Codec.doubleRange(0.001, 1000.0);
+     private static final MapCodec<BlendedNoise> DATA_CODEC = RecordCodecBuilder.mapCodec(
+         instance -> instance.group(
+@@ -36,6 +39,7 @@ public class BlendedNoise implements DensityFunction.SimpleFunction {
+     private final double maxValue;
+     private final double xzScale;
+     private final double yScale;
++    private final NativeInterpolatedNoise nativeInterpolatedNoise;
+ 
+     public static BlendedNoise createUnseeded(double xzScale, double yScale, double xzFactor, double yFactor, double smearScaleMultiplier) {
+         return new BlendedNoise(new XoroshiroRandomSource(0L), xzScale, yScale, xzFactor, yFactor, smearScaleMultiplier);
+@@ -62,6 +66,21 @@ public class BlendedNoise implements DensityFunction.SimpleFunction {
+         this.xzMultiplier = 684.412 * this.xzScale;
+         this.yMultiplier = 684.412 * this.yScale;
+         this.maxValue = minLimitNoise.maxBrokenValue(this.yMultiplier);
++        this.nativeInterpolatedNoise = WorldgenNativeSupport.createInterpolated(
++            this.minLimitNoise,
++            this.maxLimitNoise,
++            this.mainNoise,
++            this.xzScale,
++            this.yScale,
++            this.xzFactor,
++            this.yFactor,
++            this.smearScaleMultiplier
++        );
++    }
++
++    @Override
++    public NativeInterpolatedNoise lattice$getNativeInterpolatedNoise() {
++        return this.nativeInterpolatedNoise;
+     }
+ 
+     @VisibleForTesting
+diff --git a/net/minecraft/world/level/levelgen/synth/NormalNoise.java b/net/minecraft/world/level/levelgen/synth/NormalNoise.java
+index 87e1b175629aaa85789a67d5b884aa7d8cae62da..ecb525dc0f808f61b1233d0ac451f7f4dc5b77b7 100644
+--- a/net/minecraft/world/level/levelgen/synth/NormalNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/NormalNoise.java
+@@ -1,5 +1,8 @@
+ package net.minecraft.world.level.levelgen.synth;
+ 
++import com.latticemc.lattice.bridge.NativeNormalNoiseAccess;
++import com.latticemc.lattice.bridge.WorldgenNativeSupport;
++import com.latticemc.lattice.nativelib.NativeDoublePerlinNoise;
+ import com.google.common.annotations.VisibleForTesting;
+ import com.mojang.serialization.Codec;
+ import com.mojang.serialization.codecs.RecordCodecBuilder;
+@@ -13,7 +16,7 @@ import net.minecraft.resources.RegistryFileCodec;
+ import net.minecraft.util.RandomSource;
+ import net.minecraft.util.Util;
+ 
+-public class NormalNoise {
++public class NormalNoise implements NativeNormalNoiseAccess {
+     private static final double INPUT_FACTOR = 1.0181268882175227;
+     private static final double TARGET_DEVIATION = 0.3333333333333333;
+     private final double valueFactor;
+@@ -21,6 +24,7 @@ public class NormalNoise {
+     private final PerlinNoise second;
+     private final double maxValue;
+     private final NormalNoise.NoiseParameters parameters;
++    private final NativeDoublePerlinNoise nativeDoublePerlinNoise;
+ 
+     @Deprecated
+     public static NormalNoise createLegacyNetherBiome(RandomSource random, NormalNoise.NoiseParameters parameters) {
+@@ -62,6 +66,12 @@ public class NormalNoise {
+ 
+         this.valueFactor = 0.16666666666666666 / expectedDeviation(i2 - i1);
+         this.maxValue = (this.first.maxValue() + this.second.maxValue()) * this.valueFactor;
++        this.nativeDoublePerlinNoise = WorldgenNativeSupport.createDouble(this.first, this.second, this.valueFactor);
++    }
++
++    @Override
++    public NativeDoublePerlinNoise lattice$getNativeDoublePerlinNoise() {
++        return this.nativeDoublePerlinNoise;
+     }
+ 
+     public double maxValue() {

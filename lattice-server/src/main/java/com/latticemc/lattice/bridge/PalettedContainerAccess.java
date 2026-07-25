@@ -1,4 +1,4 @@
-package com.latticemc.lattice.mixin;
+package com.latticemc.lattice.bridge;
 
 import java.lang.reflect.Field;
 import net.minecraft.util.BitStorage;

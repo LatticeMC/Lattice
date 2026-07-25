@@ -1,4 +1,4 @@
-package com.latticemc.lattice.mixin;
+package com.latticemc.lattice.bridge;
 
 public record PerlinSnapshot(double[] origins,
                       byte[] permutations,
