@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 13:25:11 +0800
+Subject: [PATCH] Route tagged nearest entity queries through native list path
+
+
+diff --git a/net/minecraft/server/level/ServerEntityGetter.java b/net/minecraft/server/level/ServerEntityGetter.java
+index 1b8c3bbf04c04d5c532d5941f2ade91cef27fce3..bd4d0ac82dddb27d7665f8903016cd828cf669f9 100644
+--- a/net/minecraft/server/level/ServerEntityGetter.java
++++ b/net/minecraft/server/level/ServerEntityGetter.java
+@@ -35,20 +35,14 @@ public interface ServerEntityGetter extends EntityGetter {
+     default @Nullable LivingEntity getNearestEntity(
+         TagKey<EntityType<?>> types, TargetingConditions targetingConditions, @Nullable LivingEntity source, double x, double y, double z, AABB area
+     ) {
+-        double d = Double.MAX_VALUE;
+-        LivingEntity livingEntity = null;
+-
+-        for (LivingEntity livingEntity1 : this.getEntitiesOfClass(LivingEntity.class, area, livingEntity2 -> livingEntity2.getType().is(types))) {
+-            if (targetingConditions.test(this.getLevel(), source, livingEntity1)) {
+-                double d1 = livingEntity1.distanceToSqr(x, y, z);
+-                if (d1 < d) {
+-                    d = d1;
+-                    livingEntity = livingEntity1;
+-                }
+-            }
+-        }
+-
+-        return livingEntity;
++        return this.getNearestEntity(
++            this.getEntitiesOfClass(LivingEntity.class, area, livingEntity -> livingEntity.getType().is(types)),
++            targetingConditions,
++            source,
++            x,
++            y,
++            z
++        );
+     }
+ 
+     default <T extends LivingEntity> @Nullable T getNearestEntity(
