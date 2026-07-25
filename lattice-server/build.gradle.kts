@@ -183,9 +183,6 @@ abstract class MockitoAgentProvider : CommandLineArgumentProvider {
 
 dependencies {
     implementation(project(":lattice-api")) // Purpur // Lattice
-    implementation("org.spongepowered:mixin:0.8.7")
-    implementation("org.ow2.asm:asm-util:9.8")
-    implementation("org.ow2.asm:asm-analysis:9.8")
     implementation("ca.spottedleaf:concurrentutil:0.0.8")
     implementation("org.jline:jline-terminal-ffm:3.27.1") // use ffm on java 22+
     implementation("org.jline:jline-terminal-jni:3.27.1") // fall back to jni on java 21
@@ -266,7 +263,6 @@ tasks.jar {
             "Specification-Title" to "Lattice", // Purpur // Lattice
             "Specification-Version" to project.version,
             "Specification-Vendor" to "Lattice Team", // Purpur // Lattice
-            "MixinConfigs" to "mixin.lattice.json",
             "Brand-Id" to "latticemc:lattice", // Purpur // Lattice
             "Brand-Name" to "Lattice", // Purpur // Lattice
             "Build-Number" to (build ?: ""),
@@ -281,18 +277,6 @@ tasks.jar {
 }
 
 // Compile tests with -parameters for better junit parameterized test names
-
-// Lattice - apply SpongePowered Mixin at compile time
-val applyMixins by tasks.registering(JavaExec::class) {
-    group = "build"
-    description = "Apply SpongePowered Mixin transformations to compiled classes"
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass.set("com.latticemc.lattice.bootstrap.MixinApplicator")
-    val classesDir = sourceSets.main.get().output.classesDirs.first()
-    args(classesDir.absolutePath)
-    dependsOn(tasks.compileJava)
-}
-tasks.jar { dependsOn(applyMixins) }
 
 tasks.compileTestJava {
     options.compilerArgs.add("-parameters")
