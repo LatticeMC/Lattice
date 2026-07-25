@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 26 Jul 2026 00:49:26 +0800
+Subject: [PATCH] Optimize NoiseChunk interpolation and postprocessing hot
+ loops
+
+
+diff --git a/net/minecraft/world/level/chunk/ProtoChunk.java b/net/minecraft/world/level/chunk/ProtoChunk.java
+index 894ab65fdf5da58fd064a96a270097424a1dfc0b..e88370deeb8bc8e8403505af8016f865975b989d 100644
+--- a/net/minecraft/world/level/chunk/ProtoChunk.java
++++ b/net/minecraft/world/level/chunk/ProtoChunk.java
+@@ -287,6 +287,10 @@ public class ProtoChunk extends ChunkAccess {
+         }
+     }
+ 
++    public void lattice$markPosForPostprocessingUnchecked(int sectionIndex, int x, int y, int z) {
++        ChunkAccess.getOrCreateOffsetList(this.postProcessing, sectionIndex).add((short)(x | y << 4 | z << 8));
++    }
++
+     public Heightmap @Nullable [] lattice$surfaceHeightmaps() {
+         if (this.status.isOrAfter(ChunkStatus.INITIALIZE_LIGHT)) {
+             return null;
+diff --git a/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java b/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+index a404230d43c9e411986165773abbe9b91333758f..ab6baa865f73904c16d88422a88bb51434541257 100644
+--- a/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
++++ b/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+@@ -395,7 +395,7 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+                                     heightmapUnprimed1.update(i11, i7, i14, interpolatedState);
+                                     if (aquifer.shouldScheduleFluidUpdate() && !interpolatedState.getFluidState().isEmpty()) {
+                                         if (protoChunk != null) {
+-                                            protoChunk.lattice$markPosForPostprocessing(i10, i7, i13);
++                                            protoChunk.lattice$markPosForPostprocessingUnchecked(sectionIndex, i11, i8, i14);
+                                         } else {
+                                             mutableBlockPos.set(i10, i7, i13);
+                                             chunk.markPosForPostprocessing(mutableBlockPos);
+diff --git a/net/minecraft/world/level/levelgen/NoiseChunk.java b/net/minecraft/world/level/levelgen/NoiseChunk.java
+index 094de1c0993d1a61be0bf8e00ecdea2fc8bda1af..e58829e521d37fc6988a419022e2f8dc858eb545 100644
+--- a/net/minecraft/world/level/levelgen/NoiseChunk.java
++++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
+@@ -1212,7 +1212,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+                 int i01 = z * yRows + y + 1;
+                 int i11 = (z + 1) * yRows + y + 1;
+                 if (i11 < start.length && i11 < end.length) {
+-                    long profileStart = WorldgenProfiler.start();
++                    long profileStart = WorldgenProfiler.hotLoopStart();
+                     this.noise000 = start[i00];
+                     this.noise001 = start[i10];
+                     this.noise100 = end[i00];
+@@ -1319,6 +1319,13 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             double noise011,
+             double noise111
+         ) {
++            if (cellWidth == 4) {
++                lattice$fillCellArrayWidth4(
++                    array, cellHeight, noise000, noise100, noise010, noise110, noise001, noise101, noise011, noise111
++                );
++                return;
++            }
++
+             int arrayIndex = 0;
+             for (int y = cellHeight - 1; y >= 0; y--) {
+                 double yFraction = (double)y / cellHeight;
+@@ -1338,6 +1345,37 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             }
+         }
+ 
++        private static void lattice$fillCellArrayWidth4(
++            double[] array,
++            int cellHeight,
++            double noise000,
++            double noise100,
++            double noise010,
++            double noise110,
++            double noise001,
++            double noise101,
++            double noise011,
++            double noise111
++        ) {
++            int arrayIndex = 0;
++            for (int y = cellHeight - 1; y >= 0; y--) {
++                double yFraction = (double)y / cellHeight;
++                for (int x = 0; x < 4; x++) {
++                    double xFraction = x * 0.25;
++                    double valueZ0 = Mth.lerp(
++                        yFraction, Mth.lerp(xFraction, noise000, noise100), Mth.lerp(xFraction, noise010, noise110)
++                    );
++                    double valueZ1 = Mth.lerp(
++                        yFraction, Mth.lerp(xFraction, noise001, noise101), Mth.lerp(xFraction, noise011, noise111)
++                    );
++                    array[arrayIndex++] = Mth.lerp(0.0, valueZ0, valueZ1);
++                    array[arrayIndex++] = Mth.lerp(0.25, valueZ0, valueZ1);
++                    array[arrayIndex++] = Mth.lerp(0.5, valueZ0, valueZ1);
++                    array[arrayIndex++] = Mth.lerp(0.75, valueZ0, valueZ1);
++                }
++            }
++        }
++
+         @Override
+         public DensityFunction wrapped() {
+             return this.noiseFiller;
