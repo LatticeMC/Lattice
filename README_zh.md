@@ -8,7 +8,9 @@
 
 - Java 21（推荐使用 Temurin）
 - Git
-- CMake >= 3.20（仅在单独构建原生库时需要）
+- CMake >= 3.20
+- Ninja
+- C++20 工具链（Windows 使用 LLVM-MinGW，Linux 使用 GCC 或 Clang，macOS 使用 Apple Clang）
 
 ## 构建
 
@@ -19,7 +21,7 @@
 ./gradlew build
 ```
 
-此命令会应用所有上游补丁（Paper -> Purpur -> Lattice）并编译服务端 jar 包。
+此命令会应用所有上游补丁（Paper -> Purpur -> Lattice），通过 CMake 和 Ninja 构建 C++ 原生库，并将当前平台的原生库自动打包进服务端 jar。Windows 默认在 `C:/Program Files/llvm-mingw` 查找 LLVM-MinGW；需要时可通过 `-PlatticeLlvmMingwHome=<路径>` 覆盖。
 
 ### 原生库（独立构建）
 
@@ -53,11 +55,12 @@ cd lattice-native/build && ctest --output-on-failure
 
 ## 架构
 
-Lattice 遵循标准的 Purpur 补丁系统。服务端修改以文件补丁的形式存储，而非完整源文件。未来将逐步弃用 Mixin hook，转向直接补丁方式，以提升可维护性和上游更新兼容性：
+Lattice 遵循标准的 Purpur/Paperweight 补丁系统。所有服务端集成都已经迁移为直接源码补丁和 feature patch，不再使用运行时字节码变换框架。这样 native 边界更明确，上游变基时也更容易审查：
 
 - `lattice-api/paper-patches/` -- 在 Paper 之上的 API 新增
 - `lattice-server/paper-patches/` -- 在 Paper 之上的服务端修改
 - `lattice-server/purpur-patches/` -- 在 Purpur 之上的服务端修改
+- `lattice-server/minecraft-patches/` -- 对 Minecraft 源码的直接修改
 
 原生库以共享对象形式（`liblattice.so` / `lattice.dll` / `liblattice.dylib`）在启动时通过 JNI 加载。每个原生调用都受 `LatticeNative.isLoaded()` 保护，当原生库不可用时透明回退到 JDK 实现。在 `-Dlattice.verify=true` 模式下，每次原生调用都会被 JDK 参考实现并行执行，输出结果将被比对验证。
 
@@ -119,7 +122,8 @@ Lattice/
 ├── lattice-server/          服务端实现模块
 │   ├── paper-patches/       在 Paper 之上的服务端补丁
 │   ├── purpur-patches/      在 Purpur 之上的服务端补丁
-│   └── src/                 Java 源码（bootstrap、nativelib、mixin）
+│   ├── minecraft-patches/   对 Minecraft 源码的直接补丁
+│   └── src/                 Java 源码（bootstrap、bridge、nativelib）
 ├── scripts/                 构建与上游同步脚本
 ├── build.gradle.kts         根构建文件（paperweight patcher）
 ├── settings.gradle.kts      项目设置

@@ -8,7 +8,9 @@ A high-performance Minecraft server fork built on [Purpur](https://purpurmc.org)
 
 - Java 21 (Temurin recommended)
 - Git
-- CMake >= 3.20 (for building the native library separately)
+- CMake >= 3.20
+- Ninja
+- A C++20 toolchain (LLVM-MinGW on Windows; GCC or Clang on Linux; Apple Clang on macOS)
 
 ## Building
 
@@ -19,7 +21,7 @@ A high-performance Minecraft server fork built on [Purpur](https://purpurmc.org)
 ./gradlew build
 ```
 
-This applies all upstream patches (Paper -> Purpur -> Lattice) and compiles the server jar.
+This applies all upstream patches (Paper -> Purpur -> Lattice), builds the C++ library with CMake and Ninja, and packages the platform native library into the server jar. On Windows, the build looks for LLVM-MinGW in `C:/Program Files/llvm-mingw`; override it with `-PlatticeLlvmMingwHome=<path>` when needed.
 
 ### Native Library (standalone)
 
@@ -53,11 +55,12 @@ cd lattice-native/build && ctest --output-on-failure
 
 ## Architecture
 
-Lattice follows the standard Purpur patch system. Server modifications are stored as file patches rather than full source files. Over time, Mixin-based hooks will be gradually phased out in favor of direct patches for better maintainability and compatibility with upstream updates:
+Lattice follows the standard Purpur/Paperweight patch system. Server integrations are implemented entirely as direct source and feature patches; no runtime bytecode transformation framework is involved. This keeps the native boundaries explicit and makes upstream rebases reviewable:
 
 - `lattice-api/paper-patches/` -- API additions on top of Paper
 - `lattice-server/paper-patches/` -- Server changes on top of Paper
 - `lattice-server/purpur-patches/` -- Server changes on top of Purpur
+- `lattice-server/minecraft-patches/` -- Direct changes to Minecraft sources
 
 The native library is a shared object (`liblattice.so` / `lattice.dll` / `liblattice.dylib`) loaded at startup via JNI. Every native call is guarded by `LatticeNative.isLoaded()` and falls back transparently to the JDK implementation when unavailable. Under `-Dlattice.verify=true`, each native call is shadowed by the JDK reference and outputs are compared.
 
@@ -119,7 +122,8 @@ Lattice/
 ├── lattice-server/          Server implementation module
 │   ├── paper-patches/       Server patches on top of Paper
 │   ├── purpur-patches/      Server patches on top of Purpur
-│   └── src/                 Java sources (bootstrap, nativelib, mixin)
+│   ├── minecraft-patches/   Direct patches to Minecraft sources
+│   └── src/                 Java sources (bootstrap, bridge, nativelib)
 ├── scripts/                 Build and upstream sync scripts
 ├── build.gradle.kts         Root build (paperweight patcher)
 ├── settings.gradle.kts      Project settings

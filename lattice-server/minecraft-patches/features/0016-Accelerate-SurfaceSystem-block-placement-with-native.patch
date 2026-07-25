@@ -5,16 +5,16 @@ Subject: [PATCH] Accelerate SurfaceSystem block placement with native code
 
 
 diff --git a/net/minecraft/world/level/levelgen/SurfaceSystem.java b/net/minecraft/world/level/levelgen/SurfaceSystem.java
-index 8ef5d158b26c5cb4f2029c73d3cbf04c9c74b707..0651853aa38bb307ef122a160c60c31475640502 100644
+index a8e2f661787fd15df5615859c38b16090fef5d0a..d91ef1228a133f0a1f25b7b772c6ea9c0029bd3b 100644
 --- a/net/minecraft/world/level/levelgen/SurfaceSystem.java
 +++ b/net/minecraft/world/level/levelgen/SurfaceSystem.java
 @@ -1,7 +1,21 @@
  package net.minecraft.world.level.levelgen;
  
 +import com.latticemc.lattice.bridge.SurfaceSystemAccessor;
-+import com.latticemc.lattice.mixin.ChunkBlockColumn;
-+import com.latticemc.lattice.mixin.SurfaceSystemAccessImpl;
-+import com.latticemc.lattice.mixin.SurfaceSystemCallbacks;
++import com.latticemc.lattice.bridge.ChunkBlockColumn;
++import com.latticemc.lattice.bridge.SurfaceSystemAccessImpl;
++import com.latticemc.lattice.bridge.SurfaceSystemCallbacks;
 +import com.latticemc.lattice.nativelib.CompiledSurfaceRules;
 +import com.latticemc.lattice.nativelib.LatticeNative;
 +import com.latticemc.lattice.nativelib.NativeMaterialRules;
@@ -241,7 +241,7 @@ index 8ef5d158b26c5cb4f2029c73d3cbf04c9c74b707..0651853aa38bb307ef122a160c60c314
          SurfaceRules.RuleSource ruleSource
      ) {
          // Lattice start - enter the compiled native surface-rule path before constructing vanilla per-chunk rules
--        if (((com.latticemc.lattice.mixin.SurfaceSystemCallbacks)(Object)this).lattice$tryBuildSurface(
+-        if (((com.latticemc.lattice.bridge.SurfaceSystemCallbacks)(Object)this).lattice$tryBuildSurface(
 +        if (this.lattice$tryBuildSurface(
              randomState, biomeManager, biomes, useLegacyRandomSource, context, chunk, noiseChunk, ruleSource
          )) {

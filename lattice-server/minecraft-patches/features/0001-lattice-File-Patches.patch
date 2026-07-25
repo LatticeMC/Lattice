@@ -5,7 +5,7 @@ Subject: [PATCH] lattice File Patches
 
 
 diff --git a/net/minecraft/world/level/levelgen/SurfaceSystem.java b/net/minecraft/world/level/levelgen/SurfaceSystem.java
-index 56693249155fae1af5e12237498504207eb0c7fc..44b79c197e0b887c28581647880851363b012a79 100644
+index 56693249155fae1af5e12237498504207eb0c7fc..6601ac648fdf78deb78de08e74f5e9f515788646 100644
 --- a/net/minecraft/world/level/levelgen/SurfaceSystem.java
 +++ b/net/minecraft/world/level/levelgen/SurfaceSystem.java
 @@ -73,6 +73,13 @@ public class SurfaceSystem {
@@ -13,7 +13,7 @@ index 56693249155fae1af5e12237498504207eb0c7fc..44b79c197e0b887c2858164788085136
          SurfaceRules.RuleSource ruleSource
      ) {
 +        // Lattice start - enter the compiled native surface-rule path before constructing vanilla per-chunk rules
-+        if (((com.latticemc.lattice.mixin.SurfaceSystemCallbacks)(Object)this).lattice$tryBuildSurface(
++        if (((com.latticemc.lattice.bridge.SurfaceSystemCallbacks)(Object)this).lattice$tryBuildSurface(
 +            randomState, biomeManager, biomes, useLegacyRandomSource, context, chunk, noiseChunk, ruleSource
 +        )) {
 +            return;

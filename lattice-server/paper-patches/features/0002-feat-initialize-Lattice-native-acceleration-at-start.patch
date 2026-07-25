@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lattice <lattice@latticemc.org>
 Date: Fri, 19 Jun 2026 00:07:28 +0800
-Subject: [PATCH] feat: bootstrap Lattice mixin framework at startup
+Subject: [PATCH] feat: initialize Lattice native acceleration at startup
 
 
 diff --git a/src/main/java/org/bukkit/craftbukkit/Main.java b/src/main/java/org/bukkit/craftbukkit/Main.java

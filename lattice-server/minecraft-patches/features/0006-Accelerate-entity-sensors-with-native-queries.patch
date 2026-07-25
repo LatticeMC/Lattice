@@ -5,13 +5,13 @@ Subject: [PATCH] Accelerate entity sensors with native queries
 
 
 diff --git a/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java b/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
-index b0c5e41fefc7c9adf1a61bd5b52861736657d37e..ac0e65dda5f61cc0197bcb836fe5cefde7dd4776 100644
+index b0c5e41fefc7c9adf1a61bd5b52861736657d37e..c16ec6febae5a5be0239748cf3768c25d626b156 100644
 --- a/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
 +++ b/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
 @@ -1,7 +1,8 @@
  package net.minecraft.world.entity.ai.sensing;
  
-+import com.latticemc.lattice.mixin.NativeGoalQuerySupport;
++import com.latticemc.lattice.bridge.NativeGoalQuerySupport;
 +import com.latticemc.lattice.nativelib.NativeEntityQuery;
  import com.google.common.collect.ImmutableSet;
 -import java.util.Comparator;
@@ -43,13 +43,13 @@ index b0c5e41fefc7c9adf1a61bd5b52861736657d37e..ac0e65dda5f61cc0197bcb836fe5cefd
          brain.setMemory(MemoryModuleType.NEAREST_LIVING_ENTITIES, entitiesOfClass);
          brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES, new NearestVisibleLivingEntities(level, entity, entitiesOfClass));
 diff --git a/net/minecraft/world/entity/ai/sensing/PlayerSensor.java b/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
-index eb3ec4be63e1710d0ed9021eb8158d56eae89f8d..d41a6afc1fa7d4e1e070e412eca8044043b5b82b 100644
+index eb3ec4be63e1710d0ed9021eb8158d56eae89f8d..6af994228c750fdc13bf2db56b34cb6d1e0b4b52 100644
 --- a/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
 +++ b/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
 @@ -1,10 +1,10 @@
  package net.minecraft.world.entity.ai.sensing;
  
-+import com.latticemc.lattice.mixin.NativeGoalQuerySupport;
++import com.latticemc.lattice.bridge.NativeGoalQuerySupport;
 +import com.latticemc.lattice.nativelib.NativeEntityQuery;
  import com.google.common.collect.ImmutableSet;
 -import java.util.Comparator;

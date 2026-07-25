@@ -5,7 +5,7 @@ Subject: [PATCH] Route entity queries through the native entity index
 
 
 diff --git a/net/minecraft/server/level/ServerEntityGetter.java b/net/minecraft/server/level/ServerEntityGetter.java
-index 878000d1b5ec5d7944fc4da9ff9936fe78d044fc..1b8c3bbf04c04d5c532d5941f2ade91cef27fce3 100644
+index 878000d1b5ec5d7944fc4da9ff9936fe78d044fc..89788b19dcce9f72d7856ef3ca238ef6622b831d 100644
 --- a/net/minecraft/server/level/ServerEntityGetter.java
 +++ b/net/minecraft/server/level/ServerEntityGetter.java
 @@ -54,6 +54,27 @@ public interface ServerEntityGetter extends EntityGetter {
@@ -21,7 +21,7 @@ index 878000d1b5ec5d7944fc4da9ff9936fe78d044fc..1b8c3bbf04c04d5c532d5941f2ade91c
 +                range = Math.max(range, Math.max(dx, Math.max(dy, dz)) + 2.0D);
 +            }
 +            AABB area = AABB.ofSize(new net.minecraft.world.phys.Vec3(x, y, z), range * 2.0D, range * 2.0D, range * 2.0D);
-+            return com.latticemc.lattice.mixin.NativeGoalQuerySupport.findNearestEntityNullableSource(
++            return com.latticemc.lattice.bridge.NativeGoalQuerySupport.findNearestEntityNullableSource(
 +                source,
 +                this.getLevel(),
 +                entities,
@@ -37,7 +37,7 @@ index 878000d1b5ec5d7944fc4da9ff9936fe78d044fc..1b8c3bbf04c04d5c532d5941f2ade91c
          T livingEntity = null;
  
 diff --git a/net/minecraft/world/level/EntityGetter.java b/net/minecraft/world/level/EntityGetter.java
-index 1ad405fba4d7f8e7f4e8dc97b3a73692c16de104..4cd011c7875691b1489f0d961ad294eaad2be64b 100644
+index 1ad405fba4d7f8e7f4e8dc97b3a73692c16de104..77fd37e882b96fa20562f8ac0d09e05788e63fe2 100644
 --- a/net/minecraft/world/level/EntityGetter.java
 +++ b/net/minecraft/world/level/EntityGetter.java
 @@ -119,6 +119,17 @@ public interface EntityGetter extends ca.spottedleaf.moonrise.patches.chunk_syst
@@ -45,7 +45,7 @@ index 1ad405fba4d7f8e7f4e8dc97b3a73692c16de104..4cd011c7875691b1489f0d961ad294ea
  
      default @Nullable Player getNearestPlayer(double x, double y, double z, double distance, @Nullable Predicate<Entity> predicate) {
 +        if (distance >= 0.0D) {
-+            return com.latticemc.lattice.mixin.NativeGoalQuerySupport.findNearestPlayer(
++            return com.latticemc.lattice.bridge.NativeGoalQuerySupport.findNearestPlayer(
 +                this,
 +                x,
 +                y,
@@ -63,7 +63,7 @@ index 1ad405fba4d7f8e7f4e8dc97b3a73692c16de104..4cd011c7875691b1489f0d961ad294ea
  
      default boolean hasNearbyAlivePlayer(double x, double y, double z, double distance) {
 +        if (distance >= 0.0D) {
-+            return com.latticemc.lattice.mixin.NativeGoalQuerySupport.findNearestPlayer(
++            return com.latticemc.lattice.bridge.NativeGoalQuerySupport.findNearestPlayer(
 +                this,
 +                x,
 +                y,

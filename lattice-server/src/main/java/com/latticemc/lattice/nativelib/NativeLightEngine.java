@@ -83,11 +83,11 @@ public class NativeLightEngine {
         disable();
     }
 
-    // ---- Callbacks invoked by native BFS (override in subclass / mixin bridge) ----
+    // ---- Callbacks invoked by native BFS (override in subclass / patch integration bridge) ----
 
     /**
      * Called by native to compute the propagated level from source to target.
-     * Subclass / mixin bridge must override.
+     * Subclass or patch integration bridge must override.
      */
     protected int callbackGetPropagatedLevel(long source, long target, int level) {
         return levelCount;
