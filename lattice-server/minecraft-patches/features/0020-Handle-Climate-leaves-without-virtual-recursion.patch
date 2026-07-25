@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 26 Jul 2026 03:06:11 +0800
+Subject: [PATCH] Handle Climate leaves without virtual recursion
+
+
+diff --git a/net/minecraft/world/level/biome/Climate.java b/net/minecraft/world/level/biome/Climate.java
+index d83c9d053e01cc1e2cd964bd1c0e12bda1a965a6..a04c93831e1a28c00c0b13fd876168778db516e9 100644
+--- a/net/minecraft/world/level/biome/Climate.java
++++ b/net/minecraft/world/level/biome/Climate.java
+@@ -599,7 +599,12 @@ public class Climate {
+                 for (Climate.RTree.Node<T> node : this.children) {
+                     long childDistance = node.distance(targetPoint, cache.distance);
+                     if (cache.distance > childDistance) {
+-                        node.search(targetPoint, cache, childDistance);
++                        if (node instanceof Climate.RTree.Leaf<T> leaf) {
++                            cache.leaf = leaf;
++                            cache.distance = childDistance;
++                        } else {
++                            ((Climate.RTree.SubTree<T>)node).search(targetPoint, cache, childDistance);
++                        }
+                     }
+                 }
+             }
