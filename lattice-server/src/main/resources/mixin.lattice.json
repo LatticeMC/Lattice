@@ -9,8 +9,6 @@
   "server": [
     "EntityCollisionMixin",
     "CollisionUtilMixin",
-    "LevelLineOfSightCacheMixin",
-    "SensingMixin",
     "NearestAttackableTargetGoalMixin",
     "AvoidEntityGoalMixin",
     "TemptGoalMixin",

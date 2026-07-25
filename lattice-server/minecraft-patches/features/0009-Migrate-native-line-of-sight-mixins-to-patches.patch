@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 13:49:11 +0800
+Subject: [PATCH] Migrate native line-of-sight mixins to patches
+
+
+diff --git a/net/minecraft/world/entity/ai/sensing/Sensing.java b/net/minecraft/world/entity/ai/sensing/Sensing.java
+index c569074403b1d8b443aaa98ba9cf9bbd0e98bd2d..a6c877de42131a25664b6ed57bd9c473f3628d41 100644
+--- a/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -1,5 +1,7 @@
+ package net.minecraft.world.entity.ai.sensing;
+ 
++import com.latticemc.lattice.nativelib.LatticeNative;
++import com.latticemc.lattice.nativelib.NativeLineOfSight;
+ import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+ import it.unimi.dsi.fastutil.ints.IntSet;
+ import net.minecraft.util.profiling.Profiler;
+@@ -28,6 +30,37 @@ public class Sensing {
+         } else if (this.unseen.contains(id)) {
+             return false;
+         } else {
++            // Lattice start - native line-of-sight query with vanilla fallback
++            try {
++                Boolean result = NativeLineOfSight.tryHasLineOfSight(this.mob, entity);
++                if (result != null) {
++                    if (LatticeNative.VERIFY) {
++                        boolean vanilla = this.mob.hasLineOfSight(entity);
++                        if (vanilla != result) {
++                            throw new AssertionError(
++                                "lattice.verify: native_los mismatch mob="
++                                    + this.mob.getType()
++                                    + " target="
++                                    + entity.getType()
++                                    + " vanilla="
++                                    + vanilla
++                                    + " native="
++                                    + result
++                            );
++                        }
++                    }
++                    if (result) {
++                        this.seen.add(id);
++                    } else {
++                        this.unseen.add(id);
++                    }
++                    return result;
++                }
++            } catch (Exception exception) {
++                LatticeNative.logFallbackOnce("native_los", exception.getMessage());
++            }
++            // Lattice end - native line-of-sight query with vanilla fallback
++
+             ProfilerFiller profilerFiller = Profiler.get();
+             profilerFiller.push("hasLineOfSight");
+             boolean hasLineOfSight = this.mob.hasLineOfSight(entity);
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 87ba05261739c64c1534df9721e0b067a6191af6..82948a0dad91dbea7fcc27dc4941fcaf5c0f6708 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.level;
+ 
++import com.latticemc.lattice.nativelib.NativeLineOfSight;
+ import com.google.common.collect.Lists;
+ import com.mojang.serialization.Codec;
+ import java.io.IOException;
+@@ -1102,6 +1103,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+             }
+             blockstate.setData(state);
+             blockstate.setFlags(flags);
++            NativeLineOfSight.invalidateSection(this, pos); // Lattice - invalidate native line-of-sight cache
+             return true;
+         }
+         // CraftBukkit end
+@@ -1180,6 +1182,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+                 }
+                 // CraftBukkit end
+ 
++                NativeLineOfSight.invalidateSection(this, pos); // Lattice - invalidate native line-of-sight cache
+                 return true;
+             }
+         }
