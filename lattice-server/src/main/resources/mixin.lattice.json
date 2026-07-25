@@ -7,15 +7,6 @@
   "verbose": true,
   "mixins": [],
   "server": [
-    "NearestAttackableTargetGoalMixin",
-    "AvoidEntityGoalMixin",
-    "TemptGoalMixin",
-    "LookAtPlayerGoalMixin",
-    "BegGoalMixin",
-    "DolphinSwimWithPlayerGoalMixin",
-    "EndermanLookForPlayerGoalMixin",
-    "PandaLookAtPlayerGoalMixin",
-    "PandaBreedGoalMixin",
     "DragonHoldingPatternPhaseMixin",
     "DragonLandingApproachPhaseMixin",
     "DragonSittingScanningPhaseMixin",
@@ -25,7 +16,6 @@
     "BatMixin",
     "SilverfishMixin",
     "AbstractHorseFollowMommyMixin",
-    "OfferFlowerGoalMixin",
     "EndermiteMixin"
   ],
   "client": [],
