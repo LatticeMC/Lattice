@@ -138,6 +138,17 @@ public final class NativePathfinder {
                 + " avgNativeMicros=" + averageMicros(NATIVE_NANOS.sum(), NATIVE_CALLS.sum());
     }
 
+    public static void resetStats() {
+        ATTEMPTS.reset();
+        SUCCESSES.reset();
+        FALLBACKS.reset();
+        VERIFY_MISMATCHES.reset();
+        PRECOMPUTE_CALLS.reset();
+        PRECOMPUTE_NANOS.reset();
+        NATIVE_CALLS.reset();
+        NATIVE_NANOS.reset();
+    }
+
     private static long averageMicros(long nanos, long count) {
         return count <= 0L ? 0L : nanos / count / 1_000L;
     }

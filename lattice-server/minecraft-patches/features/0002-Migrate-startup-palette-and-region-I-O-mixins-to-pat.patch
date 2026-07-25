@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 09:43:16 +0800
+Subject: [PATCH] Migrate startup, palette, and region I/O mixins to patches
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 4af19f9f5152e9f6386e375a1ac5280ce00f48ea..d8e226372a377474f8e47469d6f2db07f778217e 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1264,6 +1264,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+     // Paper end - improve tick loop
+ 
+     protected void runServer() {
++        com.latticemc.lattice.bootstrap.LatticeBootstrap.onServerStart(); // Lattice - initialize native acceleration
+         try {
+             if (!this.initServer()) {
+                 throw new IllegalStateException("Failed to initialize server");
+@@ -1692,6 +1693,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         this.smoothedTickTimeMillis = this.smoothedTickTimeMillis * 0.8F + (float)l / (float)TimeUtil.NANOSECONDS_PER_MILLISECOND * 0.19999999F;
+         this.logTickMethodTime(nanos);
+         profilerFiller.pop();
++        com.latticemc.lattice.command.LatticeDensityCommand.registerBukkit(); // Lattice - register runtime controls
+     }
+ 
+     protected void processPacketsAndTick(boolean sprinting) {
+diff --git a/net/minecraft/util/SimpleBitStorage.java b/net/minecraft/util/SimpleBitStorage.java
+index 08af7687cdbf395116c2ae0c40befa518b796846..9435f8a91342d2b2b4762f38549a7c929e542720 100644
+--- a/net/minecraft/util/SimpleBitStorage.java
++++ b/net/minecraft/util/SimpleBitStorage.java
+@@ -369,6 +369,11 @@ public class SimpleBitStorage implements BitStorage {
+ 
+     @Override
+     public void unpack(int[] array) {
++        if (com.latticemc.lattice.nativelib.LatticeNative.isLoaded()
++                && com.latticemc.lattice.nativelib.NativePaletteOps.tryBulkGet(this.data, this.bits, 0L, array, 0, this.size)) {
++            return;
++        }
++
+         int i = this.data.length;
+         int i1 = 0;
+ 
+diff --git a/net/minecraft/world/level/chunk/storage/RegionFileVersion.java b/net/minecraft/world/level/chunk/storage/RegionFileVersion.java
+index e813dedf8d70ae58d595bcd7bc92a1de845fe4a9..17ace40dbf9a06a313e0f3fd2fa620cfa710f98f 100644
+--- a/net/minecraft/world/level/chunk/storage/RegionFileVersion.java
++++ b/net/minecraft/world/level/chunk/storage/RegionFileVersion.java
+@@ -121,10 +121,16 @@ public class RegionFileVersion {
+     }
+ 
+     public OutputStream wrap(OutputStream outputStream) throws IOException {
++        if (this.id == 2 && com.latticemc.lattice.nativelib.LatticeNative.isLoaded()) {
++            return com.latticemc.lattice.bootstrap.NativeZlibStreams.deflater(outputStream);
++        }
+         return this.outputWrapper.wrap(outputStream);
+     }
+ 
+     public InputStream wrap(InputStream inputStream) throws IOException {
++        if (this.id == 2 && com.latticemc.lattice.nativelib.LatticeNative.isLoaded()) {
++            return com.latticemc.lattice.bootstrap.NativeZlibStreams.inflater(inputStream);
++        }
+         return this.inputWrapper.wrap(inputStream);
+     }
+ 
