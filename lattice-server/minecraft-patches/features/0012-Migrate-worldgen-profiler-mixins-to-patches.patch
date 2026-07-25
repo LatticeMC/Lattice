@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 25 Jul 2026 14:29:58 +0800
+Subject: [PATCH] Migrate worldgen profiler mixins to patches
+
+
+diff --git a/net/minecraft/world/level/chunk/status/ChunkStatusTasks.java b/net/minecraft/world/level/chunk/status/ChunkStatusTasks.java
+index d620862e95abf9f098bb53a76825883f2b1f4bbf..a62587641524393ab4b23f5b95d86b7ea6e6db3d 100644
+--- a/net/minecraft/world/level/chunk/status/ChunkStatusTasks.java
++++ b/net/minecraft/world/level/chunk/status/ChunkStatusTasks.java
+@@ -87,9 +87,10 @@ public class ChunkStatusTasks {
+     static CompletableFuture<ChunkAccess> generateNoise(
+         WorldGenContext worldGenContext, ChunkStep step, StaticCache2D<GenerationChunkHolder> cache, ChunkAccess chunk
+     ) {
++        long lattice$profileStart = com.latticemc.lattice.nativelib.WorldgenProfiler.start();
+         ServerLevel serverLevel = worldGenContext.level();
+         WorldGenRegion worldGenRegion = new WorldGenRegion(serverLevel, cache, step, chunk);
+-        return worldGenContext.generator()
++        CompletableFuture<ChunkAccess> lattice$result = worldGenContext.generator()
+             .fillFromNoise(
+                 Blender.of(worldGenRegion), serverLevel.getChunkSource().randomState(), serverLevel.structureManager().forWorldGenRegion(worldGenRegion), chunk
+             )
+@@ -106,6 +107,8 @@ public class ChunkStatusTasks {
+ 
+                 return (ChunkAccess)chunkAccess;
+             });
++        com.latticemc.lattice.nativelib.WorldgenProfiler.end("status.generateNoise", lattice$profileStart);
++        return lattice$result;
+     }
+ 
+     static CompletableFuture<ChunkAccess> generateSurface(
+diff --git a/net/minecraft/world/level/chunk/status/ChunkStep.java b/net/minecraft/world/level/chunk/status/ChunkStep.java
+index aa8c40d49756611537e2698b7f2a861c303ef842..e2bf91a23ecf51fbace629a8b2860952f0430dca 100644
+--- a/net/minecraft/world/level/chunk/status/ChunkStep.java
++++ b/net/minecraft/world/level/chunk/status/ChunkStep.java
+@@ -60,13 +60,17 @@ public final class ChunkStep implements ca.spottedleaf.moonrise.patches.chunk_sy
+     }
+ 
+     public CompletableFuture<ChunkAccess> apply(WorldGenContext worldGenContext, StaticCache2D<GenerationChunkHolder> cache, ChunkAccess chunk) {
++        long lattice$profileStart = com.latticemc.lattice.nativelib.WorldgenProfiler.start();
++        CompletableFuture<ChunkAccess> lattice$result;
+         if (chunk.getPersistedStatus().isBefore(this.targetStatus)) {
+             ProfiledDuration profiledDuration = JvmProfiler.INSTANCE
+                 .onChunkGenerate(chunk.getPos(), worldGenContext.level().dimension(), this.targetStatus.getName());
+-            return this.task.doWork(worldGenContext, this, cache, chunk).thenApply(chunkAccess -> this.completeChunkGeneration(chunkAccess, profiledDuration));
++            lattice$result = this.task.doWork(worldGenContext, this, cache, chunk).thenApply(chunkAccess -> this.completeChunkGeneration(chunkAccess, profiledDuration));
+         } else {
+-            return this.task.doWork(worldGenContext, this, cache, chunk);
++            lattice$result = this.task.doWork(worldGenContext, this, cache, chunk);
+         }
++        com.latticemc.lattice.nativelib.WorldgenProfiler.end("status." + this.targetStatus.getName(), lattice$profileStart);
++        return lattice$result;
+     }
+ 
+     private ChunkAccess completeChunkGeneration(ChunkAccess chunk, @Nullable ProfiledDuration duration) {
+diff --git a/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java b/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+index 21db1a7e610db08f8c6d544a466cf327a917d328..a404230d43c9e411986165773abbe9b91333758f 100644
+--- a/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
++++ b/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+@@ -302,11 +302,12 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+ 
+     @Override
+     public CompletableFuture<ChunkAccess> fillFromNoise(Blender blender, RandomState randomState, StructureManager structureManager, ChunkAccess chunk) {
++        long lattice$profileStart = com.latticemc.lattice.nativelib.WorldgenProfiler.start();
+         NoiseSettings noiseSettings = this.settings.value().noiseSettings().clampToHeightAccessor(chunk.getHeightAccessorForGeneration());
+         int minY = noiseSettings.minY();
+         int i = Mth.floorDiv(minY, noiseSettings.getCellHeight());
+         int i1 = Mth.floorDiv(noiseSettings.height(), noiseSettings.getCellHeight());
+-        return i1 <= 0 ? CompletableFuture.completedFuture(chunk) : CompletableFuture.supplyAsync(() -> {
++        CompletableFuture<ChunkAccess> lattice$result = i1 <= 0 ? CompletableFuture.completedFuture(chunk) : CompletableFuture.supplyAsync(() -> {
+             int sectionIndex = chunk.getSectionIndex(i1 * noiseSettings.getCellHeight() - 1 + minY);
+             int sectionIndex1 = chunk.getSectionIndex(minY);
+             Set<LevelChunkSection> set = Sets.newHashSet();
+@@ -328,9 +329,12 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+ 
+             return var20;
+         }, Runnable::run); // Paper - rewrite chunk system
++        com.latticemc.lattice.nativelib.WorldgenProfiler.end("noise.fillFromNoise", lattice$profileStart);
++        return lattice$result;
+     }
+ 
+     private ChunkAccess doFill(Blender blender, StructureManager structureManager, RandomState random, ChunkAccess chunk, int minCellY, int cellCountY) {
++        long lattice$profileStart = com.latticemc.lattice.nativelib.WorldgenProfiler.start();
+         NoiseChunk noiseChunk = chunk.getOrCreateNoiseChunk(chunkAccess -> this.createNoiseChunk(chunkAccess, structureManager, blender, random));
+         ProtoChunk protoChunk = chunk instanceof ProtoChunk proto ? proto : null;
+         Heightmap heightmapUnprimed = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
+@@ -408,6 +412,7 @@ public final class NoiseBasedChunkGenerator extends ChunkGenerator {
+         }
+ 
+         noiseChunk.stopInterpolation();
++        com.latticemc.lattice.nativelib.WorldgenProfiler.end("noise.doFill", lattice$profileStart);
+         return chunk;
+     }
+ 
