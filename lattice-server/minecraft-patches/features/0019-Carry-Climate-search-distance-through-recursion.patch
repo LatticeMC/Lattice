@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 26 Jul 2026 02:52:08 +0800
+Subject: [PATCH] Carry Climate search distance through recursion
+
+
+diff --git a/net/minecraft/world/level/biome/Climate.java b/net/minecraft/world/level/biome/Climate.java
+index 46327bbd8206799d087c1c36829e899202e71a20..d83c9d053e01cc1e2cd964bd1c0e12bda1a965a6 100644
+--- a/net/minecraft/world/level/biome/Climate.java
++++ b/net/minecraft/world/level/biome/Climate.java
+@@ -398,13 +398,18 @@ public class Climate {
+                 return cache.leaf.value;
+             }
+ 
+-            Climate.RTree.Leaf<T> leaf = this.root.search(targetPoint, cache.leaf);
+-            cache.store(targetPoint, leaf);
+-            return leaf.value;
++            cache.distance = cache.leaf == null ? Long.MAX_VALUE : cache.leaf.distance(targetPoint);
++            long rootDistance = this.root.distance(targetPoint, cache.distance);
++            if (cache.distance > rootDistance) {
++                this.root.search(targetPoint, cache, rootDistance);
++            }
++            cache.store(targetPoint);
++            return cache.leaf.value;
+         }
+ 
+         private static final class SearchCache<T> {
+             private Climate.RTree.@Nullable Leaf<T> leaf;
++            private long distance;
+             private boolean validTarget;
+             private long temperature;
+             private long humidity;
+@@ -423,8 +428,7 @@ public class Climate {
+                     && this.weirdness == targetPoint.weirdness();
+             }
+ 
+-            private void store(Climate.TargetPoint targetPoint, Climate.RTree.Leaf<T> leaf) {
+-                this.leaf = leaf;
++            private void store(Climate.TargetPoint targetPoint) {
+                 this.temperature = targetPoint.temperature();
+                 this.humidity = targetPoint.humidity();
+                 this.continentalness = targetPoint.continentalness();
+@@ -449,8 +453,9 @@ public class Climate {
+             }
+ 
+             @Override
+-            protected Climate.RTree.Leaf<T> search(Climate.TargetPoint targetPoint, Climate.RTree.@Nullable Leaf<T> leaf) {
+-                return this;
++            protected void search(Climate.TargetPoint targetPoint, Climate.RTree.SearchCache<T> cache, long distance) {
++                cache.leaf = this;
++                cache.distance = distance;
+             }
+         }
+ 
+@@ -493,7 +498,7 @@ public class Climate {
+ 
+             protected abstract Climate.RTree.Leaf<T> search(long[] searchedValues, Climate.RTree.@Nullable Leaf<T> leaf, Climate.DistanceMetric<T> metric);
+ 
+-            protected abstract Climate.RTree.Leaf<T> search(Climate.TargetPoint targetPoint, Climate.RTree.@Nullable Leaf<T> leaf);
++            protected abstract void search(Climate.TargetPoint targetPoint, Climate.RTree.SearchCache<T> cache, long distance);
+ 
+             protected long distance(long[] values) {
+                 long l = Mth.square(distanceToRange(this.min0, this.max0, values[0]));
+@@ -590,23 +595,13 @@ public class Climate {
+             }
+ 
+             @Override
+-            protected Climate.RTree.Leaf<T> search(Climate.TargetPoint targetPoint, Climate.RTree.@Nullable Leaf<T> leaf) {
+-                long l = leaf == null ? Long.MAX_VALUE : leaf.distance(targetPoint);
+-                Climate.RTree.Leaf<T> leaf1 = leaf;
+-
++            protected void search(Climate.TargetPoint targetPoint, Climate.RTree.SearchCache<T> cache, long distance) {
+                 for (Climate.RTree.Node<T> node : this.children) {
+-                    long l1 = node.distance(targetPoint, l);
+-                    if (l > l1) {
+-                        Climate.RTree.Leaf<T> leaf2 = node.search(targetPoint, leaf1);
+-                        long l2 = node == leaf2 ? l1 : leaf2.distance(targetPoint);
+-                        if (l > l2) {
+-                            l = l2;
+-                            leaf1 = leaf2;
+-                        }
++                    long childDistance = node.distance(targetPoint, cache.distance);
++                    if (cache.distance > childDistance) {
++                        node.search(targetPoint, cache, childDistance);
+                     }
+                 }
+-
+-                return leaf1;
+             }
+         }
+     }
