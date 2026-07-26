@@ -145,7 +145,6 @@ constexpr std::int8_t kOpenFlag = 2;
 }
 
 struct MinHeap {
-    static constexpr int kArity = 4;
     std::vector<int>* entries = nullptr;
     std::vector<int>* heap_index = nullptr;
     std::vector<PathfinderNode>* nodes = nullptr;
@@ -160,7 +159,7 @@ struct MinHeap {
 
     void up(int index) noexcept {
         while (index > 0) {
-            const int parent = (index - 1) / kArity;
+            const int parent = (index - 1) >> 1;
             if (!((*nodes)[(*entries)[index]].f < (*nodes)[(*entries)[parent]].f)) break;
             swap_entries(index, parent);
             index = parent;
@@ -169,15 +168,13 @@ struct MinHeap {
 
     void down(int index) noexcept {
         while (true) {
-            const int first_child = index * kArity + 1;
-            if (first_child >= static_cast<int>(entries->size())) break;
-            int best = first_child;
-            const int child_limit = std::min(first_child + kArity,
-                                             static_cast<int>(entries->size()));
-            for (int child = first_child + 1; child < child_limit; ++child) {
-                if ((*nodes)[(*entries)[child]].f < (*nodes)[(*entries)[best]].f) {
-                    best = child;
-                }
+            const int left = (index << 1) + 1;
+            if (left >= static_cast<int>(entries->size())) break;
+            const int right = left + 1;
+            int best = left;
+            if (right < static_cast<int>(entries->size())
+                    && !((*nodes)[(*entries)[left]].f < (*nodes)[(*entries)[right]].f)) {
+                best = right;
             }
             if (!((*nodes)[(*entries)[best]].f < (*nodes)[(*entries)[index]].f)) break;
             swap_entries(index, best);
@@ -394,10 +391,11 @@ namespace {
     float best_node_h = scratch.nodes[start_index].h;
     int visited = 0;
 
-    constexpr int dir_x[4] = {1, 0, -1, 0};
-    constexpr int dir_z[4] = {0, 1, 0, -1};
+    constexpr int dir_x[4] = {0, 1, 0, -1};
+    constexpr int dir_z[4] = {-1, 0, 1, 0};
 
-    while (!heap.empty() && visited++ < in.config.max_visited_nodes) {
+    while (!heap.empty()) {
+        if (++visited >= in.config.max_visited_nodes) break;
         const int current_index = heap.pop();
         PathfinderNode& current = scratch.nodes[static_cast<std::size_t>(current_index)];
         current.flags |= kClosedFlag;

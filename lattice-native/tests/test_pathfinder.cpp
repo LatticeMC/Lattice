@@ -37,7 +37,8 @@ struct Grid {
 };
 
 PathfinderResult run(Grid& grid, int startX, int startY, int startZ,
-                     int targetX, int targetY, int targetZ) {
+                     int targetX, int targetY, int targetZ,
+                     int maxVisitedNodes = -1) {
     PathfinderInputs inputs{};
     inputs.path_types = grid.cells.data();
     inputs.region_size_x = grid.sx;
@@ -51,7 +52,9 @@ PathfinderResult run(Grid& grid, int startX, int startY, int startZ,
     inputs.target_z = &targetZ;
     inputs.target_count = 1;
     inputs.config.max_range = 64.0F;
-    inputs.config.max_visited_nodes = grid.sx * grid.sy * grid.sz;
+    inputs.config.max_visited_nodes = maxVisitedNodes < 0
+        ? grid.sx * grid.sy * grid.sz
+        : maxVisitedNodes;
     inputs.config.reach_range = 0;
     inputs.config.fudge = 1.5F;
     inputs.max_up_step = 1.0F;
@@ -108,6 +111,32 @@ TEST_CASE("pathfinder: unreachable target returns partial path") {
     CHECK_FALSE(result.reached_target);
     CHECK_FALSE(result.path.empty());
     CHECK(result.path.back().x < 2);
+}
+
+TEST_CASE("pathfinder: symmetric detour follows vanilla tie order") {
+    Grid grid(7, 1, 5);
+    fill_floor(grid, 0);
+    for (int z = 1; z < 4; ++z) grid.at(3, 0, z) = BLOCKED;
+    PathfinderResult result = run(grid, 0, 0, 2, 6, 0, 2);
+    REQUIRE(result.reached_target);
+    bool usedNorthGap = false;
+    bool usedSouthGap = false;
+    for (const auto& node : result.path) {
+        if (node.x == 3 && node.z == 0) usedNorthGap = true;
+        if (node.x == 3 && node.z == 4) usedSouthGap = true;
+    }
+    CHECK(usedNorthGap);
+    CHECK_FALSE(usedSouthGap);
+}
+
+TEST_CASE("pathfinder: visited node limit matches vanilla pre-pop check") {
+    Grid grid(3, 1, 3);
+    fill_floor(grid, 0);
+    PathfinderResult result = run(grid, 1, 0, 1, 1, 0, 1, 1);
+    CHECK_FALSE(result.reached_target);
+    REQUIRE(result.path.size() == 1);
+    CHECK(result.path.front().x == 1);
+    CHECK(result.path.front().z == 1);
 }
 
 TEST_CASE("pathfinder: one block jump") {
