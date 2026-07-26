@@ -144,6 +144,8 @@ public final class PathFinderNativeSupport {
 
         int volume = Math.multiplyExact(Math.multiplyExact(sizeX, sizeY), sizeZ);
         byte[] pathTypes = buffers.pathTypes(volume);
+        float[] pathfindingMalus = pathfindingMalusFor(mob);
+        boolean canFloat = evaluator.canFloat();
         PathfindingContext context = new PathfindingContext(region, mob);
         long precomputeStart = System.nanoTime();
         try {
@@ -151,7 +153,7 @@ public final class PathFinderNativeSupport {
                 for (int z = minZ; z <= maxZ; ++z) {
                     for (int x = minX; x <= maxX; ++x) {
                         PathType type = evaluator.getPathTypeOfMob(context, x, y, z, mob);
-                        if (!isNativePathTypeSupported(evaluator, type)) return null;
+                        if (!isNativePathTypeSupported(type, pathfindingMalus[type.ordinal()], canFloat)) return null;
                         int index = ((y - minY) * sizeZ + (z - minZ)) * sizeX + (x - minX);
                         pathTypes[index] = (byte)type.ordinal();
                     }
@@ -183,7 +185,7 @@ public final class PathFinderNativeSupport {
                     targetX, targetY, targetZ, targetCount,
                     maxRange, maxVisitedNodes, reachRange,
                     Mth.floor(mob.getBbWidth() + 1.0F), Mth.floor(mob.getBbHeight() + 1.0F), mob.maxUpStep(),
-                    mob.getMaxFallDistance(), pathfindingMalusFor(mob), outPath);
+                    mob.getMaxFallDistance(), pathfindingMalus, outPath);
         } finally {
             long nativeNanos = System.nanoTime() - nativeStart;
             NativePathfinder.recordNativeNanos(nativeNanos);
@@ -203,14 +205,15 @@ public final class PathFinderNativeSupport {
         return malus;
     }
 
-    private static boolean isNativePathTypeSupported(WalkNodeEvaluator evaluator, PathType type) {
-        return type == PathType.BLOCKED
+    static boolean isNativePathTypeSupported(PathType type, float malus, boolean canFloat) {
+        return malus < 0.0F
+                || type == PathType.BLOCKED
                 || type == PathType.OPEN
                 || type == PathType.WALKABLE
                 || type == PathType.DOOR_OPEN
                 || type == PathType.WALKABLE_DOOR
                 || type == PathType.COCOA
-                || (type == PathType.WATER && evaluator.canFloat());
+                || (type == PathType.WATER && canFloat);
     }
 
     private static boolean matchesVanilla(PathFinder pathFinder,
