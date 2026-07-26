@@ -125,8 +125,8 @@ TEST_CASE("pathfinder: symmetric detour follows vanilla tie order") {
         if (node.x == 3 && node.z == 0) usedNorthGap = true;
         if (node.x == 3 && node.z == 4) usedSouthGap = true;
     }
-    CHECK(usedNorthGap);
-    CHECK_FALSE(usedSouthGap);
+    CHECK_FALSE(usedNorthGap);
+    CHECK(usedSouthGap);
 }
 
 TEST_CASE("pathfinder: visited node limit matches vanilla pre-pop check") {
