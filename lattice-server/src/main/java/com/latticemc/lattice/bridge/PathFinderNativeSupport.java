@@ -65,10 +65,10 @@ public final class PathFinderNativeSupport {
                     maxVisitedNodes, region, mob, walkNodeEvaluator, start, buffers, targetCount, maxRange, reachRange,
                     maxVisitedNodesMultiplier, jfrEvent);
             NativePathfinder.PathResult result = nativeRun == null ? null : nativeRun.result();
-            boolean waterPath = nativeRun != null && nativeRun.usesWater();
-            if (result == null || waterPath || result.length() == 0 || result.targetIndex() < 0 || result.targetIndex() >= targetCount) {
-                if (waterPath) {
-                    NativePathfinder.recordWaterPathResult();
+            boolean unreachedWaterResult = nativeRun != null && nativeRun.containsWater() && result != null && !result.reachedTarget();
+            if (result == null || unreachedWaterResult || result.length() == 0 || result.targetIndex() < 0 || result.targetIndex() >= targetCount) {
+                if (unreachedWaterResult) {
+                    NativePathfinder.recordUnreachedWaterResult();
                 } else if (result != null) {
                     NativePathfinder.recordEmptyResult();
                 }
@@ -162,6 +162,7 @@ public final class PathFinderNativeSupport {
         boolean supportsWater = evaluator.getClass() == WalkNodeEvaluator.class;
         boolean descendWater = supportsWater && !canFloat;
         PathfindingContext context = new PathfindingContext(region, mob);
+        boolean containsWater = false;
         long precomputeStart = System.nanoTime();
         try {
             for (int y = minY; y <= maxY; ++y) {
@@ -172,6 +173,7 @@ public final class PathFinderNativeSupport {
                             NativePathfinder.recordUnsupportedPathType(type);
                             return null;
                         }
+                        containsWater |= type == PathType.WATER;
                         int index = ((y - minY) * sizeZ + (z - minZ)) * sizeX + (x - minX);
                         pathTypes[index] = (byte)type.ordinal();
                     }
@@ -204,7 +206,7 @@ public final class PathFinderNativeSupport {
                     maxRange, maxVisitedNodes, reachRange,
                     Mth.floor(mob.getBbWidth() + 1.0F), Mth.floor(mob.getBbHeight() + 1.0F), mob.maxUpStep(),
                     mob.getMaxFallDistance(), descendWater, pathfindingMalus, outPath);
-            return new NativeRun(result, usesWater(result, pathTypes, minX, minY, minZ, sizeX, sizeY, sizeZ));
+            return new NativeRun(result, containsWater);
         } finally {
             long nativeNanos = System.nanoTime() - nativeStart;
             NativePathfinder.recordNativeNanos(nativeNanos);
@@ -289,24 +291,5 @@ public final class PathFinderNativeSupport {
         return new Path(nodes, target, result.reachedTarget());
     }
 
-    static boolean usesWater(NativePathfinder.PathResult result,
-                             byte[] pathTypes,
-                             int minX,
-                             int minY,
-                             int minZ,
-                             int sizeX,
-                             int sizeY,
-                             int sizeZ) {
-        for (int i = 0; i < result.length(); ++i) {
-            int x = result.x(i) - minX;
-            int y = result.y(i) - minY;
-            int z = result.z(i) - minZ;
-            if (x < 0 || x >= sizeX || y < 0 || y >= sizeY || z < 0 || z >= sizeZ) return true;
-            int index = (y * sizeZ + z) * sizeX + x;
-            if ((pathTypes[index] & 0xFF) == PathType.WATER.ordinal()) return true;
-        }
-        return false;
-    }
-
-    private record NativeRun(NativePathfinder.PathResult result, boolean usesWater) {}
+    private record NativeRun(NativePathfinder.PathResult result, boolean containsWater) {}
 }
