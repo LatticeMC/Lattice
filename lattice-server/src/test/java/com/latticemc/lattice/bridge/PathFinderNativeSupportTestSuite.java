@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.latticemc.lattice.nativelib.NativePathfinder;
 import java.util.EnumSet;
 import java.util.List;
 import net.minecraft.core.BlockPos;
@@ -60,7 +61,29 @@ class PathFinderNativeSupportTestSuite {
         assertTrue(PathFinderNativeSupport.pathMismatch(nativePath, differentPath).contains("node[1] native=1,64,0 vanilla=1,63,0"));
     }
 
+    @Test
+    void detectsWaterAndOutOfBoundsNodesInNativeResult() {
+        NativePathfinder.PathResult waterPath = result(new Node(0, 64, 0), new Node(1, 64, 0));
+        NativePathfinder.PathResult dryPath = result(new Node(0, 64, 0));
+        byte[] pathTypes = {(byte)PathType.WALKABLE.ordinal(), (byte)PathType.WATER.ordinal()};
+
+        assertTrue(PathFinderNativeSupport.usesWater(waterPath, pathTypes, 0, 64, 0, 2, 1, 1));
+        assertFalse(PathFinderNativeSupport.usesWater(dryPath, pathTypes, 0, 64, 0, 2, 1, 1));
+        assertTrue(PathFinderNativeSupport.usesWater(result(new Node(2, 64, 0)), pathTypes, 0, 64, 0, 2, 1, 1));
+    }
+
     private static Path path(Node... nodes) {
         return new Path(List.of(nodes), new BlockPos(1, 64, 0), true);
+    }
+
+    private static NativePathfinder.PathResult result(Node... nodes) {
+        int[] encoded = new int[3 + nodes.length * 3];
+        for (int i = 0; i < nodes.length; ++i) {
+            int offset = 3 + i * 3;
+            encoded[offset] = nodes[i].x;
+            encoded[offset + 1] = nodes[i].y;
+            encoded[offset + 2] = nodes[i].z;
+        }
+        return new NativePathfinder.PathResult(encoded, nodes.length, true, 0);
     }
 }

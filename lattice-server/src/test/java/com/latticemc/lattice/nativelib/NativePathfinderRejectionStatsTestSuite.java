@@ -16,14 +16,14 @@ class NativePathfinderRejectionStatsTestSuite {
     void reportsAndResetsNativeRejectionCauses() {
         NativePathfinder.recordRegionTooSmall();
         NativePathfinder.recordEmptyResult();
-        NativePathfinder.recordUnreachedWaterResult();
+        NativePathfinder.recordWaterPathResult();
         NativePathfinder.recordUnsupportedPathType(PathType.TRAPDOOR);
         NativePathfinder.recordUnsupportedPathType(PathType.TRAPDOOR);
 
         String status = NativePathfinder.stats();
-        assertTrue(status.contains("rejects={smallRegion=1, emptyResult=1, unreachedWater=1, pathTypes=TRAPDOOR=2}"));
+        assertTrue(status.contains("rejects={smallRegion=1, emptyResult=1, waterPath=1, pathTypes=TRAPDOOR=2}"));
 
         NativePathfinder.resetStats();
-        assertTrue(NativePathfinder.stats().contains("rejects={smallRegion=0, emptyResult=0, unreachedWater=0, pathTypes=none}"));
+        assertTrue(NativePathfinder.stats().contains("rejects={smallRegion=0, emptyResult=0, waterPath=0, pathTypes=none}"));
     }
 }
