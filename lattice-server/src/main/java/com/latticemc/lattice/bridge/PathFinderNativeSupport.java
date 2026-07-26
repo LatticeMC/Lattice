@@ -65,6 +65,7 @@ public final class PathFinderNativeSupport {
                     maxVisitedNodes, region, mob, walkNodeEvaluator, start, buffers, targetCount, maxRange, reachRange,
                     maxVisitedNodesMultiplier, jfrEvent);
             if (result == null || result.length() == 0 || result.targetIndex() < 0 || result.targetIndex() >= targetCount) {
+                if (result != null) NativePathfinder.recordEmptyResult();
                 NativePathfinder.recordFallback();
                 return null;
             }
@@ -140,7 +141,10 @@ public final class PathFinderNativeSupport {
         int sizeX = maxX - minX + 1;
         int sizeY = maxY - minY + 1;
         int sizeZ = maxZ - minZ + 1;
-        if (Math.max(sizeX, sizeZ) < MIN_NATIVE_REGION_AXIS) return null;
+        if (Math.max(sizeX, sizeZ) < MIN_NATIVE_REGION_AXIS) {
+            NativePathfinder.recordRegionTooSmall();
+            return null;
+        }
 
         int volume = Math.multiplyExact(Math.multiplyExact(sizeX, sizeY), sizeZ);
         byte[] pathTypes = buffers.pathTypes(volume);
@@ -153,7 +157,10 @@ public final class PathFinderNativeSupport {
                 for (int z = minZ; z <= maxZ; ++z) {
                     for (int x = minX; x <= maxX; ++x) {
                         PathType type = evaluator.getPathTypeOfMob(context, x, y, z, mob);
-                        if (!isNativePathTypeSupported(type, pathfindingMalus[type.ordinal()], canFloat)) return null;
+                        if (!isNativePathTypeSupported(type, pathfindingMalus[type.ordinal()], canFloat)) {
+                            NativePathfinder.recordUnsupportedPathType(type);
+                            return null;
+                        }
                         int index = ((y - minY) * sizeZ + (z - minZ)) * sizeX + (x - minX);
                         pathTypes[index] = (byte)type.ordinal();
                     }

@@ -17,6 +17,9 @@ public final class NativePathfinder {
     private static final LongAdder PRECOMPUTE_NANOS = new LongAdder();
     private static final LongAdder NATIVE_CALLS = new LongAdder();
     private static final LongAdder NATIVE_NANOS = new LongAdder();
+    private static final LongAdder REGIONS_TOO_SMALL = new LongAdder();
+    private static final LongAdder EMPTY_RESULTS = new LongAdder();
+    private static final LongAdder[] UNSUPPORTED_PATH_TYPES = createPathTypeCounters();
     private static volatile boolean nativeChecked;
     private static volatile boolean nativeCompatible;
     private static volatile boolean nativeDisabled;
@@ -139,6 +142,18 @@ public final class NativePathfinder {
         NATIVE_NANOS.add(Math.max(0L, nanos));
     }
 
+    public static void recordRegionTooSmall() {
+        REGIONS_TOO_SMALL.increment();
+    }
+
+    public static void recordEmptyResult() {
+        EMPTY_RESULTS.increment();
+    }
+
+    public static void recordUnsupportedPathType(PathType type) {
+        UNSUPPORTED_PATH_TYPES[type.ordinal()].increment();
+    }
+
     public static String stats() {
         long attempts = ATTEMPTS.sum();
         long successes = SUCCESSES.sum();
@@ -155,6 +170,9 @@ public final class NativePathfinder {
                 + " avgPrecomputeMicros=" + averageMicros(PRECOMPUTE_NANOS.sum(), PRECOMPUTE_CALLS.sum())
                 + " nativeCalls=" + NATIVE_CALLS.sum()
                 + " avgNativeMicros=" + averageMicros(NATIVE_NANOS.sum(), NATIVE_CALLS.sum())
+                + " rejects={smallRegion=" + REGIONS_TOO_SMALL.sum()
+                + ", emptyResult=" + EMPTY_RESULTS.sum()
+                + ", pathTypes=" + unsupportedPathTypes() + "}"
                 + " jfrEvent=" + PathfinderJfrEvent.NAME;
     }
 
@@ -170,6 +188,9 @@ public final class NativePathfinder {
         NATIVE_CALLS.reset();
         NATIVE_NANOS.reset();
         for (LongAdder bucket : TOTAL_MICROS_HISTOGRAM) bucket.reset();
+        REGIONS_TOO_SMALL.reset();
+        EMPTY_RESULTS.reset();
+        for (LongAdder count : UNSUPPORTED_PATH_TYPES) count.reset();
     }
 
     private static long averageMicros(long nanos, long count) {
@@ -180,6 +201,23 @@ public final class NativePathfinder {
         LongAdder[] histogram = new LongAdder[HISTOGRAM_BUCKETS];
         for (int i = 0; i < histogram.length; i++) histogram[i] = new LongAdder();
         return histogram;
+    }
+
+    private static LongAdder[] createPathTypeCounters() {
+        LongAdder[] counters = new LongAdder[PathType.values().length];
+        for (int i = 0; i < counters.length; i++) counters[i] = new LongAdder();
+        return counters;
+    }
+
+    private static String unsupportedPathTypes() {
+        StringBuilder result = new StringBuilder();
+        for (PathType type : PathType.values()) {
+            long count = UNSUPPORTED_PATH_TYPES[type.ordinal()].sum();
+            if (count == 0L) continue;
+            if (!result.isEmpty()) result.append(',');
+            result.append(type.name()).append('=').append(count);
+        }
+        return result.isEmpty() ? "none" : result.toString();
     }
 
     private static int histogramBucket(long micros) {
