@@ -19,7 +19,6 @@ public final class NativePathfinder {
     private static final LongAdder NATIVE_NANOS = new LongAdder();
     private static final LongAdder REGIONS_TOO_SMALL = new LongAdder();
     private static final LongAdder EMPTY_RESULTS = new LongAdder();
-    private static final LongAdder UNREACHED_WATER_RESULTS = new LongAdder();
     private static final LongAdder[] UNSUPPORTED_PATH_TYPES = createPathTypeCounters();
     private static volatile boolean nativeChecked;
     private static volatile boolean nativeCompatible;
@@ -152,10 +151,6 @@ public final class NativePathfinder {
         EMPTY_RESULTS.increment();
     }
 
-    public static void recordUnreachedWaterResult() {
-        UNREACHED_WATER_RESULTS.increment();
-    }
-
     public static void recordUnsupportedPathType(PathType type) {
         UNSUPPORTED_PATH_TYPES[type.ordinal()].increment();
     }
@@ -178,7 +173,6 @@ public final class NativePathfinder {
                 + " avgNativeMicros=" + averageMicros(NATIVE_NANOS.sum(), NATIVE_CALLS.sum())
                 + " rejects={smallRegion=" + REGIONS_TOO_SMALL.sum()
                 + ", emptyResult=" + EMPTY_RESULTS.sum()
-                + ", unreachedWater=" + UNREACHED_WATER_RESULTS.sum()
                 + ", pathTypes=" + unsupportedPathTypes() + "}"
                 + " jfrEvent=" + PathfinderJfrEvent.NAME;
     }
@@ -197,7 +191,6 @@ public final class NativePathfinder {
         for (LongAdder bucket : TOTAL_MICROS_HISTOGRAM) bucket.reset();
         REGIONS_TOO_SMALL.reset();
         EMPTY_RESULTS.reset();
-        UNREACHED_WATER_RESULTS.reset();
         for (LongAdder count : UNSUPPORTED_PATH_TYPES) count.reset();
     }
 
