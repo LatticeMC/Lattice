@@ -76,9 +76,12 @@ public final class PathFinderNativeSupport {
             pathFinder.nodeEvaluator.done();
             prepared = false;
 
-            if (LatticeNative.VERIFY && !matchesVanilla(pathFinder, region, mob, targets, maxRange, reachRange, maxVisitedNodesMultiplier, path)) {
+            String mismatch = LatticeNative.VERIFY
+                    ? mismatchWithVanilla(pathFinder, region, mob, targets, maxRange, reachRange, maxVisitedNodesMultiplier, path)
+                    : null;
+            if (mismatch != null) {
                 NativePathfinder.recordVerifyMismatch();
-                throw new AssertionError("lattice.verify: native pathfinder mismatch");
+                throw new AssertionError("lattice.verify: native pathfinder mismatch: " + mismatch);
             }
 
             NativePathfinder.recordSuccess();
@@ -225,37 +228,44 @@ public final class PathFinderNativeSupport {
                 || (type == PathType.WATER && supportsWater);
     }
 
-    private static boolean matchesVanilla(PathFinder pathFinder,
-                                          PathNavigationRegion region,
-                                          Mob mob,
-                                          Set<BlockPos> targets,
-                                          float maxRange,
-                                          int reachRange,
-                                          float maxVisitedNodesMultiplier,
-                                          Path nativePath) {
+    private static @Nullable String mismatchWithVanilla(PathFinder pathFinder,
+                                                         PathNavigationRegion region,
+                                                         Mob mob,
+                                                         Set<BlockPos> targets,
+                                                         float maxRange,
+                                                         int reachRange,
+                                                         float maxVisitedNodesMultiplier,
+                                                         Path nativePath) {
         VERIFY_SHADOW.set(true);
         try {
             Path vanillaPath = pathFinder.findPath(region, mob, targets, maxRange, reachRange, maxVisitedNodesMultiplier);
-            return samePath(nativePath, vanillaPath);
+            return pathMismatch(nativePath, vanillaPath);
         } finally {
             VERIFY_SHADOW.set(false);
         }
     }
 
-    private static boolean samePath(Path nativePath, Path vanillaPath) {
-        if (nativePath == vanillaPath) return true;
-        if (nativePath == null || vanillaPath == null) return false;
-        if (nativePath.canReach() != vanillaPath.canReach()) return false;
-        if (!nativePath.getTarget().equals(vanillaPath.getTarget())) return false;
-        if (nativePath.getNodeCount() != vanillaPath.getNodeCount()) return false;
+    static @Nullable String pathMismatch(Path nativePath, Path vanillaPath) {
+        if (nativePath == vanillaPath) return null;
+        if (nativePath == null || vanillaPath == null) return "one path is null";
+        if (nativePath.canReach() != vanillaPath.canReach()) {
+            return "reached native=" + nativePath.canReach() + " vanilla=" + vanillaPath.canReach();
+        }
+        if (!nativePath.getTarget().equals(vanillaPath.getTarget())) {
+            return "target native=" + nativePath.getTarget() + " vanilla=" + vanillaPath.getTarget();
+        }
+        if (nativePath.getNodeCount() != vanillaPath.getNodeCount()) {
+            return "length native=" + nativePath.getNodeCount() + " vanilla=" + vanillaPath.getNodeCount();
+        }
         for (int i = 0; i < nativePath.getNodeCount(); ++i) {
             Node nativeNode = nativePath.getNode(i);
             Node vanillaNode = vanillaPath.getNode(i);
             if (nativeNode.x != vanillaNode.x || nativeNode.y != vanillaNode.y || nativeNode.z != vanillaNode.z) {
-                return false;
+                return "node[" + i + "] native=" + nativeNode.x + ',' + nativeNode.y + ',' + nativeNode.z
+                        + " vanilla=" + vanillaNode.x + ',' + vanillaNode.y + ',' + vanillaNode.z;
             }
         }
-        return true;
+        return null;
     }
 
     private static Path toPath(NativePathfinder.PathResult result, BlockPos target) {
