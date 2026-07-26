@@ -244,20 +244,31 @@ public final class PathFinderNativeSupport {
                                                                 int sizeY,
                                                                 int sizeZ,
                                                                 int entityHeight) {
-        int[] column = buffers.pathTypeColumn(entityHeight);
-        for (int localZ = 0; localZ < sizeZ; ++localZ) {
-            int z = minZ + localZ;
-            for (int localX = 0; localX < sizeX; ++localX) {
-                int x = minX + localX;
-                for (int layer = 0; layer < entityHeight; ++layer) {
-                    column[layer] = pathTypeLayer(evaluator, context, x, minY + layer, z);
-                }
-                for (int localY = 0; localY < sizeY; ++localY) {
+        int planeSize = Math.multiplyExact(sizeX, sizeZ);
+        int[] layers = buffers.pathTypeLayers(Math.multiplyExact(entityHeight, planeSize));
+        for (int localY = 0; localY < sizeY; ++localY) {
+            for (int localZ = 0; localZ < sizeZ; ++localZ) {
+                int z = minZ + localZ;
+                for (int localX = 0; localX < sizeX; ++localX) {
+                    int x = minX + localX;
+                    int planeIndex = localZ * sizeX + localX;
+                    if (localY == 0) {
+                        for (int layer = 0; layer < entityHeight; ++layer) {
+                            layers[layer * planeSize + planeIndex] = pathTypeLayer(evaluator, context, x, minY + layer, z);
+                        }
+                    } else {
+                        int topLayer = localY + entityHeight - 1;
+                        layers[topLayer % entityHeight * planeSize + planeIndex] =
+                                pathTypeLayer(evaluator, context, x, minY + topLayer, z);
+                    }
+
                     long types = 0L;
                     for (int layer = 0; layer < entityHeight; ++layer) {
-                        types |= 1L << (column[layer] & 0xFF);
+                        int encoded = layers[(localY + layer) % entityHeight * planeSize + planeIndex];
+                        types |= 1L << (encoded & 0xFF);
                     }
-                    PathType type = selectPathType(types, rawType(column[localY % entityHeight]), pathfindingMalus);
+                    int bottom = layers[localY % entityHeight * planeSize + planeIndex];
+                    PathType type = selectPathType(types, rawType(bottom), pathfindingMalus);
                     if (LatticeNative.VERIFY) {
                         PathType vanilla = evaluator.getPathTypeOfMob(context, x, minY + localY, z, mob);
                         if (type != vanilla) {
@@ -269,10 +280,6 @@ public final class PathFinderNativeSupport {
                         return type;
                     }
                     output[(localY * sizeZ + localZ) * sizeX + localX] = (byte)type.ordinal();
-                    if (localY + 1 < sizeY) {
-                        int slot = localY % entityHeight;
-                        column[slot] = pathTypeLayer(evaluator, context, x, minY + localY + entityHeight, z);
-                    }
                 }
             }
         }
