@@ -156,16 +156,18 @@ public final class PathFinderNativeSupport {
         PathfindingContext context = new PathfindingContext(region, mob);
         long precomputeStart = System.nanoTime();
         try {
-            int entityWidth = Mth.floor(mob.getBbWidth() + 1.0F);
-            int entityHeight = Mth.floor(mob.getBbHeight() + 1.0F);
-            PathType unsupported = entityWidth == 1
-                    ? fillSingleWidthPathTypes(evaluator, context, mob, buffers, pathTypes, pathfindingMalus, canFloat,
-                            minX, minY, minZ, sizeX, sizeY, sizeZ, entityHeight)
-                    : fillPathTypes(evaluator, context, mob, pathTypes, pathfindingMalus, canFloat,
-                            minX, minY, minZ, sizeX, sizeY, sizeZ);
-            if (unsupported != null) {
-                NativePathfinder.recordUnsupportedPathType(unsupported);
-                return null;
+            for (int y = minY; y <= maxY; ++y) {
+                for (int z = minZ; z <= maxZ; ++z) {
+                    for (int x = minX; x <= maxX; ++x) {
+                        PathType type = evaluator.getPathTypeOfMob(context, x, y, z, mob);
+                        if (!isNativePathTypeSupported(type, pathfindingMalus[type.ordinal()], canFloat)) {
+                            NativePathfinder.recordUnsupportedPathType(type);
+                            return null;
+                        }
+                        int index = ((y - minY) * sizeZ + (z - minZ)) * sizeX + (x - minX);
+                        pathTypes[index] = (byte)type.ordinal();
+                    }
+                }
             }
         } finally {
             long precomputeNanos = System.nanoTime() - precomputeStart;
@@ -199,134 +201,6 @@ public final class PathFinderNativeSupport {
             NativePathfinder.recordNativeNanos(nativeNanos);
             if (jfrEvent != null) jfrEvent.recordNative(nativeNanos);
         }
-    }
-
-    private static @Nullable PathType fillPathTypes(WalkNodeEvaluator evaluator,
-                                                     PathfindingContext context,
-                                                     Mob mob,
-                                                     byte[] output,
-                                                     float[] pathfindingMalus,
-                                                     boolean canFloat,
-                                                     int minX,
-                                                     int minY,
-                                                     int minZ,
-                                                     int sizeX,
-                                                     int sizeY,
-                                                     int sizeZ) {
-        for (int localY = 0; localY < sizeY; ++localY) {
-            int y = minY + localY;
-            for (int localZ = 0; localZ < sizeZ; ++localZ) {
-                int z = minZ + localZ;
-                for (int localX = 0; localX < sizeX; ++localX) {
-                    int x = minX + localX;
-                    PathType type = evaluator.getPathTypeOfMob(context, x, y, z, mob);
-                    if (!isNativePathTypeSupported(type, pathfindingMalus[type.ordinal()], canFloat)) {
-                        return type;
-                    }
-                    output[(localY * sizeZ + localZ) * sizeX + localX] = (byte)type.ordinal();
-                }
-            }
-        }
-        return null;
-    }
-
-    private static @Nullable PathType fillSingleWidthPathTypes(WalkNodeEvaluator evaluator,
-                                                                PathfindingContext context,
-                                                                Mob mob,
-                                                                PathfinderBuffers buffers,
-                                                                byte[] output,
-                                                                float[] pathfindingMalus,
-                                                                boolean canFloat,
-                                                                int minX,
-                                                                int minY,
-                                                                int minZ,
-                                                                int sizeX,
-                                                                int sizeY,
-                                                                int sizeZ,
-                                                                int entityHeight) {
-        int planeSize = Math.multiplyExact(sizeX, sizeZ);
-        int[] layers = buffers.pathTypeLayers(Math.multiplyExact(entityHeight, planeSize));
-        for (int localY = 0; localY < sizeY; ++localY) {
-            for (int localZ = 0; localZ < sizeZ; ++localZ) {
-                int z = minZ + localZ;
-                for (int localX = 0; localX < sizeX; ++localX) {
-                    int x = minX + localX;
-                    int planeIndex = localZ * sizeX + localX;
-                    if (localY == 0) {
-                        for (int layer = 0; layer < entityHeight; ++layer) {
-                            layers[layer * planeSize + planeIndex] = pathTypeLayer(evaluator, context, x, minY + layer, z);
-                        }
-                    } else {
-                        int topLayer = localY + entityHeight - 1;
-                        layers[topLayer % entityHeight * planeSize + planeIndex] =
-                                pathTypeLayer(evaluator, context, x, minY + topLayer, z);
-                    }
-
-                    long types = 0L;
-                    for (int layer = 0; layer < entityHeight; ++layer) {
-                        int encoded = layers[(localY + layer) % entityHeight * planeSize + planeIndex];
-                        types |= 1L << (encoded & 0xFF);
-                    }
-                    int bottom = layers[localY % entityHeight * planeSize + planeIndex];
-                    PathType type = selectPathType(types, rawType(bottom), pathfindingMalus);
-                    if (LatticeNative.VERIFY) {
-                        PathType vanilla = evaluator.getPathTypeOfMob(context, x, minY + localY, z, mob);
-                        if (type != vanilla) {
-                            throw new AssertionError("path type snapshot mismatch at " + x + ',' + (minY + localY) + ',' + z
-                                    + ": fast=" + type + " vanilla=" + vanilla);
-                        }
-                    }
-                    if (!isNativePathTypeSupported(type, pathfindingMalus[type.ordinal()], canFloat)) {
-                        return type;
-                    }
-                    output[(localY * sizeZ + localZ) * sizeX + localX] = (byte)type.ordinal();
-                }
-            }
-        }
-        return null;
-    }
-
-    private static int pathTypeLayer(WalkNodeEvaluator evaluator,
-                                     PathfindingContext context,
-                                     int x,
-                                     int y,
-                                     int z) {
-        PathType raw = evaluator.getPathType(context, x, y, z);
-        PathType adjusted = raw;
-        if (raw == PathType.DOOR_WOOD_CLOSED && evaluator.canOpenDoors() && evaluator.canPassDoors()) {
-            adjusted = PathType.WALKABLE_DOOR;
-        } else if (raw == PathType.DOOR_OPEN && !evaluator.canPassDoors()) {
-            adjusted = PathType.BLOCKED;
-        } else if (raw == PathType.RAIL) {
-            BlockPos mobPosition = context.mobPosition();
-            if (evaluator.getPathType(context, mobPosition.getX(), mobPosition.getY(), mobPosition.getZ()) != PathType.RAIL
-                    && evaluator.getPathType(context, mobPosition.getX(), mobPosition.getY() - 1, mobPosition.getZ()) != PathType.RAIL) {
-                adjusted = PathType.UNPASSABLE_RAIL;
-            }
-        }
-        return raw.ordinal() << 8 | adjusted.ordinal();
-    }
-
-    private static PathType rawType(int encoded) {
-        return PATH_TYPES[encoded >>> 8];
-    }
-
-    static PathType selectPathType(long types, PathType bottomRawType, float[] pathfindingMalus) {
-        if ((types & 1L << PathType.FENCE.ordinal()) != 0L) return PathType.FENCE;
-        if ((types & 1L << PathType.UNPASSABLE_RAIL.ordinal()) != 0L) return PathType.UNPASSABLE_RAIL;
-
-        PathType selected = PathType.BLOCKED;
-        for (PathType type : PATH_TYPES) {
-            if ((types & 1L << type.ordinal()) == 0L) continue;
-            float malus = pathfindingMalus[type.ordinal()];
-            if (malus < 0.0F) return type;
-            if (malus >= pathfindingMalus[selected.ordinal()]) selected = type;
-        }
-        return selected != PathType.OPEN
-                        && pathfindingMalus[selected.ordinal()] == 0.0F
-                        && bottomRawType == PathType.OPEN
-                ? PathType.OPEN
-                : selected;
     }
 
     private static float[] pathfindingMalusFor(Mob mob) {
