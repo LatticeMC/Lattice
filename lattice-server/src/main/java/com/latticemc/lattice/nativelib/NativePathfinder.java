@@ -4,7 +4,7 @@ import java.util.concurrent.atomic.LongAdder;
 import net.minecraft.world.level.pathfinder.PathType;
 
 public final class NativePathfinder {
-    public static final int EXPECTED_NATIVE_ABI = 6;
+    public static final int EXPECTED_NATIVE_ABI = 7;
     private static final int HISTOGRAM_BUCKETS = Long.SIZE;
     private static final LongAdder ATTEMPTS = new LongAdder();
     private static final LongAdder SUCCESSES = new LongAdder();
@@ -75,7 +75,7 @@ public final class NativePathfinder {
                                       int[] targetX, int[] targetY, int[] targetZ, int targetCount,
                                       float maxRange, int maxVisitedNodes, int reachRange,
                                       int entityWidth, int entityHeight, float maxUpStep,
-                                      int maxFallDistance, float[] pathfindingMalus,
+                                      int maxFallDistance, boolean descendWater, float[] pathfindingMalus,
                                       int[] outPath) {
         validate(pathTypes, regionSizeX, regionSizeY, regionSizeZ, targetX, targetY, targetZ, targetCount,
                 maxRange, maxVisitedNodes, pathfindingMalus, outPath);
@@ -91,6 +91,7 @@ public final class NativePathfinder {
                     targetX, targetY, targetZ, targetCount,
                     maxRange, maxVisitedNodes, reachRange,
                     entityWidth, entityHeight, maxUpStep, maxFallDistance, pathfindingMalus,
+                    descendWater,
                     outPath);
             return decode(outPath, header);
         } catch (UnsatisfiedLinkError | RuntimeException e) {
@@ -286,6 +287,6 @@ public final class NativePathfinder {
             int[] targetX, int[] targetY, int[] targetZ, int targetCount,
             float maxRange, int maxVisitedNodes, int reachRange,
             int entityWidth, int entityHeight, float maxUpStep,
-            int maxFallDistance, float[] pathfindingMalus,
+            int maxFallDistance, float[] pathfindingMalus, boolean descendWater,
             int[] outPath);
 }

@@ -37,7 +37,7 @@ struct Grid {
 };
 
 PathfinderResult run(Grid& grid, int startX, int startY, int startZ,
-                     int targetX, int targetY, int targetZ) {
+                     int targetX, int targetY, int targetZ, bool descendWater = false) {
     PathfinderInputs inputs{};
     inputs.path_types = grid.cells.data();
     inputs.region_size_x = grid.sx;
@@ -56,6 +56,7 @@ PathfinderResult run(Grid& grid, int startX, int startY, int startZ,
     inputs.config.fudge = 1.5F;
     inputs.max_up_step = 1.0F;
     inputs.max_fall_distance = 3;
+    inputs.descend_water = descendWater;
     inputs.pathfinding_malus = grid.malus.data();
     inputs.pathfinding_malus_count = static_cast<int>(grid.malus.size());
     return find_path(inputs);
@@ -164,6 +165,21 @@ TEST_CASE("pathfinder: supports water when caller marks it passable") {
         if (node.x == 2 && node.z == 1) usedWater = true;
     }
     CHECK(usedWater);
+}
+
+TEST_CASE("pathfinder: non-floating walker descends water columns") {
+    Grid grid(5, 3, 1);
+    for (int x = 0; x < 5; ++x) grid.at(x, 1, 0) = WALKABLE;
+    grid.at(2, 1, 0) = WATER;
+    grid.at(2, 0, 0) = WATER;
+
+    PathfinderResult result = run(grid, 0, 1, 0, 4, 1, 0, true);
+    REQUIRE(result.reached_target);
+    bool usedDeepWater = false;
+    for (const auto& node : result.path) {
+        if (node.x == 2 && node.y == 0 && node.z == 0) usedDeepWater = true;
+    }
+    CHECK(usedDeepWater);
 }
 
 TEST_CASE("pathfinder: walkable door blocks diagonal shortcut") {

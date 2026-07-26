@@ -51,6 +51,7 @@ struct PathfinderInputs {
     int entity_height = 1;
     float max_up_step = 1.0F;
     int max_fall_distance = 3;
+    bool descend_water = false;
     const float* pathfinding_malus = nullptr;
     int pathfinding_malus_count = 0;
 };

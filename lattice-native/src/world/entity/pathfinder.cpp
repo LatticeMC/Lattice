@@ -15,6 +15,7 @@ namespace {
 constexpr std::int8_t kBlocked = 0;
 constexpr std::int8_t kOpen = 1;
 constexpr std::int8_t kWalkableDoor = 3;
+constexpr std::int8_t kWater = 9;
 constexpr std::size_t kMaskWordBits = 64;
 
 constexpr std::int8_t kClosedFlag = 1;
@@ -85,6 +86,17 @@ constexpr std::int8_t kOpenFlag = 2;
                                          const std::vector<std::uint64_t>& standing,
                                          int& out_y, std::int8_t& out_type,
                                          float& out_malus) noexcept {
+    if (in.descend_water && path_type_at(in, x, y, z) == kWater) {
+        int water_y = y;
+        while (water_y > in.region_min_y && path_type_at(in, x, water_y - 1, z) == kWater) {
+            --water_y;
+        }
+        if (standing_node(in, x, water_y, z, standing, out_type, out_malus)) {
+            out_y = water_y;
+            return true;
+        }
+    }
+
     if (standing_node(in, x, y, z, standing, out_type, out_malus)) {
         out_y = y;
         return true;

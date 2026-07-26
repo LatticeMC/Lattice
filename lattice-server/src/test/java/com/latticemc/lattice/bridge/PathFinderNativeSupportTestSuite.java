@@ -32,7 +32,7 @@ class PathFinderNativeSupportTestSuite {
     }
 
     @Test
-    void acceptsWaterOnlyWhenEvaluatorCanFloat() {
+    void acceptsWaterForDirectWalkNodeEvaluatorOnly() {
         assertFalse(PathFinderNativeSupport.isNativePathTypeSupported(PathType.WATER, 8.0F, false));
         assertTrue(PathFinderNativeSupport.isNativePathTypeSupported(PathType.WATER, 8.0F, true));
     }

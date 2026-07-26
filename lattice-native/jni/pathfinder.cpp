@@ -10,7 +10,7 @@ namespace pf = lattice::world::entity;
 
 namespace {
 
-constexpr jint kPathfinderAbiVersion = 6;
+constexpr jint kPathfinderAbiVersion = 7;
 constexpr int kResultHeaderInts = 3;
 
 } // namespace
@@ -35,6 +35,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
         jfloat maxRange, jint maxVisitedNodes, jint reachRange,
         jint entityWidth, jint entityHeight, jfloat maxUpStep,
         jint maxFallDistance, jfloatArray jPathfindingMalus,
+        jboolean descendWater,
         jintArray jOutPath) {
     if (!jPathTypes || !jTargetX || !jTargetY || !jTargetZ || !jPathfindingMalus || !jOutPath) {
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: null array");
@@ -138,6 +139,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
     inputs.entity_height = entityHeight;
     inputs.max_up_step = maxUpStep;
     inputs.max_fall_distance = maxFallDistance;
+    inputs.descend_water = descendWater == JNI_TRUE;
     inputs.pathfinding_malus = reinterpret_cast<const float*>(malus);
     inputs.pathfinding_malus_count = malusCount;
 
