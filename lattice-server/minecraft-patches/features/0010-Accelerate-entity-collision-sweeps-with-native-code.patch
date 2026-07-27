@@ -83,7 +83,7 @@ index de764da80793d272ff597b4a0742ce785838799a..227263470ab3d65c36a597e24517ca41
              final AABB target = potentialCollisions.get(i);
              value = collideZ(target, currentBoundingBox, value);
 diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
-index c6b4c471f6b6d98c05037b80101fe3192a926be3..f95f1ac9f9c2777e6107c1255092ebc7672d9934 100644
+index c6b4c471f6b6d98c05037b80101fe3192a926be3..0af54e03b9cc9b49533144ebe78fbaef2226e472 100644
 --- a/net/minecraft/world/entity/Entity.java
 +++ b/net/minecraft/world/entity/Entity.java
 @@ -1,5 +1,7 @@
@@ -106,7 +106,7 @@ index c6b4c471f6b6d98c05037b80101fe3192a926be3..f95f1ac9f9c2777e6107c1255092ebc7
              return deltaMovement;
          } else {
              Vec3 vec3 = Vec3.ZERO;
-@@ -1694,6 +1699,50 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+@@ -1694,6 +1699,55 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
          }
      }
  
@@ -115,13 +115,17 @@ index c6b4c471f6b6d98c05037b80101fe3192a926be3..f95f1ac9f9c2777e6107c1255092ebc7
 +            return null;
 +        }
 +
++        // Non-cuboid shapes (stairs, walls, ...) decompose into several boxes.
++        // Feeding every box into the sweep is equivalent to vanilla's per-shape
++        // handling, because the clamp takes the min across all obstacles, so
++        // there is no need to bail out on them.
 +        int obstacleCount = 0;
 +        for (VoxelShape shape : shapes) {
-+            List<AABB> aabbs = shape.toAabbs();
-+            if (aabbs.size() != 1) {
++            int boxes = shape.toAabbs().size();
++            if (boxes == 0) {
 +                return null;
 +            }
-+            obstacleCount++;
++            obstacleCount += boxes;
 +        }
 +        if (obstacleCount < 8) {
 +            return null;
@@ -130,14 +134,15 @@ index c6b4c471f6b6d98c05037b80101fe3192a926be3..f95f1ac9f9c2777e6107c1255092ebc7
 +        double[] obstacles = new double[obstacleCount * NativeCollisionSweep.AABB_STRIDE];
 +        int index = 0;
 +        for (VoxelShape shape : shapes) {
-+            AABB box = shape.toAabbs().get(0);
-+            int base = index++ * NativeCollisionSweep.AABB_STRIDE;
-+            obstacles[base] = box.minX;
-+            obstacles[base + 1] = box.minY;
-+            obstacles[base + 2] = box.minZ;
-+            obstacles[base + 3] = box.maxX;
-+            obstacles[base + 4] = box.maxY;
-+            obstacles[base + 5] = box.maxZ;
++            for (AABB box : shape.toAabbs()) {
++                int base = index++ * NativeCollisionSweep.AABB_STRIDE;
++                obstacles[base] = box.minX;
++                obstacles[base + 1] = box.minY;
++                obstacles[base + 2] = box.minZ;
++                obstacles[base + 3] = box.maxX;
++                obstacles[base + 4] = box.maxY;
++                obstacles[base + 5] = box.maxZ;
++            }
 +        }
 +
 +        double[] moving = {

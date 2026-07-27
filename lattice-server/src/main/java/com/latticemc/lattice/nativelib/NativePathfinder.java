@@ -4,7 +4,7 @@ import java.util.concurrent.atomic.LongAdder;
 import net.minecraft.world.level.pathfinder.PathType;
 
 public final class NativePathfinder {
-    public static final int EXPECTED_NATIVE_ABI = 6;
+    public static final int EXPECTED_NATIVE_ABI = 7;
     private static final int HISTOGRAM_BUCKETS = Long.SIZE;
     private static final LongAdder ATTEMPTS = new LongAdder();
     private static final LongAdder SUCCESSES = new LongAdder();
@@ -69,6 +69,7 @@ public final class NativePathfinder {
     }
 
     public static PathResult findPath(byte[] pathTypes,
+                                      float[] floorLevels,
                                       int regionMinX, int regionMinY, int regionMinZ,
                                       int regionSizeX, int regionSizeY, int regionSizeZ,
                                       int startX, int startY, int startZ,
@@ -76,21 +77,26 @@ public final class NativePathfinder {
                                       float maxRange, int maxVisitedNodes, int reachRange,
                                       int entityWidth, int entityHeight, float maxUpStep,
                                       int maxFallDistance, float[] pathfindingMalus,
+                                      float mobJumpHeight, float bbWidth,
+                                      boolean canWalkOverFences, boolean mobsIgnoreRails,
+                                      boolean canFloat, boolean isAmphibious, int levelMinY,
                                       int[] outPath) {
-        validate(pathTypes, regionSizeX, regionSizeY, regionSizeZ, targetX, targetY, targetZ, targetCount,
+        validate(pathTypes, floorLevels, regionSizeX, regionSizeY, regionSizeZ, targetX, targetY, targetZ, targetCount,
                 maxRange, maxVisitedNodes, pathfindingMalus, outPath);
         if (!isAvailable()) {
             throw new IllegalStateException("native pathfinder unavailable");
         }
 
         try {
-            long header = nativeFindPath(pathTypes,
+            long header = nativeFindPath(pathTypes, floorLevels,
                     regionMinX, regionMinY, regionMinZ,
                     regionSizeX, regionSizeY, regionSizeZ,
                     startX, startY, startZ,
                     targetX, targetY, targetZ, targetCount,
                     maxRange, maxVisitedNodes, reachRange,
                     entityWidth, entityHeight, maxUpStep, maxFallDistance, pathfindingMalus,
+                    mobJumpHeight, bbWidth, canWalkOverFences, mobsIgnoreRails,
+                    canFloat, isAmphibious, levelMinY,
                     outPath);
             return decode(outPath, header);
         } catch (UnsatisfiedLinkError | RuntimeException e) {
@@ -252,6 +258,7 @@ public final class NativePathfinder {
     }
 
     private static void validate(byte[] pathTypes,
+                                 float[] floorLevels,
                                  int regionSizeX, int regionSizeY, int regionSizeZ,
                                  int[] targetX, int[] targetY, int[] targetZ,
                                  int targetCount,
@@ -267,6 +274,11 @@ public final class NativePathfinder {
         if (pathTypes.length < volume) {
             throw new IllegalArgumentException("path type array too short");
         }
+        // floorLevels is optional: a null array makes native assume the integer
+        // cell Y, which matches an empty collision shape.
+        if (floorLevels != null && floorLevels.length < volume) {
+            throw new IllegalArgumentException("floor level array too short");
+        }
         if (targetCount <= 0 || targetX.length < targetCount || targetY.length < targetCount || targetZ.length < targetCount) {
             throw new IllegalArgumentException("target arrays too short");
         }
@@ -280,6 +292,7 @@ public final class NativePathfinder {
 
     private static native long nativeFindPath(
             byte[] pathTypes,
+            float[] floorLevels,
             int regionMinX, int regionMinY, int regionMinZ,
             int regionSizeX, int regionSizeY, int regionSizeZ,
             int startX, int startY, int startZ,
@@ -287,5 +300,8 @@ public final class NativePathfinder {
             float maxRange, int maxVisitedNodes, int reachRange,
             int entityWidth, int entityHeight, float maxUpStep,
             int maxFallDistance, float[] pathfindingMalus,
+            float mobJumpHeight, float bbWidth,
+            boolean canWalkOverFences, boolean mobsIgnoreRails,
+            boolean canFloat, boolean isAmphibious, int levelMinY,
             int[] outPath);
 }

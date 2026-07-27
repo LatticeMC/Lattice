@@ -10,7 +10,7 @@ namespace pf = lattice::world::entity;
 
 namespace {
 
-constexpr jint kPathfinderAbiVersion = 6;
+constexpr jint kPathfinderAbiVersion = 7;
 constexpr int kResultHeaderInts = 3;
 
 } // namespace
@@ -27,6 +27,7 @@ JNIEXPORT jlong JNICALL
 Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
         JNIEnv* env, jclass /*cls*/,
         jbyteArray jPathTypes,
+        jfloatArray jFloorLevels,
         jint regionMinX, jint regionMinY, jint regionMinZ,
         jint regionSizeX, jint regionSizeY, jint regionSizeZ,
         jint startX, jint startY, jint startZ,
@@ -35,6 +36,10 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
         jfloat maxRange, jint maxVisitedNodes, jint reachRange,
         jint entityWidth, jint entityHeight, jfloat maxUpStep,
         jint maxFallDistance, jfloatArray jPathfindingMalus,
+        jfloat mobJumpHeight, jfloat bbWidth,
+        jboolean canWalkOverFences, jboolean mobsIgnoreRails,
+        jboolean canFloat, jboolean isAmphibious,
+        jint levelMinY,
         jintArray jOutPath) {
     if (!jPathTypes || !jTargetX || !jTargetY || !jTargetZ || !jPathfindingMalus || !jOutPath) {
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: null array");
@@ -65,6 +70,13 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
     }
     if (env->GetArrayLength(jOutPath) < 3 + maxVisitedNodes * 3) {
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: output array too short");
+        return 0L;
+    }
+    // floorLevels is optional: a null array means "assume integer cell Y",
+    // which matches an empty collision shape. When present it must cover the
+    // same cells as pathTypes since both are indexed identically.
+    if (jFloorLevels && env->GetArrayLength(jFloorLevels) < volume) {
+        lattice::jni::throw_illegal_arg(env, "lattice pathfinder: floor level array too short");
         return 0L;
     }
 
@@ -104,8 +116,25 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
         return 0L;
     }
 
+    // Optional: a null array means "assume integer cell Y", so a failed pin is
+    // only an error when the caller actually supplied the array.
+    jfloat* floorLevels = nullptr;
+    if (jFloorLevels) {
+        floorLevels = env->GetFloatArrayElements(jFloorLevels, nullptr);
+        if (!floorLevels) {
+            env->ReleaseFloatArrayElements(jPathfindingMalus, malus, JNI_ABORT);
+            env->ReleaseIntArrayElements(jTargetZ, targetZ, JNI_ABORT);
+            env->ReleaseIntArrayElements(jTargetY, targetY, JNI_ABORT);
+            env->ReleaseIntArrayElements(jTargetX, targetX, JNI_ABORT);
+            env->ReleaseByteArrayElements(jPathTypes, pathTypes, JNI_ABORT);
+            lattice::jni::throw_oom(env, "lattice pathfinder: pin floor levels");
+            return 0L;
+        }
+    }
+
     jint* out = env->GetIntArrayElements(jOutPath, nullptr);
     if (!out) {
+        if (floorLevels) env->ReleaseFloatArrayElements(jFloorLevels, floorLevels, JNI_ABORT);
         env->ReleaseFloatArrayElements(jPathfindingMalus, malus, JNI_ABORT);
         env->ReleaseIntArrayElements(jTargetZ, targetZ, JNI_ABORT);
         env->ReleaseIntArrayElements(jTargetY, targetY, JNI_ABORT);
@@ -117,6 +146,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
 
     pf::PathfinderInputs inputs{};
     inputs.path_types = reinterpret_cast<const std::int8_t*>(pathTypes);
+    inputs.floor_levels = reinterpret_cast<const float*>(floorLevels);
     inputs.region_min_x = regionMinX;
     inputs.region_min_y = regionMinY;
     inputs.region_min_z = regionMinZ;
@@ -140,6 +170,13 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
     inputs.max_fall_distance = maxFallDistance;
     inputs.pathfinding_malus = reinterpret_cast<const float*>(malus);
     inputs.pathfinding_malus_count = malusCount;
+    inputs.mob_jump_height = mobJumpHeight;
+    inputs.bb_width = bbWidth;
+    inputs.can_walk_over_fences = canWalkOverFences != JNI_FALSE;
+    inputs.mobs_ignore_rails = mobsIgnoreRails != JNI_FALSE;
+    inputs.can_float = canFloat != JNI_FALSE;
+    inputs.is_amphibious = isAmphibious != JNI_FALSE;
+    inputs.level_min_y = levelMinY;
 
     pf::PathfinderOutput output{};
     output.coords = reinterpret_cast<int*>(out + kResultHeaderInts);
@@ -149,6 +186,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
     const bool ok = pf::find_path_into(inputs, output, scratch);
 
     env->ReleaseIntArrayElements(jOutPath, out, 0);
+    if (floorLevels) env->ReleaseFloatArrayElements(jFloorLevels, floorLevels, JNI_ABORT);
     env->ReleaseFloatArrayElements(jPathfindingMalus, malus, JNI_ABORT);
     env->ReleaseIntArrayElements(jTargetZ, targetZ, JNI_ABORT);
     env->ReleaseIntArrayElements(jTargetY, targetY, JNI_ABORT);

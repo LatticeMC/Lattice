@@ -5,6 +5,7 @@ import net.minecraft.core.BlockPos;
 
 public final class PathfinderBuffers {
     private byte[] pathTypes = new byte[0];
+    private float[] floorLevels = new float[0];
     private BlockPos[] targets = new BlockPos[0];
     private int[] targetX = new int[0];
     private int[] targetY = new int[0];
@@ -31,6 +32,13 @@ public final class PathfinderBuffers {
             this.pathTypes = new byte[required];
         }
         return this.pathTypes;
+    }
+
+    public float[] floorLevels(int required) {
+        if (this.floorLevels.length < required) {
+            this.floorLevels = new float[required];
+        }
+        return this.floorLevels;
     }
 
     public int[] targetX(int required) {

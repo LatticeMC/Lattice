@@ -29,6 +29,14 @@ struct PathfinderNode {
 
 struct PathfinderInputs {
     const std::int8_t* path_types = nullptr;
+    /// Per-cell floor level, mirroring `WalkNodeEvaluator.getFloorLevel(BlockPos)`:
+    /// the Y coordinate an entity actually stands at, which for non-cuboid shapes
+    /// (slabs, stairs, farmland, snow layers) is NOT the integer cell Y. Indexed
+    /// identically to `path_types`. Required to reproduce the
+    /// `floorLevel - nodeFloorLevel > getMobJumpHeight()` early-out in
+    /// `findAcceptedNode`; without it the native search mis-judges step-ups onto
+    /// partial blocks. May be null, in which case the integer cell Y is assumed.
+    const float* floor_levels = nullptr;
     int region_min_x = 0;
     int region_min_y = 0;
     int region_min_z = 0;
@@ -53,6 +61,31 @@ struct PathfinderInputs {
     int max_fall_distance = 3;
     const float* pathfinding_malus = nullptr;
     int pathfinding_malus_count = 0;
+
+    /// `WalkNodeEvaluator.getMobJumpHeight()` = max(1.125, maxUpStep). Kept as an
+    /// explicit input rather than derived, so the Java side stays the single source
+    /// of truth for the constant.
+    float mob_jump_height = 1.125F;
+    /// Mirrors `mob.getBbWidth()`. `tryJumpOn` only performs its extra gap
+    /// collision probe when this is < 1.0, and `isDiagonalValid` has a fence
+    /// special case gated on < 0.5.
+    float bb_width = 0.6F;
+    /// `WalkNodeEvaluator.canWalkOverFences()`.
+    bool can_walk_over_fences = false;
+    /// Purpur's `level.purpurConfig.mobsIgnoreRails`, which disables the
+    /// UNPASSABLE_RAIL guard in the `tryJumpOn` branch of `findAcceptedNode`.
+    bool mobs_ignore_rails = false;
+    /// `canFloat()` / `isAmphibious()`, which select between the WATER branches
+    /// of `findAcceptedNode`.
+    bool can_float = false;
+    bool is_amphibious = false;
+    /// Lowest buildable Y (`level.getMinY()`). Carried for reference only: the
+    /// downward scans in `find_accepted_node` stop at `region_min_y` instead,
+    /// because the snapshot holds no path types below its own floor. Where the
+    /// snapshot is shallower than the world, native gives up and Java retries —
+    /// conservative, never a wrong result. Kept so the bound can be tightened
+    /// later without touching all four layers again.
+    int level_min_y = 0;
 };
 
 struct PathfinderResult {

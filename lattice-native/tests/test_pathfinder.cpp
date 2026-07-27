@@ -145,6 +145,12 @@ TEST_CASE("pathfinder: one block jump") {
     grid.at(2, 0, 1) = BLOCKED;
     grid.at(2, 1, 1) = WALKABLE;
     grid.at(3, 1, 1) = OPEN;
+    // Head clearance above the approach cells. Vanilla's getNeighbors only
+    // grants a vertical step allowance when the cell above the origin has a
+    // non-negative malus, so without modelled air the jump is (correctly)
+    // refused -- BLOCKED carries malus -1.
+    grid.at(0, 1, 1) = OPEN;
+    grid.at(1, 1, 1) = OPEN;
     PathfinderResult result = run(grid, 0, 0, 1, 4, 0, 1);
     REQUIRE(result.reached_target);
     bool jumped = false;

@@ -12,9 +12,21 @@
 namespace lattice::world::entity {
 namespace {
 
+// PathType ordinals, mirroring net.minecraft.world.level.pathfinder.PathType.
+// Kept in sync with the Java enum declaration order; the Java side passes
+// `type.ordinal()` in `path_types`.
 constexpr std::int8_t kBlocked = 0;
 constexpr std::int8_t kOpen = 1;
+constexpr std::int8_t kWalkable = 2;
 constexpr std::int8_t kWalkableDoor = 3;
+constexpr std::int8_t kTrapdoor = 4;
+constexpr std::int8_t kPowderSnow = 5;
+constexpr std::int8_t kFence = 7;
+constexpr std::int8_t kWater = 9;
+constexpr std::int8_t kUnpassableRail = 12;
+constexpr std::int8_t kDoorWoodClosed = 18;
+constexpr std::int8_t kDoorIronClosed = 19;
+constexpr std::int8_t kStickyHoney = 22;
 constexpr std::size_t kMaskWordBits = 64;
 
 constexpr std::int8_t kClosedFlag = 1;
@@ -61,14 +73,6 @@ constexpr std::int8_t kOpenFlag = 2;
     return in.pathfinding_malus[index];
 }
 
-[[nodiscard]] bool passable_at(const PathfinderInputs& in,
-                               const std::vector<std::uint64_t>& passable,
-                               int x, int y, int z) noexcept {
-    if (!in_region(in, x, y, z)) return false;
-    const std::size_t index = static_cast<std::size_t>(grid_index(in, x, y, z));
-    return ((passable[index >> 6] >> (index & 63)) & 1ULL) != 0ULL;
-}
-
 [[nodiscard]] bool standing_node(const PathfinderInputs& in, int x, int y, int z,
                                  const std::vector<std::uint64_t>& standing,
                                  std::int8_t& out_type, float& out_malus) noexcept {
@@ -80,36 +84,148 @@ constexpr std::int8_t kOpenFlag = 2;
     return true;
 }
 
-[[nodiscard]] bool resolve_standing_node(const PathfinderInputs& in, int x, int y, int z,
-                                         const std::vector<std::uint64_t>& passable,
-                                         const std::vector<std::uint64_t>& standing,
-                                         int& out_y, std::int8_t& out_type,
-                                         float& out_malus) noexcept {
-    if (standing_node(in, x, y, z, standing, out_type, out_malus)) {
+/// Floor level of a cell, mirroring `WalkNodeEvaluator.getFloorLevel`.
+/// Java precomputes this per cell (it already computes it inside
+/// findAcceptedNode), so here it is a plain lookup. Cells outside the
+/// snapshot report their integer Y, matching an empty collision shape.
+[[nodiscard]] float floor_level_at(const PathfinderInputs& in, int x, int y, int z) noexcept {
+    if (!in.floor_levels || !in_region(in, x, y, z)) return static_cast<float>(y);
+    return in.floor_levels[grid_index(in, x, y, z)];
+}
+
+/// `WalkNodeEvaluator.doesBlockHavePartialCollision`.
+[[nodiscard]] bool partial_collision(std::int8_t type) noexcept {
+    return type == kFence || type == kDoorWoodClosed || type == kDoorIronClosed;
+}
+
+/// Port of `WalkNodeEvaluator.findAcceptedNode`.
+///
+/// The vanilla method is a strictly ordered if/else chain: a jump-up attempt
+/// takes priority over any downward search, and each fallback is mutually
+/// exclusive. The previous native code approximated this with a
+/// down-then-up scan, which resolved a different cell than vanilla on any
+/// terrain with steps or gaps and produced `reached native=false
+/// vanilla=true` mismatches. This keeps vanilla's branch structure and
+/// the float floor-level jump gate.
+///
+/// `vertical_delta_limit` is vanilla's `i1` (0 when the head cell is blocked
+/// or the mob stands in sticky honey), `node_floor_level` the origin cell's
+/// floor level. Returns false where vanilla returns null.
+[[nodiscard]] bool find_accepted_node(const PathfinderInputs& in, int x, int y, int z,
+                                      int vertical_delta_limit, float node_floor_level,
+                                      std::int8_t origin_type,
+                                      const std::vector<std::uint64_t>& standing,
+                                      int& out_y, std::int8_t& out_type,
+                                      float& out_malus, bool& out_closed) noexcept {
+    out_closed = false;
+    if (!in_region(in, x, y, z)) return false;
+
+    // Vanilla gate: floorLevel - nodeFloorLevel > getMobJumpHeight() -> null.
+    // getMobJumpHeight() == max(1.125, maxUpStep).
+    const float jump_height = std::max(1.125F, in.max_up_step);
+    if (floor_level_at(in, x, y, z) - node_floor_level > jump_height) return false;
+
+    const std::int8_t type = path_type_at(in, x, y, z);
+    const float malus = malus_for(in, type);
+
+    bool have_node = false;
+    if (malus >= 0.0F) {
         out_y = y;
+        out_type = type;
+        out_malus = malus;
+        have_node = true;
+    }
+
+    // Vanilla: partial-collision origin requires a collision-free approach.
+    // The sweep test needs the mob's real AABB, which the snapshot does not
+    // carry, so treat it as blocking and let Java handle those origins.
+    if (partial_collision(origin_type) && have_node && out_malus >= 0.0F) {
+        return false;
+    }
+
+    // WALKABLE (and amphibious WATER, not applicable to snapshot mobs) is
+    // accepted as-is without entering the fallback chain.
+    if (type == kWalkable) return have_node;
+
+    if ((!have_node || out_malus < 0.0F)
+            && vertical_delta_limit > 0
+            && (type != kFence || in.can_walk_over_fences)
+            && (in.mobs_ignore_rails || type != kUnpassableRail)
+            && type != kTrapdoor
+            && type != kPowderSnow) {
+        // tryJumpOn: recurse one cell up with limit-1. The narrow-mob gap
+        // collision check is omitted (needs the real AABB); Java rejects
+        // those cases before handing the request to native.
+        return find_accepted_node(in, x, y + 1, z, vertical_delta_limit - 1,
+                                  node_floor_level, origin_type, standing,
+                                  out_y, out_type, out_malus, out_closed);
+    }
+
+    if (type == kWater && !in.can_float) {
+        // tryFindFirstNonWaterBelow: descend while still water, unbounded by
+        // maxFallDistance. Java rejects water snapshots for non-floating mobs,
+        // so this only guards against a stale allowlist.
+        int cursor = y - 1;
+        while (cursor > in.region_min_y) {
+            const std::int8_t below = path_type_at(in, x, cursor, z);
+            if (below != kWater) return have_node;
+            out_y = cursor;
+            out_type = below;
+            out_malus = std::max(have_node ? out_malus : -1.0F, malus_for(in, below));
+            have_node = true;
+            --cursor;
+        }
+        return have_node;
+    }
+
+    if (type == kOpen) {
+        // tryFindFirstGroundNodeBelow: descend to the first standing cell.
+        // Vanilla scans to the world floor, not just maxFallDistance.
+        for (int cursor = y - 1; cursor >= in.region_min_y; --cursor) {
+            std::int8_t found_type = kBlocked;
+            float found_malus = -1.0F;
+            if (standing_node(in, x, cursor, z, standing, found_type, found_malus)) {
+                out_y = cursor;
+                out_type = found_type;
+                out_malus = found_malus;
+                return true;
+            }
+            if (path_type_at(in, x, cursor, z) != kOpen) return false;
+        }
+        return false;
+    }
+
+    if (partial_collision(type) && !have_node) {
+        // getClosedNode: a node vanilla creates but marks closed.
+        out_y = y;
+        out_type = type;
+        out_malus = malus_for(in, type);
+        out_closed = true;
         return true;
     }
 
-    if (passable_at(in, passable, x, y, z)) {
-        const int max_fall = std::max(0, in.max_fall_distance);
-        for (int delta = 1; delta <= max_fall; ++delta) {
-            if (standing_node(in, x, y - delta, z, standing, out_type, out_malus)) {
-                out_y = y - delta;
-                return true;
-            }
-            if (!passable_at(in, passable, x, y - delta, z)) break;
-        }
+    return have_node;
+}
+
+/// Resolve the cell a step in some direction lands on, applying vanilla's
+/// per-origin jump allowance (`getNeighbors`'s `i1` and floor level).
+[[nodiscard]] bool resolve_step_node(const PathfinderInputs& in,
+                                     int origin_x, int origin_y, int origin_z,
+                                     int x, int z,
+                                     const std::vector<std::uint64_t>& standing,
+                                     int& out_y, std::int8_t& out_type,
+                                     float& out_malus, bool& out_closed) noexcept {
+    const std::int8_t origin_type = path_type_at(in, origin_x, origin_y, origin_z);
+    const std::int8_t head_type = path_type_at(in, origin_x, origin_y + 1, origin_z);
+
+    int vertical_delta_limit = 0;
+    if (malus_for(in, head_type) >= 0.0F && origin_type != kStickyHoney) {
+        vertical_delta_limit = static_cast<int>(std::floor(std::max(1.0F, in.max_up_step)));
     }
 
-    const int max_up = std::max(0, static_cast<int>(std::floor(in.max_up_step + 1.0e-4F)));
-    for (int delta = 1; delta <= max_up; ++delta) {
-        if (standing_node(in, x, y + delta, z, standing, out_type, out_malus)) {
-            out_y = y + delta;
-            return true;
-        }
-    }
-
-    return false;
+    const float node_floor_level = floor_level_at(in, origin_x, origin_y, origin_z);
+    return find_accepted_node(in, x, origin_y, z, vertical_delta_limit, node_floor_level,
+                              origin_type, standing, out_y, out_type, out_malus, out_closed);
 }
 
 [[nodiscard]] float distance(int ax, int ay, int az, int bx, int by, int bz) noexcept {
@@ -328,11 +444,14 @@ namespace {
                            in.pathfinding_malus, in.pathfinding_malus_count,
                            PathfinderMasks{scratch.passable.data(), scratch.standing.data()});
 
+    // The start cell comes straight from the mob's position: vanilla's
+    // `getStart` reads the block it already stands in rather than running the
+    // neighbour acceptance chain, so no jump/fall resolution happens here.
     int start_y = in.start_y;
     std::int8_t start_type = kBlocked;
     float start_malus = -1.0F;
-    if (!resolve_standing_node(in, in.start_x, in.start_y, in.start_z, scratch.passable, scratch.standing,
-                               start_y, start_type, start_malus)) {
+    if (!standing_node(in, in.start_x, in.start_y, in.start_z, scratch.standing,
+                       start_type, start_malus)) {
         return empty_search();
     }
 
@@ -429,44 +548,75 @@ namespace {
             continue;
         }
 
+        // Mirror `WalkNodeEvaluator.getNeighbors`: resolve the four cardinal
+        // steps first (kept in `cardinal` even when rejected as a move, since
+        // the diagonal gate inspects them), then the four diagonals.
         int cardinal[4] = {-1, -1, -1, -1};
         for (int d = 0; d < 4; ++d) {
             int ny = current.y;
             std::int8_t type = kBlocked;
             float malus = -1.0F;
-            if (!resolve_standing_node(in, current.x + dir_x[d], current.y,
-                                       current.z + dir_z[d], scratch.passable, scratch.standing,
-                                       ny, type, malus)) {
+            bool closed = false;
+            if (!resolve_step_node(in, current.x, current.y, current.z,
+                                   current.x + dir_x[d], current.z + dir_z[d],
+                                   scratch.standing, ny, type, malus, closed)) {
                 continue;
             }
             const int ni = get_node(current.x + dir_x[d], ny, current.z + dir_z[d], type, malus);
             if (ni < 0) continue;
+            if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
             cardinal[d] = ni;
         }
 
         int neighbors[8];
         int neighbor_count = 0;
         for (int d = 0; d < 4; ++d) {
-            if (cardinal[d] >= 0) neighbors[neighbor_count++] = cardinal[d];
+            const int ni = cardinal[d];
+            if (ni < 0) continue;
+            // isNeighborValid: skip closed nodes; a non-negative malus is
+            // required unless the current node is itself negative-malus.
+            const PathfinderNode& neighbor = scratch.nodes[static_cast<std::size_t>(ni)];
+            if ((neighbor.flags & kClosedFlag) != 0) continue;
+            if (!(neighbor.cost_malus >= 0.0F || current.cost_malus < 0.0F)) continue;
+            neighbors[neighbor_count++] = ni;
         }
         for (int d = 0; d < 4; ++d) {
+            // Vanilla pairs each direction with its clockwise neighbour.
             const int a = cardinal[d];
             const int b = cardinal[(d + 1) & 3];
             if (a < 0 || b < 0) continue;
-            if (scratch.nodes[a].y > current.y || scratch.nodes[b].y > current.y) continue;
-            if (scratch.nodes[a].type == kWalkableDoor || scratch.nodes[b].type == kWalkableDoor) continue;
+
+            // isDiagonalValid(root, xNode, zNode)
+            const PathfinderNode& na = scratch.nodes[static_cast<std::size_t>(a)];
+            const PathfinderNode& nb = scratch.nodes[static_cast<std::size_t>(b)];
+            if (na.y > current.y || nb.y > current.y) continue;
+            if (na.type == kWalkableDoor || nb.type == kWalkableDoor) continue;
+            const bool fence_gap = na.type == kFence && nb.type == kFence && in.bb_width < 0.5F;
+            if (!((nb.y < current.y || nb.cost_malus >= 0.0F || fence_gap)
+                  && (na.y < current.y || na.cost_malus >= 0.0F || fence_gap))) {
+                continue;
+            }
+
+            const int dx = dir_x[d] + dir_x[(d + 1) & 3];
+            const int dz = dir_z[d] + dir_z[(d + 1) & 3];
             int ny = current.y;
             std::int8_t type = kBlocked;
             float malus = -1.0F;
-            if (!resolve_standing_node(in, current.x + dir_x[d] + dir_x[(d + 1) & 3],
-                                       current.y, current.z + dir_z[d] + dir_z[(d + 1) & 3],
-                                       scratch.passable, scratch.standing, ny, type, malus)) {
+            bool closed = false;
+            if (!resolve_step_node(in, current.x, current.y, current.z,
+                                   current.x + dx, current.z + dz,
+                                   scratch.standing, ny, type, malus, closed)) {
                 continue;
             }
-            const int ni = get_node(current.x + dir_x[d] + dir_x[(d + 1) & 3],
-                                    ny, current.z + dir_z[d] + dir_z[(d + 1) & 3],
-                                    type, malus);
-            if (ni >= 0 && scratch.nodes[ni].type != kWalkableDoor) neighbors[neighbor_count++] = ni;
+            const int ni = get_node(current.x + dx, ny, current.z + dz, type, malus);
+            if (ni < 0) continue;
+            if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
+            // isDiagonalValid(node): not closed, not a walkable door, malus >= 0.
+            const PathfinderNode& diagonal = scratch.nodes[static_cast<std::size_t>(ni)];
+            if ((diagonal.flags & kClosedFlag) != 0) continue;
+            if (diagonal.type == kWalkableDoor) continue;
+            if (!(diagonal.cost_malus >= 0.0F)) continue;
+            neighbors[neighbor_count++] = ni;
         }
 
         for (int i = 0; i < neighbor_count; ++i) {

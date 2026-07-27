@@ -151,9 +151,11 @@ public final class PathFinderNativeSupport {
 
         int volume = Math.multiplyExact(Math.multiplyExact(sizeX, sizeY), sizeZ);
         byte[] pathTypes = buffers.pathTypes(volume);
+        float[] floorLevels = buffers.floorLevels(volume);
         float[] pathfindingMalus = pathfindingMalusFor(mob);
         boolean canFloat = evaluator.canFloat();
         PathfindingContext context = new PathfindingContext(region, mob);
+        BlockPos.MutableBlockPos floorCursor = new BlockPos.MutableBlockPos();
         long precomputeStart = System.nanoTime();
         try {
             for (int y = minY; y <= maxY; ++y) {
@@ -166,6 +168,13 @@ public final class PathFinderNativeSupport {
                         }
                         int index = ((y - minY) * sizeZ + (z - minZ)) * sizeX + (x - minX);
                         pathTypes[index] = (byte)type.ordinal();
+                        // Mirror WalkNodeEvaluator.getFloorLevel(BlockPos). Native needs the
+                        // real (fractional) standing height to reproduce findAcceptedNode's
+                        // `floorLevel - nodeFloorLevel > mobJumpHeight` gate on slabs/stairs.
+                        // Snapshots only reach native for non-floating mobs, so the
+                        // canFloat/amphibious water branch of that method cannot apply here.
+                        floorLevels[index] = (float)WalkNodeEvaluator.getFloorLevel(
+                                region, floorCursor.set(x, y, z));
                     }
                 }
             }
@@ -189,13 +198,24 @@ public final class PathFinderNativeSupport {
 
         long nativeStart = System.nanoTime();
         try {
-            return NativePathfinder.findPath(pathTypes,
+            return NativePathfinder.findPath(pathTypes, floorLevels,
                     minX, minY, minZ, sizeX, sizeY, sizeZ,
                     start.x, start.y, start.z,
                     targetX, targetY, targetZ, targetCount,
                     maxRange, maxVisitedNodes, reachRange,
                     Mth.floor(mob.getBbWidth() + 1.0F), Mth.floor(mob.getBbHeight() + 1.0F), mob.maxUpStep(),
-                    mob.getMaxFallDistance(), pathfindingMalus, outPath);
+                    mob.getMaxFallDistance(), pathfindingMalus,
+                    // getMobJumpHeight() == max(1.125, maxUpStep)
+                    (float)Math.max(1.125D, mob.maxUpStep()),
+                    mob.getBbWidth(),
+                    evaluator.canWalkOverFences(),
+                    mob.level().purpurConfig.mobsIgnoreRails,
+                    canFloat,
+                    // isAmphibious() is protected; AmphibiousNodeEvaluator is the only
+                    // subclass that overrides it to true.
+                    evaluator instanceof net.minecraft.world.level.pathfinder.AmphibiousNodeEvaluator,
+                    region.getMinY(),
+                    outPath);
         } finally {
             long nativeNanos = System.nanoTime() - nativeStart;
             NativePathfinder.recordNativeNanos(nativeNanos);
