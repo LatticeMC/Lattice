@@ -23,8 +23,22 @@ public final class NativePathfinder {
     private static volatile boolean nativeChecked;
     private static volatile boolean nativeCompatible;
     private static volatile boolean nativeDisabled;
+    // Operator-facing switch: `/lattice pathfinder enabled <bool>` plus the
+    // `-Dlattice.nativePathfinder=false` startup override. Kept separate from
+    // nativeDisabled, which latches after a hard native failure and must stay
+    // latched even if an operator toggles this back on.
+    private static volatile boolean enabled =
+            !"false".equalsIgnoreCase(System.getProperty("lattice.nativePathfinder", "true"));
 
     private NativePathfinder() {}
+
+    public static boolean isEnabled() {
+        return enabled;
+    }
+
+    public static void setEnabled(boolean value) {
+        enabled = value;
+    }
 
     public record PathResult(int[] encodedPath,
                              int length,
@@ -48,7 +62,7 @@ public final class NativePathfinder {
 
     public static boolean isAvailable() {
         LatticeNative.ensureLoaded();
-        if (!LatticeNative.isLoaded() || nativeDisabled) return false;
+        if (!LatticeNative.isLoaded() || nativeDisabled || !enabled) return false;
         if (nativeChecked) return nativeCompatible;
         synchronized (NativePathfinder.class) {
             if (nativeChecked) return nativeCompatible;
@@ -163,7 +177,8 @@ public final class NativePathfinder {
     public static String stats() {
         long attempts = ATTEMPTS.sum();
         long successes = SUCCESSES.sum();
-        return "attempts=" + attempts
+        return "enabled=" + enabled
+                + " attempts=" + attempts
                 + " completed=" + COMPLETED_REQUESTS.sum()
                 + " successes=" + successes
                 + " fallbacks=" + FALLBACKS.sum()

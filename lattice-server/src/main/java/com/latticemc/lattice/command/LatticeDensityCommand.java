@@ -57,6 +57,16 @@ public final class LatticeDensityCommand extends Command {
                 sender.sendMessage("Lattice pathfinder stats reset");
                 return true;
             }
+            if (args.length == 3 && "enabled".equalsIgnoreCase(args[1])) {
+                Boolean value = parseBoolean(args[2]);
+                if (value == null) {
+                    sender.sendMessage("Expected true or false");
+                    return true;
+                }
+                NativePathfinder.setEnabled(value.booleanValue());
+                sender.sendMessage("Lattice pathfinder enabled=" + value);
+                return true;
+            }
             sender.sendMessage(NativePathfinder.stats());
             return true;
         }
@@ -136,7 +146,10 @@ public final class LatticeDensityCommand extends Command {
             return filter(DENSITY_ACTIONS, args[1]);
         }
         if (args.length == 2 && "pathfinder".equalsIgnoreCase(args[0])) {
-            return filter(List.of("reset"), args[1]);
+            return filter(List.of("reset", "enabled"), args[1]);
+        }
+        if (args.length == 3 && "pathfinder".equalsIgnoreCase(args[0]) && "enabled".equalsIgnoreCase(args[1])) {
+            return filter(BOOLEAN_VALUES, args[2]);
         }
         if (args.length == 3 && "density".equalsIgnoreCase(args[0])) {
             if ("parityInterval".equalsIgnoreCase(args[1])) return filter(List.of("1", "128", "1024", "4096"), args[2]);
