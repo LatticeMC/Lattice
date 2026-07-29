@@ -61,13 +61,15 @@ class NativePathfinderSearchParityTestSuite {
         }
         int maxVisitedNodes = SIZE_X * SIZE_Z;
         return NativePathfinder.findPath(
-                pathTypes,
+                pathTypes, new float[pathTypes.length],
                 0, 0, 0, SIZE_X, 1, SIZE_Z,
                 0, 0, 2,
                 new int[]{6}, new int[]{0}, new int[]{2}, 1,
                 64.0F, maxVisitedNodes, 0,
                 1, 1, 1.0F, 3,
                 NativePathfinder.pathfindingMalusFor(PathType.values()),
+                1.125F, 0.6F,
+                false, false, false, false, 0,
                 new int[3 + maxVisitedNodes * 3]);
     }
 
