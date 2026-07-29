@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 29 Jul 2026 02:11:59 +0800
+Subject: [PATCH] Cache the BlockState to PathType mapping
+
+
+diff --git a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+index 876aef8dab7187a69bcb380692d0f6a583fb38bd..e1772539e1cb7785839026f7103b321a7389966b 100644
+--- a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+@@ -483,6 +483,40 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+             return PathType.BLOCKED;
+         }
+         // Paper end
++        // Lattice start - cache the BlockState -> PathType mapping
++        // Everything below this point reads only the BlockState, so the result is
++        // a pure function of it. Uncached, each call ran up to sixteen
++        // state.is(tag) / FluidState.is(tag) probes, and JFR attributed ~21% of
++        // Server-thread self time during pathfinding to the
++        // ReferenceOpenHashSet.contains calls behind them. BlockStates are
++        // interned, so a direct-mapped table keyed on identity hash replaces the
++        // whole chain with one reference compare on hit.
++        //
++        // Caching a single link of that chain (isBurningBlock) was measured first
++        // and did nothing: the cost simply moved to the remaining probes. The
++        // mapping has to be cached as a whole.
++        //
++        // Entry keeps the state and its result in one reference so a reader can
++        // never pair a state with another state's result; two separate array
++        // stores would need ordering guarantees plain writes do not give. A racing
++        // writer at worst makes another thread redo this pure computation.
++        int slot = System.identityHashCode(blockState) & PATH_TYPE_CACHE_MASK;
++        PathTypeEntry cached = PATH_TYPE_CACHE[slot];
++        if (cached != null && cached.state() == blockState) {
++            return cached.pathType();
++        }
++        PathType computed = computePathTypeFromState(blockState);
++        PATH_TYPE_CACHE[slot] = new PathTypeEntry(blockState, computed);
++        return computed;
++    }
++
++    private static final int PATH_TYPE_CACHE_MASK = 2047;
++    private static final PathTypeEntry[] PATH_TYPE_CACHE = new PathTypeEntry[PATH_TYPE_CACHE_MASK + 1];
++
++    private record PathTypeEntry(BlockState state, PathType pathType) {}
++
++    private static PathType computePathTypeFromState(BlockState blockState) {
++        // Lattice end - cache the BlockState -> PathType mapping
+         Block block = blockState.getBlock();
+         if (blockState.isAir()) {
+             return PathType.OPEN;
