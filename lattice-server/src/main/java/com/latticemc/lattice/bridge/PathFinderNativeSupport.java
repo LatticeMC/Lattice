@@ -154,7 +154,12 @@ public final class PathFinderNativeSupport {
         float[] floorLevels = buffers.floorLevels(volume);
         float[] pathfindingMalus = pathfindingMalusFor(mob);
         boolean canFloat = evaluator.canFloat();
-        PathfindingContext context = new PathfindingContext(region, mob);
+        int entityWidth = Mth.floor(mob.getBbWidth() + 1.0F);
+        int entityHeight = Mth.floor(mob.getBbHeight() + 1.0F);
+        PathfinderBuffers.RawPathTypeCache rawPathTypes = buffers.rawPathTypes(
+                minX - 1, minY - 1, minZ - 1,
+                sizeX + entityWidth + 1, sizeY + entityHeight + 1, sizeZ + entityWidth + 1);
+        CachingPathfindingContext context = new CachingPathfindingContext(region, mob, rawPathTypes);
         BlockPos.MutableBlockPos floorCursor = new BlockPos.MutableBlockPos();
         long precomputeStart = System.nanoTime();
         try {
@@ -181,6 +186,7 @@ public final class PathFinderNativeSupport {
         } finally {
             long precomputeNanos = System.nanoTime() - precomputeStart;
             NativePathfinder.recordPrecomputeNanos(precomputeNanos);
+            NativePathfinder.recordRawPathTypeCache(rawPathTypes.hits(), rawPathTypes.misses(), rawPathTypes.outside());
             if (jfrEvent != null) jfrEvent.recordPrecompute(precomputeNanos);
         }
 
@@ -203,7 +209,7 @@ public final class PathFinderNativeSupport {
                     start.x, start.y, start.z,
                     targetX, targetY, targetZ, targetCount,
                     maxRange, maxVisitedNodes, reachRange,
-                    Mth.floor(mob.getBbWidth() + 1.0F), Mth.floor(mob.getBbHeight() + 1.0F), mob.maxUpStep(),
+                    entityWidth, entityHeight, mob.maxUpStep(),
                     mob.getMaxFallDistance(), pathfindingMalus,
                     // getMobJumpHeight() == max(1.125, maxUpStep)
                     (float)Math.max(1.125D, mob.maxUpStep()),
@@ -220,6 +226,26 @@ public final class PathFinderNativeSupport {
             long nativeNanos = System.nanoTime() - nativeStart;
             NativePathfinder.recordNativeNanos(nativeNanos);
             if (jfrEvent != null) jfrEvent.recordNative(nativeNanos);
+        }
+    }
+
+    private static final class CachingPathfindingContext extends PathfindingContext {
+        private final PathfinderBuffers.RawPathTypeCache cache;
+
+        private CachingPathfindingContext(PathNavigationRegion region,
+                                          Mob mob,
+                                          PathfinderBuffers.RawPathTypeCache cache) {
+            super(region, mob);
+            this.cache = cache;
+        }
+
+        @Override
+        public PathType getPathTypeFromState(int x, int y, int z) {
+            int ordinal = this.cache.get(x, y, z);
+            if (ordinal >= 0) return PATH_TYPES[ordinal];
+            PathType pathType = super.getPathTypeFromState(x, y, z);
+            this.cache.put(x, y, z, pathType.ordinal());
+            return pathType;
         }
     }
 

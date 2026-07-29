@@ -17,6 +17,9 @@ public final class NativePathfinder {
     private static final LongAdder PRECOMPUTE_NANOS = new LongAdder();
     private static final LongAdder NATIVE_CALLS = new LongAdder();
     private static final LongAdder NATIVE_NANOS = new LongAdder();
+    private static final LongAdder RAW_PATH_TYPE_CACHE_HITS = new LongAdder();
+    private static final LongAdder RAW_PATH_TYPE_CACHE_MISSES = new LongAdder();
+    private static final LongAdder RAW_PATH_TYPE_CACHE_OUTSIDE = new LongAdder();
     private static final LongAdder REGIONS_TOO_SMALL = new LongAdder();
     private static final LongAdder EMPTY_RESULTS = new LongAdder();
     private static final LongAdder[] UNSUPPORTED_PATH_TYPES = createPathTypeCounters();
@@ -162,6 +165,12 @@ public final class NativePathfinder {
         NATIVE_NANOS.add(Math.max(0L, nanos));
     }
 
+    public static void recordRawPathTypeCache(long hits, long misses, long outside) {
+        RAW_PATH_TYPE_CACHE_HITS.add(hits);
+        RAW_PATH_TYPE_CACHE_MISSES.add(misses);
+        RAW_PATH_TYPE_CACHE_OUTSIDE.add(outside);
+    }
+
     public static void recordRegionTooSmall() {
         REGIONS_TOO_SMALL.increment();
     }
@@ -191,6 +200,8 @@ public final class NativePathfinder {
                 + " avgPrecomputeMicros=" + averageMicros(PRECOMPUTE_NANOS.sum(), PRECOMPUTE_CALLS.sum())
                 + " nativeCalls=" + NATIVE_CALLS.sum()
                 + " avgNativeMicros=" + averageMicros(NATIVE_NANOS.sum(), NATIVE_CALLS.sum())
+                + " rawPathTypeCache=" + RAW_PATH_TYPE_CACHE_HITS.sum() + '/' + RAW_PATH_TYPE_CACHE_MISSES.sum()
+                + '/' + RAW_PATH_TYPE_CACHE_OUTSIDE.sum()
                 + " rejects={smallRegion=" + REGIONS_TOO_SMALL.sum()
                 + ", emptyResult=" + EMPTY_RESULTS.sum()
                 + ", pathTypes=" + unsupportedPathTypes() + "}"
@@ -208,6 +219,9 @@ public final class NativePathfinder {
         PRECOMPUTE_NANOS.reset();
         NATIVE_CALLS.reset();
         NATIVE_NANOS.reset();
+        RAW_PATH_TYPE_CACHE_HITS.reset();
+        RAW_PATH_TYPE_CACHE_MISSES.reset();
+        RAW_PATH_TYPE_CACHE_OUTSIDE.reset();
         for (LongAdder bucket : TOTAL_MICROS_HISTOGRAM) bucket.reset();
         REGIONS_TOO_SMALL.reset();
         EMPTY_RESULTS.reset();
