@@ -137,19 +137,20 @@ JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeAabbQuery_nativeScanIntersect(
         JNIEnv* env, jclass /*cls*/,
         jdoubleArray jQueryAabbs, jint queryCount,
-        jdoubleArray jEntityAabbs, jint entityCount,
-        jlongArray jVisibility) {
+        jdoubleArray jEntityAabbs, jint entityCount, jint entityStride,
+        jlongArray jVisibility, jboolean entitiesSoa) {
     if (!jVisibility) {
         lattice::jni::throw_illegal_arg(env, "lattice aabb: null visibility");
         return;
     }
-    if (queryCount < 0 || entityCount < 0) {
+    if (queryCount < 0 || entityCount < 0 || entityStride < entityCount) {
         lattice::jni::throw_illegal_arg(env, "lattice aabb: negative count");
         return;
     }
 
     const std::size_t qc    = static_cast<std::size_t>(queryCount);
     const std::size_t ec    = static_cast<std::size_t>(entityCount);
+    const std::size_t es    = static_cast<std::size_t>(entityStride);
     const std::size_t row_l = ve::aabb_row_longs(ec);
 
     if (qc > 0) {
@@ -163,7 +164,7 @@ Java_com_latticemc_lattice_nativelib_NativeAabbQuery_nativeScanIntersect(
     if (ec > 0) {
         if (!jEntityAabbs ||
             env->GetArrayLength(jEntityAabbs) <
-                static_cast<jsize>(ec * ve::kAabbStride)) {
+                static_cast<jsize>((entitiesSoa == JNI_TRUE ? es : ec) * ve::kAabbStride)) {
             lattice::jni::throw_illegal_arg(env, "lattice aabb: entities too short");
             return;
         }
@@ -194,10 +195,17 @@ Java_com_latticemc_lattice_nativelib_NativeAabbQuery_nativeScanIntersect(
         return;
     }
 
-    ve::aabb_scan(
-        static_cast<const double*>(q_p), qc,
-        static_cast<const double*>(e_p), ec,
-        static_cast<std::uint64_t*>(v_p));
+    if (entitiesSoa == JNI_TRUE) {
+        ve::aabb_scan_soa(
+            static_cast<const double*>(q_p), qc,
+            static_cast<const double*>(e_p), ec, es,
+            static_cast<std::uint64_t*>(v_p));
+    } else {
+        ve::aabb_scan(
+            static_cast<const double*>(q_p), qc,
+            static_cast<const double*>(e_p), ec,
+            static_cast<std::uint64_t*>(v_p));
+    }
 
     env->ReleasePrimitiveArrayCritical(jVisibility, v_p, 0);
     if (e_p) env->ReleasePrimitiveArrayCritical(jEntityAabbs, e_p, JNI_ABORT);

@@ -1,0 +1,333 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 15:14:17 +0800
+Subject: [PATCH] perf: cache native entity AABB section planes
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index eb00cddcbc74ffd919c19e116e494089a57ddacf..efb21312e803e38d6cf80982286458ca385ccf03 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -33,6 +33,7 @@ import net.minecraft.world.phys.AABB;
+ import org.slf4j.Logger;
+ import java.util.ArrayList;
+ import java.util.Arrays;
++import java.util.IdentityHashMap;
+ import java.util.Iterator;
+ import java.util.List;
+ import java.util.function.Predicate;
+@@ -57,6 +58,7 @@ public final class ChunkEntitySlices {
+     private final Reference2ObjectOpenHashMap<Class<? extends Entity>, EntityCollectionBySection> entitiesByClass;
+     private final Reference2ObjectOpenHashMap<EntityType<?>, EntityCollectionBySection> entitiesByType;
+     private final EntityList entities = new EntityList();
++    private boolean nativeAabbCacheActive;
+ 
+     public FullChunkStatus status;
+     public final ChunkData chunkData;
+@@ -324,6 +326,33 @@ public final class ChunkEntitySlices {
+         return true;
+     }
+ 
++    public boolean hasNativeAabbCache() {
++        return this.nativeAabbCacheActive;
++    }
++
++    /** Called after Entity#setBoundingBox publishes a new live AABB. */
++    public void updateEntityBoundingBox(final Entity entity, final int chunkSection, final AABB box) {
++        final int sectionIndex = chunkSection - this.minSection;
++        if (sectionIndex < 0 || sectionIndex >= this.allEntities.entitiesBySection.length) {
++            return;
++        }
++        this.allEntities.updateEntityBoundingBox(entity, sectionIndex, box);
++        if (((ChunkSystemEntity)entity).moonrise$isHardColliding()) {
++            this.hardCollidingEntities.updateEntityBoundingBox(entity, sectionIndex, box);
++        }
++        for (final Iterator<Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection>> iterator =
++             this.entitiesByClass.reference2ObjectEntrySet().fastIterator(); iterator.hasNext();) {
++            final Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection> entry = iterator.next();
++            if (entry.getKey().isInstance(entity)) {
++                entry.getValue().updateEntityBoundingBox(entity, sectionIndex, box);
++            }
++        }
++        final EntityCollectionBySection byType = this.entitiesByType.get(entity.getType());
++        if (byType != null) {
++            byType.updateEntityBoundingBox(entity, sectionIndex, box);
++        }
++    }
++
+     public void getHardCollidingEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+         this.hardCollidingEntities.getEntities(except, box, into, predicate);
+     }
+@@ -409,6 +438,8 @@ public final class ChunkEntitySlices {
+         private static final int DEFAULT_CAPACITY = 4;
+ 
+         private E[] storage;
++        private double[] aabbs;
++        private final IdentityHashMap<E, Integer> indices = new IdentityHashMap<>();
+         private int size;
+ 
+         public BasicEntityList() {
+@@ -428,33 +459,34 @@ public final class ChunkEntitySlices {
+         }
+ 
+         private void resize() {
+-            if (this.storage == EMPTY) {
+-                this.storage = (E[])new Entity[DEFAULT_CAPACITY];
+-            } else {
+-                this.storage = Arrays.copyOf(this.storage, this.storage.length * 2);
++            final int oldCapacity = this.storage.length;
++            final int newCapacity = oldCapacity == 0 ? DEFAULT_CAPACITY : oldCapacity * 2;
++            this.storage = Arrays.copyOf(this.storage, newCapacity);
++            if (this.aabbs != null) {
++                final double[] resizedAabbs = new double[newCapacity * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE];
++                for (int component = 0; component < com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE; ++component) {
++                    System.arraycopy(this.aabbs, component * oldCapacity, resizedAabbs, component * newCapacity, this.size);
++                }
++                this.aabbs = resizedAabbs;
+             }
+         }
+ 
+         public void add(final E entity) {
+-            final int idx = this.size++;
++            final int idx = this.size;
+             if (idx >= this.storage.length) {
+                 this.resize();
+-                this.storage[idx] = entity;
+-            } else {
+-                this.storage[idx] = entity;
+             }
++            this.storage[idx] = entity;
++            this.indices.put(entity, idx);
++            if (this.aabbs != null) {
++                this.writeBoundingBox(idx, entity.getBoundingBox());
++            }
++            ++this.size;
+         }
+ 
+         public int indexOf(final E entity) {
+-            final E[] storage = this.storage;
+-
+-            for (int i = 0, len = Math.min(this.storage.length, this.size); i < len; ++i) {
+-                if (storage[i] == entity) {
+-                    return i;
+-                }
+-            }
+-
+-            return -1;
++            final Integer index = this.indices.get(entity);
++            return index == null ? -1 : index;
+         }
+ 
+         public boolean remove(final E entity) {
+@@ -467,9 +499,20 @@ public final class ChunkEntitySlices {
+             final E[] storage = this.storage;
+             if (idx != size) {
+                 System.arraycopy(storage, idx + 1, storage, idx, size - idx);
++                if (this.aabbs != null) {
++                    final int capacity = storage.length;
++                    for (int component = 0; component < com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE; ++component) {
++                        System.arraycopy(this.aabbs, component * capacity + idx + 1,
++                            this.aabbs, component * capacity + idx, size - idx);
++                    }
++                }
++                for (int i = idx; i < size; ++i) {
++                    this.indices.put(storage[i], i);
++                }
+             }
+ 
+             storage[size] = null;
++            this.indices.remove(entity);
+ 
+             return true;
+         }
+@@ -477,6 +520,33 @@ public final class ChunkEntitySlices {
+         public boolean has(final E entity) {
+             return this.indexOf(entity) != -1;
+         }
++
++        public void updateBoundingBox(final E entity, final AABB box) {
++            final Integer index = this.indices.get(entity);
++            if (this.aabbs != null && index != null) {
++                this.writeBoundingBox(index, box);
++            }
++        }
++
++        public void ensureAabbCache() {
++            if (this.aabbs != null) {
++                return;
++            }
++            this.aabbs = new double[this.storage.length * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE];
++            for (int index = 0; index < this.size; ++index) {
++                this.writeBoundingBox(index, this.storage[index].getBoundingBox());
++            }
++        }
++
++        private void writeBoundingBox(final int index, final AABB box) {
++            final int capacity = this.storage.length;
++            this.aabbs[index] = box.minX;
++            this.aabbs[capacity + index] = box.minY;
++            this.aabbs[capacity * 2 + index] = box.minZ;
++            this.aabbs[capacity * 3 + index] = box.maxX;
++            this.aabbs[capacity * 4 + index] = box.maxY;
++            this.aabbs[capacity * 5 + index] = box.maxZ;
++        }
+     }
+ 
+     private static final class EntityCollectionBySection {
+@@ -522,6 +592,13 @@ public final class ChunkEntitySlices {
+             }
+         }
+ 
++        public void updateEntityBoundingBox(final Entity entity, final int sectionIndex, final AABB box) {
++            final BasicEntityList<Entity> list = this.entitiesBySection[sectionIndex];
++            if (list != null) {
++                list.updateBoundingBox(entity, box);
++            }
++        }
++
+         public void getEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+             if (this.count == 0) {
+                 return;
+@@ -543,8 +620,7 @@ public final class ChunkEntitySlices {
+                 }
+ 
+                 final Entity[] storage = list.storage;
+-                if (this.scanEntitiesNative(storage, Math.min(storage.length, list.size()), except, box, into, predicate,
+-                    Integer.MAX_VALUE) >= 0) {
++                if (this.scanEntitiesNative(list, except, box, into, predicate, Integer.MAX_VALUE) >= 0) {
+                     continue;
+                 }
+ 
+@@ -586,8 +662,7 @@ public final class ChunkEntitySlices {
+                 }
+ 
+                 final Entity[] storage = list.storage;
+-                final int nativeResult = this.scanEntitiesNative(storage, Math.min(storage.length, list.size()), except, box, into,
+-                    predicate, maxCount);
++                final int nativeResult = this.scanEntitiesNative(list, except, box, into, predicate, maxCount);
+                 if (nativeResult >= 0) {
+                     if (nativeResult != 0) {
+                         return true;
+@@ -620,11 +695,14 @@ public final class ChunkEntitySlices {
+          * Returns -1 when the Java loop must be used, 0 when the native scan
+          * completed, and 1 when the limited query reached its result cap.
+          */
+-        private int scanEntitiesNative(final Entity[] storage, final int entityCount, final Entity except, final AABB box,
++        private int scanEntitiesNative(final BasicEntityList<Entity> list, final Entity except, final AABB box,
+                                        final List<Entity> into, final Predicate<? super Entity> predicate, final int maxCount) {
++            final int entityCount = list.size();
+             if (entityCount < NATIVE_AABB_MIN_ENTITIES || !com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
+                 return -1;
+             }
++            list.ensureAabbCache();
++            this.slices.nativeAabbCacheActive = true;
+ 
+             final NativeAabbScratchStack scratchStack = NATIVE_AABB_SCRATCH.get();
+             final NativeAabbScratch scratch = scratchStack.acquire(entityCount);
+@@ -636,41 +714,15 @@ public final class ChunkEntitySlices {
+                 scratch.query[4] = box.maxY;
+                 scratch.query[5] = box.maxZ;
+ 
+-                final int minY = entityCount;
+-                final int minZ = minY + entityCount;
+-                final int maxX = minZ + entityCount;
+-                final int maxY = maxX + entityCount;
+-                final int maxZ = maxY + entityCount;
+-                for (int i = 0; i < entityCount; ++i) {
+-                    final Entity entity = storage[i];
+-                    scratch.entities[i] = entity;
+-                    if (entity == null) {
+-                        scratch.aabbs[i] = Double.POSITIVE_INFINITY;
+-                        scratch.aabbs[minY + i] = Double.POSITIVE_INFINITY;
+-                        scratch.aabbs[minZ + i] = Double.POSITIVE_INFINITY;
+-                        scratch.aabbs[maxX + i] = Double.NEGATIVE_INFINITY;
+-                        scratch.aabbs[maxY + i] = Double.NEGATIVE_INFINITY;
+-                        scratch.aabbs[maxZ + i] = Double.NEGATIVE_INFINITY;
+-                        continue;
+-                    }
+-                    final AABB entityBox = entity.getBoundingBox();
+-                    scratch.aabbs[i] = entityBox.minX;
+-                    scratch.aabbs[minY + i] = entityBox.minY;
+-                    scratch.aabbs[minZ + i] = entityBox.minZ;
+-                    scratch.aabbs[maxX + i] = entityBox.maxX;
+-                    scratch.aabbs[maxY + i] = entityBox.maxY;
+-                    scratch.aabbs[maxZ + i] = entityBox.maxZ;
+-                }
+-
+-                com.latticemc.lattice.nativelib.NativeAabbQuery.scanSoa(
+-                    scratch.query, 1, scratch.aabbs, entityCount, scratch.visibility
++                com.latticemc.lattice.nativelib.NativeAabbQuery.scanSoaStrided(
++                    scratch.query, 1, list.aabbs, entityCount, list.storage.length, scratch.visibility
+                 );
+                 for (int i = 0; i < entityCount; ++i) {
+                     if (((scratch.visibility[i >>> 6] >>> (i & 63)) & 1L) == 0L) {
+                         continue;
+                     }
+-                    final Entity entity = scratch.entities[i];
+-                    if (entity == null || entity == except || (predicate != null && !predicate.test(entity))) {
++                    final Entity entity = list.storage[i];
++                    if (entity == except || (predicate != null && !predicate.test(entity))) {
+                         continue;
+                     }
+                     into.add(entity);
+@@ -704,16 +756,10 @@ public final class ChunkEntitySlices {
+     }
+ 
+     private static final class NativeAabbScratch {
+-        private Entity[] entities = new Entity[0];
+-        private double[] aabbs = new double[0];
+         private final double[] query = new double[6];
+         private long[] visibility = new long[0];
+ 
+         void ensureCapacity(final int entityCount) {
+-            if (this.entities.length < entityCount) {
+-                this.entities = new Entity[entityCount];
+-                this.aabbs = new double[entityCount * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE];
+-            }
+             final int visibilityLongs = com.latticemc.lattice.nativelib.NativeAabbQuery.rowLongs(entityCount);
+             if (this.visibility.length < visibilityLongs) {
+                 this.visibility = new long[visibilityLongs];
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+index 2d24d03bbdb5ee0d862cbfff2219f58afffafe12..9ff9191dfafb43ace7a4a768120f322e95a2c93f 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+@@ -464,6 +464,20 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+         return slices == null || !slices.isPreventingStatusUpdates();
+     }
+ 
++    /** Receives Entity#setBoundingBox after the entity's section callback ran. */
++    public void updateEntityBoundingBox(final Entity entity, final AABB box) {
++        final int sectionX = ((ChunkSystemEntity)entity).moonrise$getSectionX();
++        final int sectionY = ((ChunkSystemEntity)entity).moonrise$getSectionY();
++        final int sectionZ = ((ChunkSystemEntity)entity).moonrise$getSectionZ();
++        if (sectionX == Integer.MIN_VALUE || sectionY == Integer.MIN_VALUE || sectionZ == Integer.MIN_VALUE) {
++            return;
++        }
++        final ChunkEntitySlices slices = this.getChunk(sectionX, sectionZ);
++        if (slices != null && slices.hasNativeAabbCache()) {
++            slices.updateEntityBoundingBox(entity, sectionY, box);
++        }
++    }
++
+     protected void removeEntity(final Entity entity) {
+         final int sectionX = ((ChunkSystemEntity)entity).moonrise$getSectionX();
+         final int sectionY = ((ChunkSystemEntity)entity).moonrise$getSectionY();
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 0af54e03b9cc9b49533144ebe78fbaef2226e472..4d9455183db8ce004dd8472f0a24332a86557ed1 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -4586,6 +4586,14 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         if (len < 0) maxZ = minZ;
+         if (len > 64) maxZ = minZ + 64.0;
+         this.bb = new AABB(minX, minY, minZ, maxX, maxY, maxZ);
++        // Keep Moonrise's section-owned native AABB planes exact after every
++        // position or dimension update. The level callback has already moved
++        // this entity to its new section before setPosRaw reaches here.
++        if (!this.level().isClientSide() && !this.isRemoved()) {
++            ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this.level)
++                .moonrise$getEntityLookup()
++                .updateEntityBoundingBox((Entity)(Object)this, this.bb);
++        }
+         // CraftBukkit end
+     }
+ 

@@ -95,4 +95,52 @@ void aabb_scan_avx2(const double* query_aabbs, std::size_t query_count,
     }
 }
 
+void aabb_scan_soa_avx2(const double* query_aabbs, std::size_t query_count,
+                        const double* entity_aabbs, std::size_t entity_count, std::size_t entity_stride,
+                        std::uint64_t* visibility) noexcept {
+    if (query_count == 0 || !visibility) return;
+    const std::size_t row_l = aabb_row_longs(entity_count);
+    std::memset(visibility, 0, row_l * query_count * sizeof(std::uint64_t));
+    if (!query_aabbs || entity_count == 0 || !entity_aabbs) return;
+
+    const double* min_x = entity_aabbs;
+    const double* min_y = min_x + entity_stride;
+    const double* min_z = min_y + entity_stride;
+    const double* max_x = min_z + entity_stride;
+    const double* max_y = max_x + entity_stride;
+    const double* max_z = max_y + entity_stride;
+    const std::size_t full_chunks = entity_count / 4;
+    for (std::size_t q = 0; q < query_count; ++q) {
+        const __m256d qMinX = _mm256_set1_pd(query_aabbs[q * kAabbStride + 0]);
+        const __m256d qMinY = _mm256_set1_pd(query_aabbs[q * kAabbStride + 1]);
+        const __m256d qMinZ = _mm256_set1_pd(query_aabbs[q * kAabbStride + 2]);
+        const __m256d qMaxX = _mm256_set1_pd(query_aabbs[q * kAabbStride + 3]);
+        const __m256d qMaxY = _mm256_set1_pd(query_aabbs[q * kAabbStride + 4]);
+        const __m256d qMaxZ = _mm256_set1_pd(query_aabbs[q * kAabbStride + 5]);
+        std::uint64_t* row = visibility + q * row_l;
+        for (std::size_t ce = 0; ce < full_chunks; ++ce) {
+            const std::size_t base = ce * 4;
+            const __m256d x = _mm256_and_pd(
+                _mm256_cmp_pd(qMinX, _mm256_loadu_pd(max_x + base), _CMP_LE_OQ),
+                _mm256_cmp_pd(qMaxX, _mm256_loadu_pd(min_x + base), _CMP_GE_OQ));
+            const __m256d y = _mm256_and_pd(
+                _mm256_cmp_pd(qMinY, _mm256_loadu_pd(max_y + base), _CMP_LE_OQ),
+                _mm256_cmp_pd(qMaxY, _mm256_loadu_pd(min_y + base), _CMP_GE_OQ));
+            const __m256d z = _mm256_and_pd(
+                _mm256_cmp_pd(qMinZ, _mm256_loadu_pd(max_z + base), _CMP_LE_OQ),
+                _mm256_cmp_pd(qMaxZ, _mm256_loadu_pd(min_z + base), _CMP_GE_OQ));
+            const __m256d hit = _mm256_and_pd(_mm256_and_pd(x, y), z);
+            const int mask = _mm256_movemask_pd(hit);
+            if (mask != 0) row[base >> 6] |= static_cast<std::uint64_t>(mask) << (base & 63);
+        }
+        for (std::size_t e = full_chunks * 4; e < entity_count; ++e) {
+            if (query_aabbs[q * kAabbStride] <= max_x[e] && query_aabbs[q * kAabbStride + 3] >= min_x[e]
+                    && query_aabbs[q * kAabbStride + 1] <= max_y[e] && query_aabbs[q * kAabbStride + 4] >= min_y[e]
+                    && query_aabbs[q * kAabbStride + 2] <= max_z[e] && query_aabbs[q * kAabbStride + 5] >= min_z[e]) {
+                row[e >> 6] |= std::uint64_t{1} << (e & 63);
+            }
+        }
+    }
+}
+
 } // namespace lattice::world::entity

@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 14:01:21 +0800
+Subject: [PATCH] perf: scan dense Moonrise entity sections natively
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 2dfd412344a0e57f25a08d9c65656a13113baa4e..eb00cddcbc74ffd919c19e116e494089a57ddacf 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -40,6 +40,11 @@ import java.util.function.Predicate;
+ public final class ChunkEntitySlices {
+ 
+     private static final Logger LOGGER = LogUtils.getLogger();
++    // Native setup is only amortised by dense entity sections.  The common
++    // collision query retains Moonrise's exact iteration/filter semantics.
++    private static final int NATIVE_AABB_MIN_ENTITIES = 32;
++    private static final ThreadLocal<NativeAabbScratchStack> NATIVE_AABB_SCRATCH =
++        ThreadLocal.withInitial(NativeAabbScratchStack::new);
+ 
+     public final int minSection;
+     public final int maxSection;
+@@ -538,6 +543,10 @@ public final class ChunkEntitySlices {
+                 }
+ 
+                 final Entity[] storage = list.storage;
++                if (this.scanEntitiesNative(storage, Math.min(storage.length, list.size()), except, box, into, predicate,
++                    Integer.MAX_VALUE) >= 0) {
++                    continue;
++                }
+ 
+                 for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
+                     final Entity entity = storage[i];
+@@ -577,6 +586,14 @@ public final class ChunkEntitySlices {
+                 }
+ 
+                 final Entity[] storage = list.storage;
++                final int nativeResult = this.scanEntitiesNative(storage, Math.min(storage.length, list.size()), except, box, into,
++                    predicate, maxCount);
++                if (nativeResult >= 0) {
++                    if (nativeResult != 0) {
++                        return true;
++                    }
++                    continue;
++                }
+ 
+                 for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
+                     final Entity entity = storage[i];
+@@ -598,5 +615,109 @@ public final class ChunkEntitySlices {
+ 
+             return false;
+         }
++
++        /**
++         * Returns -1 when the Java loop must be used, 0 when the native scan
++         * completed, and 1 when the limited query reached its result cap.
++         */
++        private int scanEntitiesNative(final Entity[] storage, final int entityCount, final Entity except, final AABB box,
++                                       final List<Entity> into, final Predicate<? super Entity> predicate, final int maxCount) {
++            if (entityCount < NATIVE_AABB_MIN_ENTITIES || !com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
++                return -1;
++            }
++
++            final NativeAabbScratchStack scratchStack = NATIVE_AABB_SCRATCH.get();
++            final NativeAabbScratch scratch = scratchStack.acquire(entityCount);
++            try {
++                scratch.query[0] = box.minX;
++                scratch.query[1] = box.minY;
++                scratch.query[2] = box.minZ;
++                scratch.query[3] = box.maxX;
++                scratch.query[4] = box.maxY;
++                scratch.query[5] = box.maxZ;
++
++                final int minY = entityCount;
++                final int minZ = minY + entityCount;
++                final int maxX = minZ + entityCount;
++                final int maxY = maxX + entityCount;
++                final int maxZ = maxY + entityCount;
++                for (int i = 0; i < entityCount; ++i) {
++                    final Entity entity = storage[i];
++                    scratch.entities[i] = entity;
++                    if (entity == null) {
++                        scratch.aabbs[i] = Double.POSITIVE_INFINITY;
++                        scratch.aabbs[minY + i] = Double.POSITIVE_INFINITY;
++                        scratch.aabbs[minZ + i] = Double.POSITIVE_INFINITY;
++                        scratch.aabbs[maxX + i] = Double.NEGATIVE_INFINITY;
++                        scratch.aabbs[maxY + i] = Double.NEGATIVE_INFINITY;
++                        scratch.aabbs[maxZ + i] = Double.NEGATIVE_INFINITY;
++                        continue;
++                    }
++                    final AABB entityBox = entity.getBoundingBox();
++                    scratch.aabbs[i] = entityBox.minX;
++                    scratch.aabbs[minY + i] = entityBox.minY;
++                    scratch.aabbs[minZ + i] = entityBox.minZ;
++                    scratch.aabbs[maxX + i] = entityBox.maxX;
++                    scratch.aabbs[maxY + i] = entityBox.maxY;
++                    scratch.aabbs[maxZ + i] = entityBox.maxZ;
++                }
++
++                com.latticemc.lattice.nativelib.NativeAabbQuery.scanSoa(
++                    scratch.query, 1, scratch.aabbs, entityCount, scratch.visibility
++                );
++                for (int i = 0; i < entityCount; ++i) {
++                    if (((scratch.visibility[i >>> 6] >>> (i & 63)) & 1L) == 0L) {
++                        continue;
++                    }
++                    final Entity entity = scratch.entities[i];
++                    if (entity == null || entity == except || (predicate != null && !predicate.test(entity))) {
++                        continue;
++                    }
++                    into.add(entity);
++                    if (into.size() >= maxCount) {
++                        return 1;
++                    }
++                }
++                return 0;
++            } finally {
++                scratchStack.release();
++            }
++        }
++    }
++
++    private static final class NativeAabbScratchStack {
++        private final ArrayList<NativeAabbScratch> entries = new ArrayList<>();
++        private int depth;
++
++        NativeAabbScratch acquire(final int entityCount) {
++            if (this.depth == this.entries.size()) {
++                this.entries.add(new NativeAabbScratch());
++            }
++            final NativeAabbScratch scratch = this.entries.get(this.depth++);
++            scratch.ensureCapacity(entityCount);
++            return scratch;
++        }
++
++        void release() {
++            --this.depth;
++        }
++    }
++
++    private static final class NativeAabbScratch {
++        private Entity[] entities = new Entity[0];
++        private double[] aabbs = new double[0];
++        private final double[] query = new double[6];
++        private long[] visibility = new long[0];
++
++        void ensureCapacity(final int entityCount) {
++            if (this.entities.length < entityCount) {
++                this.entities = new Entity[entityCount];
++                this.aabbs = new double[entityCount * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE];
++            }
++            final int visibilityLongs = com.latticemc.lattice.nativelib.NativeAabbQuery.rowLongs(entityCount);
++            if (this.visibility.length < visibilityLongs) {
++                this.visibility = new long[visibilityLongs];
++            }
++        }
+     }
+ }

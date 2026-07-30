@@ -51,22 +51,40 @@ void aabb_scan_scalar(const double* query_aabbs, std::size_t query_count,
                       const double* entity_aabbs, std::size_t entity_count,
                       std::uint64_t* visibility) noexcept;
 
+/// Same query/output contract as `aabb_scan_scalar`, but entities use six
+/// contiguous planes separated by `entity_stride`: minX[stride], ...,
+/// maxZ[stride]. Only the first `entity_count` values of every plane are
+/// scanned. The stride permits a section-owned SoA cache to retain capacity.
+void aabb_scan_soa_scalar(const double* query_aabbs, std::size_t query_count,
+                          const double* entity_aabbs, std::size_t entity_count, std::size_t entity_stride,
+                          std::uint64_t* visibility) noexcept;
+
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
 void aabb_scan_avx2(const double* query_aabbs, std::size_t query_count,
                     const double* entity_aabbs, std::size_t entity_count,
                     std::uint64_t* visibility) noexcept;
+void aabb_scan_soa_avx2(const double* query_aabbs, std::size_t query_count,
+                        const double* entity_aabbs, std::size_t entity_count, std::size_t entity_stride,
+                        std::uint64_t* visibility) noexcept;
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 void aabb_scan_neon(const double* query_aabbs, std::size_t query_count,
                     const double* entity_aabbs, std::size_t entity_count,
                     std::uint64_t* visibility) noexcept;
+void aabb_scan_soa_neon(const double* query_aabbs, std::size_t query_count,
+                        const double* entity_aabbs, std::size_t entity_count, std::size_t entity_stride,
+                        std::uint64_t* visibility) noexcept;
 #endif
 
 /// Runtime-dispatched entry point.
 void aabb_scan(const double* query_aabbs, std::size_t query_count,
                const double* entity_aabbs, std::size_t entity_count,
                std::uint64_t* visibility) noexcept;
+
+void aabb_scan_soa(const double* query_aabbs, std::size_t query_count,
+                   const double* entity_aabbs, std::size_t entity_count, std::size_t entity_stride,
+                   std::uint64_t* visibility) noexcept;
 
 void init_aabb_dispatch() noexcept;
 

@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 13:42:53 +0800
+Subject: [PATCH] perf: reuse SoA buffers for entity AABB queries
+
+
+diff --git a/net/minecraft/world/level/entity/EntitySection.java b/net/minecraft/world/level/entity/EntitySection.java
+index 6cb10214fa9cc75c69182fef325f2d4c6d9f4821..6e6e54a9eeabe7bd2289b6391578aa137abee661 100644
+--- a/net/minecraft/world/level/entity/EntitySection.java
++++ b/net/minecraft/world/level/entity/EntitySection.java
+@@ -11,6 +11,11 @@ import org.slf4j.Logger;
+ 
+ public class EntitySection<T extends EntityAccess> {
+     private static final Logger LOGGER = LogUtils.getLogger();
++    // The JNI transition does not amortise below this point.  Large sections are
++    // the collision hot path and retain their original iteration order here.
++    private static final int NATIVE_AABB_MIN_ENTITIES = 32;
++    private static final ThreadLocal<NativeAabbScratchStack> NATIVE_AABB_SCRATCH =
++        ThreadLocal.withInitial(NativeAabbScratchStack::new);
+     private final ClassInstanceMultiMap<T> storage;
+     private Visibility chunkStatus;
+ 
+@@ -35,10 +40,18 @@ public class EntitySection<T extends EntityAccess> {
+ 
+     public AbortableIterationConsumer.Continuation getEntities(AABB bounds, AbortableIterationConsumer<T> consumer) {
+         if (com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
+-            java.util.ArrayList<T> entities = new java.util.ArrayList<>(this.storage);
+-            AbortableIterationConsumer.Continuation result = scanEntitiesNative(entities, bounds, consumer);
+-            if (result != null) {
+-                return result;
++            int entityCount = this.storage.size();
++            if (entityCount >= NATIVE_AABB_MIN_ENTITIES) {
++                NativeAabbScratch scratch = NATIVE_AABB_SCRATCH.get().acquire(entityCount);
++                try {
++                    int index = 0;
++                    for (T entityAccess : this.storage) {
++                        scratch.set(index++, entityAccess);
++                    }
++                    return scanEntitiesNative(scratch, entityCount, bounds, consumer);
++                } finally {
++                    NATIVE_AABB_SCRATCH.get().release();
++                }
+             }
+         }
+ 
+@@ -59,17 +72,21 @@ public class EntitySection<T extends EntityAccess> {
+             return AbortableIterationConsumer.Continuation.CONTINUE;
+         } else {
+             if (com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
+-                java.util.ArrayList<U> entities = new java.util.ArrayList<>(collection.size());
+-                for (T entityAccess : collection) {
+-                    U cast = (U)test.tryCast(entityAccess);
+-                    if (cast != null) {
+-                        entities.add(cast);
++                NativeAabbScratchStack scratchStack = NATIVE_AABB_SCRATCH.get();
++                NativeAabbScratch scratch = scratchStack.acquire(collection.size());
++                try {
++                    int entityCount = 0;
++                    for (T entityAccess : collection) {
++                        U cast = (U)test.tryCast(entityAccess);
++                        if (cast != null) {
++                            scratch.set(entityCount++, cast);
++                        }
+                     }
+-                }
+-
+-                AbortableIterationConsumer.Continuation result = scanEntitiesNative(entities, bounds, consumer);
+-                if (result != null) {
+-                    return result;
++                    if (entityCount >= NATIVE_AABB_MIN_ENTITIES) {
++                        return scanEntitiesNative(scratch, entityCount, bounds, consumer);
++                    }
++                } finally {
++                    scratchStack.release();
+                 }
+             }
+ 
+@@ -84,39 +101,37 @@ public class EntitySection<T extends EntityAccess> {
+         }
+     }
+ 
+-    private static <E extends EntityAccess> AbortableIterationConsumer.Continuation scanEntitiesNative(
+-        java.util.ArrayList<E> entities,
++    @SuppressWarnings({"rawtypes", "unchecked"})
++    private static AbortableIterationConsumer.Continuation scanEntitiesNative(
++        NativeAabbScratch scratch,
++        int entityCount,
+         AABB bounds,
+-        AbortableIterationConsumer<? super E> consumer
++        AbortableIterationConsumer consumer
+     ) {
+-        int entityCount = entities.size();
+-        if (entityCount < 8) {
+-            return null;
+-        }
+-
+-        double[] query = {
+-            bounds.minX, bounds.minY, bounds.minZ,
+-            bounds.maxX, bounds.maxY, bounds.maxZ
+-        };
+-        double[] entityAabbs = new double[entityCount * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE];
++        scratch.query[0] = bounds.minX;
++        scratch.query[1] = bounds.minY;
++        scratch.query[2] = bounds.minZ;
++        scratch.query[3] = bounds.maxX;
++        scratch.query[4] = bounds.maxY;
++        scratch.query[5] = bounds.maxZ;
+         for (int i = 0; i < entityCount; ++i) {
+-            AABB box = entities.get(i).getBoundingBox();
+-            int base = i * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE;
+-            entityAabbs[base] = box.minX;
+-            entityAabbs[base + 1] = box.minY;
+-            entityAabbs[base + 2] = box.minZ;
+-            entityAabbs[base + 3] = box.maxX;
+-            entityAabbs[base + 4] = box.maxY;
+-            entityAabbs[base + 5] = box.maxZ;
++            AABB box = ((EntityAccess)scratch.entities[i]).getBoundingBox();
++            scratch.aabbs[i] = box.minX;
++            scratch.aabbs[entityCount + i] = box.minY;
++            scratch.aabbs[entityCount * 2 + i] = box.minZ;
++            scratch.aabbs[entityCount * 3 + i] = box.maxX;
++            scratch.aabbs[entityCount * 4 + i] = box.maxY;
++            scratch.aabbs[entityCount * 5 + i] = box.maxZ;
+         }
+ 
+-        long[] visibility = new long[com.latticemc.lattice.nativelib.NativeAabbQuery.rowLongs(entityCount)];
+-        com.latticemc.lattice.nativelib.NativeAabbQuery.scan(query, 1, entityAabbs, entityCount, visibility);
++        com.latticemc.lattice.nativelib.NativeAabbQuery.scanSoa(
++            scratch.query, 1, scratch.aabbs, entityCount, scratch.visibility
++        );
+         for (int i = 0; i < entityCount; ++i) {
+-            if (((visibility[i >>> 6] >>> (i & 63)) & 1L) == 0L) {
++            if (((scratch.visibility[i >>> 6] >>> (i & 63)) & 1L) == 0L) {
+                 continue;
+             }
+-            if (consumer.accept(entities.get(i)).shouldAbort()) {
++            if (consumer.accept(scratch.entities[i]).shouldAbort()) {
+                 return AbortableIterationConsumer.Continuation.ABORT;
+             }
+         }
+@@ -124,6 +139,46 @@ public class EntitySection<T extends EntityAccess> {
+         return AbortableIterationConsumer.Continuation.CONTINUE;
+     }
+ 
++    private static final class NativeAabbScratchStack {
++        private final java.util.ArrayList<NativeAabbScratch> entries = new java.util.ArrayList<>();
++        private int depth;
++
++        NativeAabbScratch acquire(int entityCount) {
++            if (this.depth == this.entries.size()) {
++                this.entries.add(new NativeAabbScratch());
++            }
++            NativeAabbScratch scratch = this.entries.get(this.depth++);
++            scratch.ensureCapacity(entityCount);
++            return scratch;
++        }
++
++        void release() {
++            --this.depth;
++        }
++    }
++
++    private static final class NativeAabbScratch {
++        private Object[] entities = new Object[0];
++        private double[] aabbs = new double[0];
++        private final double[] query = new double[6];
++        private long[] visibility = new long[0];
++
++        void ensureCapacity(int entityCount) {
++            if (this.entities.length < entityCount) {
++                this.entities = new Object[entityCount];
++                this.aabbs = new double[entityCount * com.latticemc.lattice.nativelib.NativeAabbQuery.AABB_STRIDE];
++            }
++            int visibilityLongs = com.latticemc.lattice.nativelib.NativeAabbQuery.rowLongs(entityCount);
++            if (this.visibility.length < visibilityLongs) {
++                this.visibility = new long[visibilityLongs];
++            }
++        }
++
++        void set(int index, Object entity) {
++            this.entities[index] = entity;
++        }
++    }
++
+     public boolean isEmpty() {
+         return this.storage.isEmpty();
+     }

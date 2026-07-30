@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 15:39:49 +0800
+Subject: [PATCH] perf: limit AABB cache updates to collision indexes
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index efb21312e803e38d6cf80982286458ca385ccf03..2f2fcb66b50f5d5a922a4205e9671a1741703527 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -81,8 +81,8 @@ public final class ChunkEntitySlices {
+         this.chunkZ = chunkZ;
+         this.world = world;
+ 
+-        this.allEntities = new EntityCollectionBySection(this);
+-        this.hardCollidingEntities = new EntityCollectionBySection(this);
++        this.allEntities = new EntityCollectionBySection(this, true);
++        this.hardCollidingEntities = new EntityCollectionBySection(this, true);
+         this.entitiesByClass = new Reference2ObjectOpenHashMap<>();
+         this.entitiesByType = new Reference2ObjectOpenHashMap<>();
+ 
+@@ -290,7 +290,7 @@ public final class ChunkEntitySlices {
+         if (byType != null) {
+             byType.addEntity(entity, sectionIndex);
+         } else {
+-            this.entitiesByType.put(entity.getType(), byType = new EntityCollectionBySection(this));
++            this.entitiesByType.put(entity.getType(), byType = new EntityCollectionBySection(this, false));
+             byType.addEntity(entity, sectionIndex);
+         }
+ 
+@@ -340,17 +340,6 @@ public final class ChunkEntitySlices {
+         if (((ChunkSystemEntity)entity).moonrise$isHardColliding()) {
+             this.hardCollidingEntities.updateEntityBoundingBox(entity, sectionIndex, box);
+         }
+-        for (final Iterator<Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection>> iterator =
+-             this.entitiesByClass.reference2ObjectEntrySet().fastIterator(); iterator.hasNext();) {
+-            final Reference2ObjectMap.Entry<Class<? extends Entity>, EntityCollectionBySection> entry = iterator.next();
+-            if (entry.getKey().isInstance(entity)) {
+-                entry.getValue().updateEntityBoundingBox(entity, sectionIndex, box);
+-            }
+-        }
+-        final EntityCollectionBySection byType = this.entitiesByType.get(entity.getType());
+-        if (byType != null) {
+-            byType.updateEntityBoundingBox(entity, sectionIndex, box);
+-        }
+     }
+ 
+     public void getHardCollidingEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+@@ -388,7 +377,7 @@ public final class ChunkEntitySlices {
+     }
+ 
+     protected EntityCollectionBySection initClass(final Class<? extends Entity> clazz) {
+-        final EntityCollectionBySection ret = new EntityCollectionBySection(this);
++        final EntityCollectionBySection ret = new EntityCollectionBySection(this, false);
+ 
+         for (int sectionIndex = 0; sectionIndex < this.allEntities.entitiesBySection.length; ++sectionIndex) {
+             final BasicEntityList<Entity> sectionEntities = this.allEntities.entitiesBySection[sectionIndex];
+@@ -552,11 +541,13 @@ public final class ChunkEntitySlices {
+     private static final class EntityCollectionBySection {
+ 
+         private final ChunkEntitySlices slices;
++        private final boolean nativeAabbEnabled;
+         private final BasicEntityList<Entity>[] entitiesBySection;
+         private int count;
+ 
+-        public EntityCollectionBySection(final ChunkEntitySlices slices) {
++        public EntityCollectionBySection(final ChunkEntitySlices slices, final boolean nativeAabbEnabled) {
+             this.slices = slices;
++            this.nativeAabbEnabled = nativeAabbEnabled;
+ 
+             final int sectionCount = slices.maxSection - slices.minSection + 1;
+ 
+@@ -698,7 +689,8 @@ public final class ChunkEntitySlices {
+         private int scanEntitiesNative(final BasicEntityList<Entity> list, final Entity except, final AABB box,
+                                        final List<Entity> into, final Predicate<? super Entity> predicate, final int maxCount) {
+             final int entityCount = list.size();
+-            if (entityCount < NATIVE_AABB_MIN_ENTITIES || !com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
++            if (!this.nativeAabbEnabled || entityCount < NATIVE_AABB_MIN_ENTITIES
++                || !com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
+                 return -1;
+             }
+             list.ensureAabbCache();

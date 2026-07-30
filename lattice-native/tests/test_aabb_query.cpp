@@ -59,3 +59,35 @@ TEST_CASE("aabb: 3 queries × 5 entities, scalar vs dispatcher") {
     CHECK((vis_s[0] & 0b00001) == 1u);  // entity 0
     CHECK((vis_s[0] & 0b10000) == 16u); // entity 4
 }
+
+TEST_CASE("aabb: structure-of-arrays dispatcher matches array-of-structures") {
+    const double query[6] = {0, 0, 0, 1, 1, 1};
+    const double aos[30] = {
+        0, 0, 0, 0.5, 0.5, 0.5,
+        2, 0, 0, 3, 1, 1,
+        -1, -1, -1, 0, 0, 0,
+        0.5, 2, 0.5, 0.75, 3, 0.75,
+        0.25, 0.25, 0.25, 0.75, 0.75, 0.75,
+    };
+    double soa[30]{};
+    for (int entity = 0; entity < 5; ++entity) {
+        for (int component = 0; component < 6; ++component) {
+            soa[component * 5 + entity] = aos[entity * 6 + component];
+        }
+    }
+    std::uint64_t expected[1]{};
+    std::uint64_t actual[1]{};
+    aabb_scan_scalar(query, 1, aos, 5, expected);
+    aabb_scan_soa(query, 1, soa, 5, 5, actual);
+    CHECK(actual[0] == expected[0]);
+
+    double strided[48]{};
+    for (int entity = 0; entity < 5; ++entity) {
+        for (int component = 0; component < 6; ++component) {
+            strided[component * 8 + entity] = aos[entity * 6 + component];
+        }
+    }
+    actual[0] = 0;
+    aabb_scan_soa(query, 1, strided, 5, 8, actual);
+    CHECK(actual[0] == expected[0]);
+}
