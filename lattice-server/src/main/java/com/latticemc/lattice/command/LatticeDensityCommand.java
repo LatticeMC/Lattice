@@ -184,7 +184,7 @@ public final class LatticeDensityCommand extends Command {
     }
 
     private static void sendUsage(CommandSender sender) {
-        sender.sendMessage("Usage: /lattice density <status|reset|all|fast|profile|worldgenProfileStatus|worldgenProfileReset|option> [true|false]");
+        sender.sendMessage("Usage: /lattice <density|pathfinder> ...");
         sender.sendMessage("Options: " + String.join(", ", DENSITY_ACTIONS));
     }
 
