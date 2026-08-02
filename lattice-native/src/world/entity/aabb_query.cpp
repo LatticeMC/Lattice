@@ -35,9 +35,9 @@ void aabb_scan_scalar(const double* query_aabbs, std::size_t query_count,
             const double eMaxZ = entity_aabbs[e * kAabbStride + 5];
 
             const bool overlap =
-                qMinX <= eMaxX && qMaxX >= eMinX &&
-                qMinY <= eMaxY && qMaxY >= eMinY &&
-                qMinZ <= eMaxZ && qMaxZ >= eMinZ;
+                qMinX < eMaxX && qMaxX > eMinX &&
+                qMinY < eMaxY && qMaxY > eMinY &&
+                qMinZ < eMaxZ && qMaxZ > eMinZ;
             if (overlap) {
                 row[e >> 6] |= std::uint64_t{1} << (e & 63);
             }
@@ -68,9 +68,9 @@ void aabb_scan_soa_scalar(const double* query_aabbs, std::size_t query_count,
         const double qMaxZ = query_aabbs[q * kAabbStride + 5];
         std::uint64_t* row = visibility + q * row_l;
         for (std::size_t e = 0; e < entity_count; ++e) {
-            if (qMinX <= max_x[e] && qMaxX >= min_x[e]
-                    && qMinY <= max_y[e] && qMaxY >= min_y[e]
-                    && qMinZ <= max_z[e] && qMaxZ >= min_z[e]) {
+            if (qMinX < max_x[e] && qMaxX > min_x[e]
+                    && qMinY < max_y[e] && qMaxY > min_y[e]
+                    && qMinZ < max_z[e] && qMaxZ > min_z[e]) {
                 row[e >> 6] |= std::uint64_t{1} << (e & 63);
             }
         }

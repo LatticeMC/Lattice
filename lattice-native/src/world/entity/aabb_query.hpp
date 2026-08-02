@@ -17,9 +17,9 @@
  * Intersection predicate (strict in vanilla, mirrored exactly here):
  *
  *   intersects(A, B) =
- *       A.minX <= B.maxX && A.maxX >= B.minX
- *    && A.minY <= B.maxY && A.maxY >= B.minY
- *    && A.minZ <= B.maxZ && A.maxZ >= B.minZ
+ *       A.minX < B.maxX && A.maxX > B.minX
+ *    && A.minY < B.maxY && A.maxY > B.minY
+ *    && A.minZ < B.maxZ && A.maxZ > B.minZ
  *
  * Output: `visibility[i * row_longs + (j/64)]` has bit `j%64` set iff
  * `intersects(queries[i], entities[j])`, where

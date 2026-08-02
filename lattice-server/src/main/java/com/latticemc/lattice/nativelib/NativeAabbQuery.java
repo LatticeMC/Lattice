@@ -119,9 +119,9 @@ public final class NativeAabbQuery {
                 double eMaxY = entityAabbs[e * AABB_STRIDE + 4];
                 double eMaxZ = entityAabbs[e * AABB_STRIDE + 5];
                 boolean overlap =
-                        qMinX <= eMaxX && qMaxX >= eMinX &&
-                                qMinY <= eMaxY && qMaxY >= eMinY &&
-                                qMinZ <= eMaxZ && qMaxZ >= eMinZ;
+                        qMinX < eMaxX && qMaxX > eMinX &&
+                                qMinY < eMaxY && qMaxY > eMinY &&
+                                qMinZ < eMaxZ && qMaxZ > eMinZ;
                 if (overlap) {
                     visibility[rowBase + (e >>> 6)] |= 1L << (e & 63);
                 }
@@ -155,9 +155,9 @@ public final class NativeAabbQuery {
             double qMaxZ = queryAabbs[q * AABB_STRIDE + 5];
             int rowBase = q * row;
             for (int e = 0; e < entityCount; ++e) {
-                if (qMinX <= entityAabbs[maxX + e] && qMaxX >= entityAabbs[e]
-                        && qMinY <= entityAabbs[maxY + e] && qMaxY >= entityAabbs[minY + e]
-                        && qMinZ <= entityAabbs[maxZ + e] && qMaxZ >= entityAabbs[minZ + e]) {
+                if (qMinX < entityAabbs[maxX + e] && qMaxX > entityAabbs[e]
+                        && qMinY < entityAabbs[maxY + e] && qMaxY > entityAabbs[minY + e]
+                        && qMinZ < entityAabbs[maxZ + e] && qMaxZ > entityAabbs[minZ + e]) {
                     visibility[rowBase + (e >>> 6)] |= 1L << (e & 63);
                 }
             }

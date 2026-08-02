@@ -1,10 +1,22 @@
 package com.latticemc.lattice.nativelib;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
 
 class NativeAabbQueryTestSuite {
+    @Test
+    void touchingFacesDoNotIntersect() {
+        double[] query = {0.0, 0.0, 0.0, 1.0, 1.0, 1.0};
+        double[] entity = {1.0, 0.0, 0.0, 2.0, 1.0, 1.0};
+        long[] visibility = new long[1];
+
+        NativeAabbQuery.javaScan(query, 1, entity, 1, visibility);
+
+        assertEquals(0L, visibility[0]);
+    }
+
     @Test
     void soaScanMatchesTheAoSReferenceAcrossBitmapWords() {
         final int entityCount = 130;

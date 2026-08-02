@@ -24,13 +24,13 @@ TEST_CASE("aabb: no overlap (separated on x)") {
     CHECK((vis[0] & 1ULL) == 0ULL);
 }
 
-TEST_CASE("aabb: touching faces count as overlap (Mojang convention)") {
-    // Vanilla Box.intersects uses <= and >=, so faces touching means intersecting.
+TEST_CASE("aabb: touching faces do not overlap (Mojang convention)") {
+    // Vanilla AABB.intersects uses strict < and > comparisons.
     const double q[6] = {0, 0, 0, 1, 1, 1};
     const double e[6] = {1, 0, 0, 2, 1, 1};
     std::uint64_t vis[1] = {0};
     aabb_scan_scalar(q, 1, e, 1, vis);
-    CHECK((vis[0] & 1ULL) == 1ULL);
+    CHECK((vis[0] & 1ULL) == 0ULL);
 }
 
 TEST_CASE("aabb: 3 queries × 5 entities, scalar vs dispatcher") {
@@ -47,7 +47,7 @@ TEST_CASE("aabb: 3 queries × 5 entities, scalar vs dispatcher") {
         15, 10, 15, 16, 10.5, 16,  // overlaps q1, q2
         99, 99, 99, 99.5, 99.5, 99.5, // overlaps q2 only
         -200, -200, -200, -199, -199, -199, // no overlap
-        0.9, 0.9, 0.9, 1.0, 1.0, 1.0, // touches q0
+        0.9, 0.9, 0.9, 1.0, 1.0, 1.0, // overlaps q0
     };
     std::uint64_t vis_s[3] = {0xCDCDCDCD, 0xCDCDCDCD, 0xCDCDCDCD};
     std::uint64_t vis_d[3] = {0xCDCDCDCD, 0xCDCDCDCD, 0xCDCDCDCD};
@@ -55,7 +55,7 @@ TEST_CASE("aabb: 3 queries × 5 entities, scalar vs dispatcher") {
     aabb_scan(queries, 3, entities, 5, vis_d);
     for (int i = 0; i < 3; ++i) CHECK(vis_d[i] == vis_s[i]);
 
-    // Manual: q0 should pass entities 0 and 4 (touch).
+    // Manual: q0 should pass entities 0 and 4.
     CHECK((vis_s[0] & 0b00001) == 1u);  // entity 0
     CHECK((vis_s[0] & 0b10000) == 16u); // entity 4
 }
