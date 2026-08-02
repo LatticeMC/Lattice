@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <array>
+#include <unordered_map>
 #include <vector>
 
 namespace lattice::world::entity {
@@ -29,6 +31,7 @@ struct PathfinderNode {
 
 struct PathfinderInputs {
     const std::int8_t* path_types = nullptr;
+    void* lazy_context = nullptr;
     /// Per-cell floor level, mirroring `WalkNodeEvaluator.getFloorLevel(BlockPos)`:
     /// the Y coordinate an entity actually stands at, which for non-cuboid shapes
     /// (slabs, stairs, farmland, snow layers) is NOT the integer cell Y. Indexed
@@ -86,6 +89,28 @@ struct PathfinderInputs {
     /// conservative, never a wrong result. Kept so the bound can be tightened
     /// later without touching all four layers again.
     int level_min_y = 0;
+
+    bool can_pass_doors = true;
+    bool can_open_doors = false;
+    int mob_block_x = 0;
+    int mob_block_y = 0;
+    int mob_block_z = 0;
+};
+
+/// Compact, request-local view of immutable BlockState descriptors. The cells
+/// point into descriptor arrays that are produced by Java after rejecting every
+/// dynamic shape. Native expands this to final `PathType`s before searching.
+struct PathfinderStateSnapshot {
+    const int* cells = nullptr;
+    const std::int8_t* raw_path_types = nullptr;
+    const float* floor_heights = nullptr;
+    int descriptor_count = 0;
+    int min_x = 0;
+    int min_y = 0;
+    int min_z = 0;
+    int size_x = 0;
+    int size_y = 0;
+    int size_z = 0;
 };
 
 struct PathfinderResult {
@@ -102,7 +127,11 @@ struct PathfinderOutput {
     bool reached_target = false;
 };
 
+struct PathfinderStateMirrorSection;
+
 struct PathfinderScratch {
+    std::vector<std::int8_t> materialized_path_types{};
+    std::vector<float> materialized_floor_levels{};
     std::vector<std::uint64_t> passable{};
     std::vector<std::uint64_t> standing{};
     std::vector<int> grid_to_node{};
@@ -111,6 +140,28 @@ struct PathfinderScratch {
     std::vector<int> heap_index{};
     std::vector<int> heap_entries{};
     std::vector<PathfinderNode> nodes{};
+    std::vector<int> mirror_cells{};
+    std::vector<std::int8_t> mirror_raw_path_types{};
+    std::vector<float> mirror_floor_heights{};
+    std::vector<std::int8_t> lazy_path_types{};
+    std::vector<float> lazy_floor_levels{};
+    std::vector<std::uint32_t> lazy_stamp{};
+    std::uint32_t current_lazy_stamp = 1;
+    std::vector<const PathfinderStateMirrorSection*> lazy_sections{};
+};
+
+struct PathfinderStateMirrorSection {
+    std::array<std::int8_t, 4096> raw_path_types{};
+    std::array<float, 4096> floor_heights{};
+    std::array<std::uint8_t, 4096> valid{};
+    /// Number of set entries in `valid`. Lets a coverage probe answer "is this
+    /// whole section populated?" without touching the 4096-byte `valid` array.
+    std::uint16_t valid_count = 0;
+};
+
+struct PathfinderStateMirror {
+    int world_key = 0;
+    std::unordered_map<std::uint64_t, PathfinderStateMirrorSection> sections{};
 };
 
 struct PathfinderMasks {
@@ -156,5 +207,44 @@ void build_pathfinder_masks(const std::int8_t* path_types,
 [[nodiscard]] bool find_path_into(const PathfinderInputs& inputs,
                                   PathfinderOutput& output,
                                   PathfinderScratch& scratch) noexcept;
+
+[[nodiscard]] bool find_path_from_state_snapshot_into(const PathfinderInputs& inputs,
+                                                       const PathfinderStateSnapshot& snapshot,
+                                                       PathfinderOutput& output,
+                                                       PathfinderScratch& scratch) noexcept;
+
+[[nodiscard]] bool materialize_pathfinder_state_snapshot(const PathfinderInputs& inputs,
+                                                          const PathfinderStateSnapshot& snapshot,
+                                                          PathfinderScratch& scratch) noexcept;
+
+void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_key,
+                                     const PathfinderStateSnapshot& snapshot) noexcept;
+/// Section key for a block position, matching `PathfinderStateMirror::sections`.
+/// Exposed so the JNI layer can log invalidations by section without duplicating
+/// the packing.
+[[nodiscard]] std::uint64_t pathfinder_mirror_section_key(int x, int y, int z) noexcept;
+/// Exact coverage probe for the box `load_pathfinder_state_snapshot` /
+/// `LazyPathGrid` would read. Answers "is every cell in this box already
+/// mirrored?" without materializing anything, so a caller can decide between the
+/// mirror path and the Java path *before* paying for either.
+///
+/// Walks sections, not cells: a fully-populated section is accepted via
+/// `valid_count` alone, so the common case touches ~13 hash lookups for a
+/// 60x15x60 box. Only partially-populated sections fall back to a per-cell scan
+/// restricted to the query box.
+[[nodiscard]] bool state_mirror_covers(const PathfinderStateMirror& mirror, int world_key,
+                                       int min_x, int min_y, int min_z,
+                                       int size_x, int size_y, int size_z) noexcept;
+[[nodiscard]] bool load_pathfinder_state_snapshot(const PathfinderStateMirror& mirror, int world_key,
+                                                   int min_x, int min_y, int min_z,
+                                                   int size_x, int size_y, int size_z,
+                                                   PathfinderScratch& scratch,
+                                                   PathfinderStateSnapshot& snapshot) noexcept;
+void invalidate_pathfinder_state_mirror_cell(PathfinderStateMirror& mirror, int world_key,
+                                             int x, int y, int z) noexcept;
+[[nodiscard]] bool find_path_from_state_mirror_into(const PathfinderInputs& inputs,
+                                                     const PathfinderStateMirror& mirror, int world_key,
+                                                     PathfinderOutput& output,
+                                                     PathfinderScratch& scratch) noexcept;
 
 } // namespace lattice::world::entity

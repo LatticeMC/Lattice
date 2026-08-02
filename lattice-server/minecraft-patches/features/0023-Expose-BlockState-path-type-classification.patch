@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 29 Jul 2026 17:27:44 +0800
+Subject: [PATCH] Expose BlockState path type classification
+
+
+diff --git a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+index e1772539e1cb7785839026f7103b321a7389966b..d393f2535c172625baeaff51da7b750d61a22caf 100644
+--- a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+@@ -483,6 +483,10 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+             return PathType.BLOCKED;
+         }
+         // Paper end
++        return getPathTypeFromState(blockState);
++    }
++
++    public static PathType getPathTypeFromState(BlockState blockState) {
+         // Lattice start - cache the BlockState -> PathType mapping
+         // Everything below this point reads only the BlockState, so the result is
+         // a pure function of it. Uncached, each call ran up to sixteen

@@ -17,6 +17,7 @@ constexpr std::int8_t WALKABLE = 2;
 constexpr std::int8_t WALKABLE_DOOR = 3;
 constexpr std::int8_t WATER = 9;
 constexpr std::int8_t COCOA = 23;
+constexpr std::int8_t WATER_BORDER = 10;
 
 struct Grid {
     int sx;
@@ -38,7 +39,7 @@ struct Grid {
 
 PathfinderResult run(Grid& grid, int startX, int startY, int startZ,
                      int targetX, int targetY, int targetZ,
-                     int maxVisitedNodes = -1) {
+                     int maxVisitedNodes = -1, bool isAmphibious = false) {
     PathfinderInputs inputs{};
     inputs.path_types = grid.cells.data();
     inputs.region_size_x = grid.sx;
@@ -59,6 +60,7 @@ PathfinderResult run(Grid& grid, int startX, int startY, int startZ,
     inputs.config.fudge = 1.5F;
     inputs.max_up_step = 1.0F;
     inputs.max_fall_distance = 3;
+    inputs.is_amphibious = isAmphibious;
     inputs.pathfinding_malus = grid.malus.data();
     inputs.pathfinding_malus_count = static_cast<int>(grid.malus.size());
     return find_path(inputs);
@@ -76,6 +78,10 @@ bool mask_get(const std::uint64_t* mask, std::size_t index) {
     return ((mask[index >> 6] >> (index & 63)) & 1ULL) != 0ULL;
 }
 
+int snapshot_index(int sx, int sz, int x, int y, int z) {
+    return (y * sz + z) * sx + x;
+}
+
 } // namespace
 
 TEST_CASE("pathfinder: straight path") {
@@ -86,6 +92,205 @@ TEST_CASE("pathfinder: straight path") {
     REQUIRE(result.path.size() >= 2);
     CHECK(result.path.front().x == 0);
     CHECK(result.path.back().x == 7);
+}
+
+TEST_CASE("pathfinder materializes static BlockState descriptors") {
+    constexpr int sx = 5;
+    constexpr int sy = 3;
+    constexpr int sz = 5;
+    // 0=open, 1=solid block, 2=water. The output cell is at
+    // (2, 1, 2), with its collision floor supplied by the block at y=0.
+    const std::int8_t descriptorTypes[] = {OPEN, BLOCKED, WATER};
+    const float descriptorFloors[] = {0.0F, 0.5F, 0.0F};
+    std::vector<int> cells(sx * sy * sz, 0);
+    for (int z = 0; z < sz; ++z) {
+        for (int x = 0; x < sx; ++x) cells[snapshot_index(sx, sz, x, 0, z)] = 1;
+    }
+    std::vector<float> malus(26, 0.0F);
+    malus[BLOCKED] = -1.0F;
+    PathfinderInputs inputs{};
+    inputs.region_min_x = 2;
+    inputs.region_min_y = 1;
+    inputs.region_min_z = 2;
+    inputs.region_size_x = 1;
+    inputs.region_size_y = 1;
+    inputs.region_size_z = 1;
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.level_min_y = 0;
+    inputs.pathfinding_malus = malus.data();
+    inputs.pathfinding_malus_count = static_cast<int>(malus.size());
+    PathfinderStateSnapshot snapshot{};
+    snapshot.cells = cells.data();
+    snapshot.raw_path_types = descriptorTypes;
+    snapshot.floor_heights = descriptorFloors;
+    snapshot.descriptor_count = 3;
+    snapshot.size_x = sx;
+    snapshot.size_y = sy;
+    snapshot.size_z = sz;
+    PathfinderScratch scratch{};
+
+    REQUIRE(materialize_pathfinder_state_snapshot(inputs, snapshot, scratch));
+    CHECK(scratch.materialized_path_types[0] == WALKABLE);
+    CHECK(scratch.materialized_floor_levels[0] == doctest::Approx(0.5F));
+
+    cells[snapshot_index(sx, sz, 3, 1, 2)] = 2;
+    REQUIRE(materialize_pathfinder_state_snapshot(inputs, snapshot, scratch));
+    CHECK(scratch.materialized_path_types[0] == WATER_BORDER);
+}
+
+TEST_CASE("pathfinder state mirror stores, loads, and invalidates cells") {
+    const std::int8_t descriptors[] = {OPEN, WALKABLE};
+    const float floors[] = {0.0F, 0.5F};
+    const int cells[] = {0, 1};
+    PathfinderStateSnapshot source{};
+    source.cells = cells;
+    source.raw_path_types = descriptors;
+    source.floor_heights = floors;
+    source.descriptor_count = 2;
+    source.min_x = 32;
+    source.min_y = 64;
+    source.min_z = -16;
+    source.size_x = 2;
+    source.size_y = 1;
+    source.size_z = 1;
+    PathfinderStateMirror mirror{};
+    store_pathfinder_state_snapshot(mirror, 17, source);
+
+    PathfinderScratch scratch{};
+    PathfinderStateSnapshot loaded{};
+    REQUIRE(load_pathfinder_state_snapshot(mirror, 17, 32, 64, -16, 2, 1, 1, scratch, loaded));
+    CHECK(loaded.descriptor_count == 2);
+    CHECK(loaded.raw_path_types[0] == OPEN);
+    CHECK(loaded.raw_path_types[1] == WALKABLE);
+    CHECK(loaded.floor_heights[1] == doctest::Approx(0.5F));
+
+    invalidate_pathfinder_state_mirror_cell(mirror, 17, 33, 64, -16);
+    CHECK_FALSE(load_pathfinder_state_snapshot(mirror, 17, 32, 64, -16, 2, 1, 1, scratch, loaded));
+}
+
+TEST_CASE("pathfinder state mirror coverage probe matches the load path") {
+    // One full 16^3 section plus two loose cells in the neighbouring section, so
+    // the probe exercises both its valid_count fast path and its per-cell scan.
+    const std::int8_t descriptors[] = {OPEN};
+    const float floors[] = {0.0F};
+    std::vector<int> full_cells(16 * 16 * 16, 0);
+    PathfinderStateSnapshot full{};
+    full.cells = full_cells.data();
+    full.raw_path_types = descriptors;
+    full.floor_heights = floors;
+    full.descriptor_count = 1;
+    full.min_x = 0;
+    full.min_y = 0;
+    full.min_z = 0;
+    full.size_x = 16;
+    full.size_y = 16;
+    full.size_z = 16;
+    PathfinderStateMirror mirror{};
+    store_pathfinder_state_snapshot(mirror, 5, full);
+
+    // Whole section accepted without touching `valid`.
+    CHECK(state_mirror_covers(mirror, 5, 0, 0, 0, 16, 16, 16));
+    CHECK(state_mirror_covers(mirror, 5, 3, 4, 5, 4, 4, 4));
+    // A different world never matches, and degenerate sizes are refused.
+    CHECK_FALSE(state_mirror_covers(mirror, 6, 0, 0, 0, 16, 16, 16));
+    CHECK_FALSE(state_mirror_covers(mirror, 5, 0, 0, 0, 0, 16, 16));
+    // Absent neighbouring section.
+    CHECK_FALSE(state_mirror_covers(mirror, 5, 0, 0, 0, 17, 16, 16));
+
+    const int loose_cells[] = {0, 0};
+    PathfinderStateSnapshot loose{};
+    loose.cells = loose_cells;
+    loose.raw_path_types = descriptors;
+    loose.floor_heights = floors;
+    loose.descriptor_count = 1;
+    loose.min_x = 16;
+    loose.min_y = 0;
+    loose.min_z = 0;
+    loose.size_x = 2;
+    loose.size_y = 1;
+    loose.size_z = 1;
+    store_pathfinder_state_snapshot(mirror, 5, loose);
+    // Partially populated section: only the queried cells matter.
+    CHECK(state_mirror_covers(mirror, 5, 16, 0, 0, 2, 1, 1));
+    CHECK(state_mirror_covers(mirror, 5, 15, 0, 0, 3, 1, 1));
+    CHECK_FALSE(state_mirror_covers(mirror, 5, 16, 0, 0, 3, 1, 1));
+    CHECK_FALSE(state_mirror_covers(mirror, 5, 16, 1, 0, 2, 1, 1));
+
+    // A single invalidated cell reopens the fast path's section.
+    invalidate_pathfinder_state_mirror_cell(mirror, 5, 7, 8, 9);
+    CHECK_FALSE(state_mirror_covers(mirror, 5, 7, 8, 9, 1, 1, 1));
+    CHECK_FALSE(state_mirror_covers(mirror, 5, 0, 0, 0, 16, 16, 16));
+    // Cells elsewhere in the same section are unaffected.
+    CHECK(state_mirror_covers(mirror, 5, 0, 0, 0, 4, 4, 4));
+
+    // Emptying a section drops it, and the probe must then report a miss rather
+    // than reading a stale entry.
+    invalidate_pathfinder_state_mirror_cell(mirror, 5, 16, 0, 0);
+    CHECK(state_mirror_covers(mirror, 5, 17, 0, 0, 1, 1, 1));
+    invalidate_pathfinder_state_mirror_cell(mirror, 5, 17, 0, 0);
+    CHECK_FALSE(state_mirror_covers(mirror, 5, 17, 0, 0, 1, 1, 1));
+}
+
+TEST_CASE("pathfinder searches from a resident state mirror") {
+    constexpr int sx = 5;
+    constexpr int sy = 4;
+    constexpr int sz = 5;
+    const std::int8_t descriptors[] = {OPEN, BLOCKED};
+    const float floors[] = {0.0F, 1.0F};
+    std::vector<int> cells(sx * sy * sz, 0);
+    for (int z = 0; z < sz; ++z) {
+        for (int x = 0; x < sx; ++x) cells[snapshot_index(sx, sz, x, 0, z)] = 1;
+    }
+    PathfinderStateSnapshot source{};
+    source.cells = cells.data();
+    source.raw_path_types = descriptors;
+    source.floor_heights = floors;
+    source.descriptor_count = 2;
+    source.min_x = -1;
+    source.min_y = -1;
+    source.min_z = -1;
+    source.size_x = sx;
+    source.size_y = sy;
+    source.size_z = sz;
+    PathfinderStateMirror mirror{};
+    store_pathfinder_state_snapshot(mirror, 3, source);
+
+    std::vector<float> malus(26, 0.0F);
+    malus[BLOCKED] = -1.0F;
+    int target_x = 2;
+    int target_y = 0;
+    int target_z = 1;
+    int output_cells[30]{};
+    PathfinderInputs inputs{};
+    inputs.region_size_x = 3;
+    inputs.region_size_y = 2;
+    inputs.region_size_z = 3;
+    inputs.start_x = 0;
+    inputs.start_y = 0;
+    inputs.start_z = 1;
+    inputs.target_x = &target_x;
+    inputs.target_y = &target_y;
+    inputs.target_z = &target_z;
+    inputs.target_count = 1;
+    inputs.config = PathfinderConfig{16.0F, 10, 0, 1.5F};
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.level_min_y = -64;
+    inputs.pathfinding_malus = malus.data();
+    inputs.pathfinding_malus_count = static_cast<int>(malus.size());
+    int direct_cells[30]{};
+    PathfinderOutput direct{direct_cells, 10};
+    PathfinderScratch direct_scratch{};
+    REQUIRE(find_path_from_state_snapshot_into(inputs, source, direct, direct_scratch));
+    REQUIRE(direct.reached_target);
+    PathfinderOutput output{output_cells, 10};
+    PathfinderScratch scratch{};
+    REQUIRE(find_path_from_state_mirror_into(inputs, mirror, 3, output, scratch));
+    CHECK(output.reached_target);
+    CHECK(output.path_length == direct.path_length);
+    CHECK(std::equal(output_cells, output_cells + output.path_length * 3, direct_cells));
+
 }
 
 TEST_CASE("pathfinder: L shaped path around obstacle") {
@@ -110,7 +315,10 @@ TEST_CASE("pathfinder: unreachable target returns partial path") {
     PathfinderResult result = run(grid, 0, 0, 2, 4, 0, 2);
     CHECK_FALSE(result.reached_target);
     CHECK_FALSE(result.path.empty());
-    CHECK(result.path.back().x < 2);
+    // Target.bestNode is chosen by raw distance, not the A* h value after
+    // PathFinder's 1.5 fudge factor. The closest explored node is x=1; a
+    // partial path ending at the start means those two domains were mixed.
+    CHECK(result.path.back().x == 1);
 }
 
 TEST_CASE("pathfinder: symmetric detour follows vanilla tie order") {
@@ -199,6 +407,57 @@ TEST_CASE("pathfinder: supports water when caller marks it passable") {
         if (node.x == 2 && node.z == 1) usedWater = true;
     }
     CHECK(usedWater);
+}
+
+TEST_CASE("pathfinder: amphibious path uses vertical water neighbours") {
+    Grid grid(3, 3, 3);
+    grid.at(1, 0, 1) = WATER;
+    grid.at(1, 1, 1) = WATER;
+    grid.at(1, 2, 1) = WATER;
+    PathfinderResult result = run(grid, 1, 0, 1, 1, 2, 1, -1, true);
+    REQUIRE(result.reached_target);
+    REQUIRE(result.path.size() == 3);
+    CHECK(result.path[1].y == 1);
+}
+
+TEST_CASE("pathfinder: amphibious snapshot marks water borders and water floor") {
+    constexpr int sx = 3;
+    constexpr int sy = 3;
+    constexpr int sz = 3;
+    const std::int8_t descriptorTypes[] = {WATER, BLOCKED};
+    const float descriptorFloors[] = {0.0F, 1.0F};
+    std::vector<int> cells(sx * sy * sz, 0);
+    cells[snapshot_index(sx, sz, 2, 1, 1)] = 1;
+    std::vector<float> malus(26, 0.0F);
+    malus[BLOCKED] = -1.0F;
+    PathfinderInputs inputs{};
+    inputs.region_min_x = 0;
+    inputs.region_min_y = 0;
+    inputs.region_min_z = 0;
+    inputs.region_size_x = 1;
+    inputs.region_size_y = 1;
+    inputs.region_size_z = 1;
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.is_amphibious = true;
+    inputs.level_min_y = -64;
+    inputs.pathfinding_malus = malus.data();
+    inputs.pathfinding_malus_count = static_cast<int>(malus.size());
+    PathfinderStateSnapshot snapshot{};
+    snapshot.cells = cells.data();
+    snapshot.raw_path_types = descriptorTypes;
+    snapshot.floor_heights = descriptorFloors;
+    snapshot.descriptor_count = 2;
+    snapshot.min_x = -1;
+    snapshot.min_y = -1;
+    snapshot.min_z = -1;
+    snapshot.size_x = sx;
+    snapshot.size_y = sy;
+    snapshot.size_z = sz;
+    PathfinderScratch scratch{};
+    REQUIRE(materialize_pathfinder_state_snapshot(inputs, snapshot, scratch));
+    CHECK(scratch.materialized_path_types[0] == WATER_BORDER);
+    CHECK(scratch.materialized_floor_levels[0] == doctest::Approx(0.5F));
 }
 
 TEST_CASE("pathfinder: walkable door blocks diagonal shortcut") {

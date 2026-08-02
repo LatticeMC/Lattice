@@ -1,0 +1,18 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 29 Jul 2026 19:32:18 +0800
+Subject: [PATCH] Invalidate pathfinder static cache on block updates
+
+
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 82948a0dad91dbea7fcc27dc4941fcaf5c0f6708..dd5e2aa4d574595a101c3924f212464f9d15c892 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1138,6 +1138,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+                 // CraftBukkit end
+                 return false;
+             } else {
++                com.latticemc.lattice.bridge.PathfinderStaticCache.invalidate(this, pos);
+                 BlockState blockState1 = this.getBlockState(pos);
+                 /*
+                 if (blockState1 == state) {

@@ -7,6 +7,8 @@ public final class PathfinderBuffers {
     private byte[] pathTypes = new byte[0];
     private float[] floorLevels = new float[0];
     private final RawPathTypeCache rawPathTypes = new RawPathTypeCache();
+    private final PathfinderStateSnapshot stateSnapshot = new PathfinderStateSnapshot();
+    private final PathfinderTickStateCache tickStateCache = new PathfinderTickStateCache();
     private BlockPos[] targets = new BlockPos[0];
     private int[] targetX = new int[0];
     private int[] targetY = new int[0];
@@ -45,6 +47,14 @@ public final class PathfinderBuffers {
     public RawPathTypeCache rawPathTypes(int minX, int minY, int minZ, int sizeX, int sizeY, int sizeZ) {
         this.rawPathTypes.reset(minX, minY, minZ, sizeX, sizeY, sizeZ);
         return this.rawPathTypes;
+    }
+
+    public PathfinderStateSnapshot stateSnapshot() {
+        return this.stateSnapshot;
+    }
+
+    public PathfinderTickStateCache tickStateCache() {
+        return this.tickStateCache;
     }
 
     public int[] targetX(int required) {
