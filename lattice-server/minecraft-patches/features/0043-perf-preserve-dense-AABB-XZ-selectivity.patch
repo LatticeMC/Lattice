@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 31 Jul 2026 22:25:09 +0800
+Subject: [PATCH] perf: preserve dense AABB XZ selectivity
+
+Use one-block rather than two-block cells for the XZ broad phase. The two-block variant regressed the 3D-grid A/B benchmark by increasing candidates per bucket.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index b68b4a6c2c4a8c853adc2dd60595a75c4d37c8c1..b1f8eb61a21be12b35279b2dcd8acb4cb2f1e0a9 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -47,13 +47,14 @@ public final class ChunkEntitySlices {
+     // Native setup is only amortised by dense entity sections.  The common
+     // collision query retains Moonrise's exact iteration/filter semantics.
+     private static final int NATIVE_AABB_MIN_ENTITIES = 32;
+-    // A two-block XZ broad-phase grid becomes cheaper than either a JNI call or
++    // A one-block XZ broad-phase grid avoids redundant Y probes while retaining
++    // the same XZ selectivity as the original three-dimensional grid.
+     // a full section scan once a vertical section is genuinely dense. Sections
+     // already partition Y, so indexing it again only adds empty hash probes.
+     // Wide entities stay in an overflow list and every candidate is still
+     // intersect-tested below.
+     private static final int SPATIAL_AABB_MIN_ENTITIES = 64;
+-    private static final int SPATIAL_CELL_SHIFT = 1;
++    private static final int SPATIAL_CELL_SHIFT = 0;
+     private static final double SPATIAL_MAX_SMALL_SPAN = 2.0D;
+     private static final double SPATIAL_MAX_SMALL_HALF_SPAN = SPATIAL_MAX_SMALL_SPAN * 0.5D;
+     private static final int SPATIAL_MAX_QUERY_CELLS = 512;
+@@ -561,7 +562,7 @@ public final class ChunkEntitySlices {
+ 
+         /**
+          * Builds the exact, incremental broad-phase used by dense entity
+-         * queries. Each regular entity belongs to one XZ cell by its AABB centre;
++         * queries. Each regular entity belongs to one-block XZ cell by its AABB centre;
+          * entities wider than two blocks remain in an overflow list so a query can
+          * never miss them. Y is already partitioned by EntityCollectionBySection.
+          */
+@@ -603,7 +604,7 @@ public final class ChunkEntitySlices {
+      * Exact broad-phase for a dense BasicEntityList. The important difference
+      * from the previous JNI path is that it avoids making one native call per
+      * entity query: nearby push/collision queries only visit the occupied
+-     * two-block XZ cells touching the query box.
++     * one-block XZ cells touching the query box.
+      */
+     private static final class SpatialAabbIndex<E extends Entity> {
+ 

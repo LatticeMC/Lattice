@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 17:41:19 +0800
+Subject: [PATCH] perf: batch dense entity push collisions per tick
+
+
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 853bb92c034b6361ff8c55daf52f38a226fdae2c..286a344a5c5df0fbd21635ef4668f14173640358 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -853,6 +853,11 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+             }
+ 
+             io.papermc.paper.entity.activation.ActivationRange.activateEntities(this); // Paper - EAR
++            // Dense living-entity pushing asks the same collision question
++            // once per entity. Build its bounded native broad phase once for
++            // this world tick; ordinary-density callers retain the normal
++            // Moonrise lookup path.
++            com.latticemc.lattice.nativelib.NativeCollisionBatch.prepare(this, this.entityTickList);
+             this.entityTickList
+                 .forEach(
+                     entity -> {
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 287ef75ae2957d727c6467ad053cbc0affab8973..0e98d9ca93599b8d7084bca7e7903d45901dfea9 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1873,9 +1873,23 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+      */
+     public List<Entity> getPushableEntities(Entity entity, AABB boundingBox, int maxCount) {
+         Profiler.get().incrementCounter("getEntities");
+-        final List<Entity> ret = new java.util.ArrayList<>(Math.min(maxCount, 16));
+         final Predicate<? super Entity> predicate = EntitySelector.pushableBy(entity);
+ 
++        if ((Object)this instanceof ServerLevel serverLevel) {
++            final List<Entity> batched = com.latticemc.lattice.nativelib.NativeCollisionBatch.getDensePushableEntities(
++                serverLevel, entity, boundingBox, predicate, maxCount
++            );
++            if (batched != null) {
++                ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities((Level)(Object)this, entity, boundingBox, predicate, batched);
++                if (batched.size() > maxCount) {
++                    batched.subList(maxCount, batched.size()).clear();
++                }
++                return batched;
++            }
++        }
++
++        final List<Entity> ret = new java.util.ArrayList<>(Math.min(maxCount, 16));
++
+         ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup()
+             .getEntities(entity, boundingBox, ret, predicate, maxCount);
+         ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities((Level)(Object)this, entity, boundingBox, predicate, ret);

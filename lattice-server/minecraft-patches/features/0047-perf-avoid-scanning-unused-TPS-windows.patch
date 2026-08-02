@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 31 Jul 2026 23:47:47 +0800
+Subject: [PATCH] perf: avoid scanning unused TPS windows
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index d8e226372a377474f8e47469d6f2db07f778217e..799d1507b9bbc4af69fdea3f7a33db16a6bad212 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -355,6 +355,12 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         return avg;
+     }
+ 
++    private double getFiveSecondTPS() {
++        synchronized (this.statsLock) {
++            return getTPS(this.tickTimes5s, this.tickRateManager().nanosecondsPerTick());
++        }
++    }
++
+     public double[] getTPS() {
+         synchronized (this.statsLock) {
+             double[] tps = this.tps;
+@@ -1340,7 +1346,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+                         org.purpurmc.purpur.PurpurConfig.tpsCatchup ? 5 : 1 //ConfigHolder.getConfig().tickLoop.catchupTicks.getOrDefault(MoonriseConfig.TickLoop.DEFAULT_CATCHUP_TICKS).intValue() // Purpur - Configurable TPS Catchup
+                     );
+ 
+-                    lagging = getTPS()[0] < org.purpurmc.purpur.PurpurConfig.laggingThreshold; // Purpur - Lagging threshold
++                    lagging = this.getFiveSecondTPS() < org.purpurmc.purpur.PurpurConfig.laggingThreshold; // Purpur - Lagging threshold // Lattice - avoid scanning unused TPS windows
+ 
+                     // adjust ticksBehind so that it is not greater-than catchup
+                     if (ticksBehind > catchup) {

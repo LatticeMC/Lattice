@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 31 Jul 2026 19:10:15 +0800
+Subject: [PATCH] test: add spatial AABB grid A/B switch
+
+Keep the prior one-block 3D grid behind lattice.spatialAabbGrid2d=false so the default two-block XZ grid can be measured in the same jar.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 46a7c41966e3ae23bf30e94819b4b06819652b0a..b68b4a6c2c4a8c853adc2dd60595a75c4d37c8c1 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -60,6 +60,11 @@ public final class ChunkEntitySlices {
+     private static final boolean SPATIAL_AABB_ENABLED = Boolean.parseBoolean(
+         System.getProperty("lattice.spatialAabbQuery", "true")
+     );
++    // Diagnostic A/B switch. The value is fixed during class initialization
++    // and JIT-folded in the hot scan path.
++    private static final boolean SPATIAL_AABB_XZ_GRID = Boolean.parseBoolean(
++        System.getProperty("lattice.spatialAabbGrid2d", "true")
++    );
+     private static final ThreadLocal<NativeAabbScratchStack> NATIVE_AABB_SCRATCH =
+         ThreadLocal.withInitial(NativeAabbScratchStack::new);
+ 
+@@ -656,23 +661,50 @@ public final class ChunkEntitySlices {
+ 
+         int scan(final Entity except, final AABB box, final List<Entity> into,
+                  final Predicate<? super Entity> predicate, final int maxCount) {
+-            final int minX = Mth.floor(box.minX - SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
+-            final int minZ = Mth.floor(box.minZ - SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
+-            final int maxX = Mth.floor(box.maxX + SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
+-            final int maxZ = Mth.floor(box.maxZ + SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
+-            final long cellsToVisit = (long)(maxX - minX + 1) * (long)(maxZ - minZ + 1);
+-            if (cellsToVisit > SPATIAL_MAX_QUERY_CELLS) {
+-                return -1;
+-            }
++            if (SPATIAL_AABB_XZ_GRID) {
++                final int minX = Mth.floor(box.minX - SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
++                final int minZ = Mth.floor(box.minZ - SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
++                final int maxX = Mth.floor(box.maxX + SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
++                final int maxZ = Mth.floor(box.maxZ + SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
++                final long cellsToVisit = (long)(maxX - minX + 1) * (long)(maxZ - minZ + 1);
++                if (cellsToVisit > SPATIAL_MAX_QUERY_CELLS) {
++                    return -1;
++                }
+ 
+-            for (int cellZ = minZ; cellZ <= maxZ; ++cellZ) {
+-                for (int cellX = minX; cellX <= maxX; ++cellX) {
+-                    final SpatialBucket<E> bucket = this.cells.get(ChunkPos.asLong(cellX, cellZ));
+-                    if (bucket == null) {
+-                        continue;
++                for (int cellZ = minZ; cellZ <= maxZ; ++cellZ) {
++                    for (int cellX = minX; cellX <= maxX; ++cellX) {
++                        final SpatialBucket<E> bucket = this.cells.get(ChunkPos.asLong(cellX, cellZ));
++                        if (bucket == null) {
++                            continue;
++                        }
++                        if (this.scanBucket(bucket, except, box, into, predicate, maxCount)) {
++                            return 1;
++                        }
+                     }
+-                    if (this.scanBucket(bucket, except, box, into, predicate, maxCount)) {
+-                        return 1;
++                }
++            } else {
++                final int minX = Mth.floor(box.minX - SPATIAL_MAX_SMALL_HALF_SPAN);
++                final int minY = Mth.floor(box.minY - SPATIAL_MAX_SMALL_HALF_SPAN);
++                final int minZ = Mth.floor(box.minZ - SPATIAL_MAX_SMALL_HALF_SPAN);
++                final int maxX = Mth.floor(box.maxX + SPATIAL_MAX_SMALL_HALF_SPAN);
++                final int maxY = Mth.floor(box.maxY + SPATIAL_MAX_SMALL_HALF_SPAN);
++                final int maxZ = Mth.floor(box.maxZ + SPATIAL_MAX_SMALL_HALF_SPAN);
++                final long cellsToVisit = (long)(maxX - minX + 1) * (long)(maxY - minY + 1) * (long)(maxZ - minZ + 1);
++                if (cellsToVisit > SPATIAL_MAX_QUERY_CELLS) {
++                    return -1;
++                }
++
++                for (int cellY = minY; cellY <= maxY; ++cellY) {
++                    for (int cellZ = minZ; cellZ <= maxZ; ++cellZ) {
++                        for (int cellX = minX; cellX <= maxX; ++cellX) {
++                            final SpatialBucket<E> bucket = this.cells.get(BlockPos.asLong(cellX, cellY, cellZ));
++                            if (bucket == null) {
++                                continue;
++                            }
++                            if (this.scanBucket(bucket, except, box, into, predicate, maxCount)) {
++                                return 1;
++                            }
++                        }
+                     }
+                 }
+             }
+@@ -708,12 +740,22 @@ public final class ChunkEntitySlices {
+         }
+ 
+         private long cellFor(final AABB box) {
+-            if (box.getXsize() > SPATIAL_MAX_SMALL_SPAN || box.getZsize() > SPATIAL_MAX_SMALL_SPAN) {
++            if (SPATIAL_AABB_XZ_GRID) {
++                if (box.getXsize() > SPATIAL_MAX_SMALL_SPAN || box.getZsize() > SPATIAL_MAX_SMALL_SPAN) {
++                    return OVERFLOW_CELL;
++                }
++                return ChunkPos.asLong(
++                    Mth.floor((box.minX + box.maxX) * 0.5D) >> SPATIAL_CELL_SHIFT,
++                    Mth.floor((box.minZ + box.maxZ) * 0.5D) >> SPATIAL_CELL_SHIFT
++                );
++            }
++            if (box.getXsize() > SPATIAL_MAX_SMALL_SPAN || box.getYsize() > SPATIAL_MAX_SMALL_SPAN || box.getZsize() > SPATIAL_MAX_SMALL_SPAN) {
+                 return OVERFLOW_CELL;
+             }
+-            return ChunkPos.asLong(
+-                Mth.floor((box.minX + box.maxX) * 0.5D) >> SPATIAL_CELL_SHIFT,
+-                Mth.floor((box.minZ + box.maxZ) * 0.5D) >> SPATIAL_CELL_SHIFT
++            return BlockPos.asLong(
++                Mth.floor((box.minX + box.maxX) * 0.5D),
++                Mth.floor((box.minY + box.maxY) * 0.5D),
++                Mth.floor((box.minZ + box.maxZ) * 0.5D)
+             );
+         }
+     }

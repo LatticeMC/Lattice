@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 20:42:20 +0800
+Subject: [PATCH] perf: reuse entity chunk status for light checks
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 42b160070b93625257c15c4769ebc921bf7a05b1..4e219f443478e96423c5b6d9d8f6f3e1a177c2d5 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -2263,7 +2263,9 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+ 
+     @Deprecated
+     public float getLightLevelDependentMagicValue() {
+-        return this.level().hasChunkAt(this.getBlockX(), this.getBlockZ())
++        int chunkX = this.getBlockX() >> 4;
++        int chunkZ = this.getBlockZ() >> 4;
++        return (this.isEntityChunkLoaded(chunkX, chunkZ) || this.level().hasChunkAt(this.getBlockX(), this.getBlockZ()))
+             ? this.level().getLightLevelDependentMagicValue(BlockPos.containing(this.getX(), this.getEyeY(), this.getZ()))
+             : 0.0F;
+     }
+@@ -5000,19 +5002,25 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         // The entity lookup owns this status, so a fully-contained query can avoid
+         // re-looking up the same loaded chunk in ServerChunkCache's concurrent map.
+         // Cross-chunk boxes still use the canonical query to preserve unload semantics.
+-        FullChunkStatus chunkStatus = this.chunkStatus;
+-        if (chunkStatus != null
+-            && chunkStatus.isOrAfter(FullChunkStatus.FULL)
+-            && (minBlockX >> 4) == this.sectionX
+-            && (maxBlockX >> 4) == this.sectionX
+-            && (minBlockZ >> 4) == this.sectionZ
+-            && (maxBlockZ >> 4) == this.sectionZ) {
++        int minChunkX = minBlockX >> 4;
++        int minChunkZ = minBlockZ >> 4;
++        if (minChunkX == (maxBlockX >> 4)
++            && minChunkZ == (maxBlockZ >> 4)
++            && this.isEntityChunkLoaded(minChunkX, minChunkZ)) {
+             return false;
+         }
+ 
+         return !this.level().hasChunksAt(minBlockX, minBlockZ, maxBlockX, maxBlockZ);
+     }
+ 
++    private boolean isEntityChunkLoaded(int chunkX, int chunkZ) {
++        FullChunkStatus chunkStatus = this.chunkStatus;
++        return chunkStatus != null
++            && chunkStatus.isOrAfter(FullChunkStatus.FULL)
++            && chunkX == this.sectionX
++            && chunkZ == this.sectionZ;
++    }
++
+     public double getFluidHeight(TagKey<Fluid> fluidTag) {
+         return this.fluidHeight.getDouble(fluidTag);
+     }

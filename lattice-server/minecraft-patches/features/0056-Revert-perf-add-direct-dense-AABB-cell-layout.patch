@@ -1,0 +1,598 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 2 Aug 2026 12:11:49 +0800
+Subject: [PATCH] Revert "perf: add direct dense AABB cell layout"
+
+This reverts commit 4bfc5364df73e4fd08456bead8277721bf8206f2.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index d7fb5a9df9146e1e0963307e50c14cc191714ed7..9b69d76b7910afebe55a2730a7648d43c3dfbbd4 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -6,8 +6,10 @@ import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
+ import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
+ import com.google.common.collect.ImmutableList;
+ import com.mojang.logging.LogUtils;
++import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
++import it.unimi.dsi.fastutil.objects.Reference2LongOpenHashMap;
+ import net.minecraft.nbt.CompoundTag;
+ import net.minecraft.nbt.ListTag;
+ import net.minecraft.nbt.NbtUtils;
+@@ -37,8 +39,6 @@ import java.util.Arrays;
+ import java.util.IdentityHashMap;
+ import java.util.Iterator;
+ import java.util.List;
+-import java.util.Locale;
+-import java.util.concurrent.atomic.LongAdder;
+ import java.util.function.Predicate;
+ 
+ public final class ChunkEntitySlices {
+@@ -58,23 +58,6 @@ public final class ChunkEntitySlices {
+     private static final boolean SPATIAL_AABB_ENABLED = Boolean.parseBoolean(
+         System.getProperty("lattice.spatialAabbQuery", "true")
+     );
+-    private static final boolean SPATIAL_AABB_STATS = Boolean.parseBoolean(
+-        System.getProperty("lattice.spatialAabbStats", "false")
+-    );
+-    private static final LongAdder SPATIAL_QUERIES = new LongAdder();
+-    private static final LongAdder SPATIAL_FALLBACKS = new LongAdder();
+-    private static final LongAdder SPATIAL_LOGICAL_CELLS = new LongAdder();
+-    private static final LongAdder SPATIAL_CELL_PROBES = new LongAdder();
+-    private static final LongAdder SPATIAL_OCCUPIED_CELLS = new LongAdder();
+-    private static final LongAdder SPATIAL_CANDIDATES = new LongAdder();
+-    private static final LongAdder SPATIAL_OVERFLOW_CANDIDATES = new LongAdder();
+-    private static final LongAdder SPATIAL_RESULTS = new LongAdder();
+-    // Gauges for currently retained spatial structures, rather than cumulative topology events.
+-    private static final LongAdder SPATIAL_LIVE_INDEXES = new LongAdder();
+-    private static final LongAdder SPATIAL_LIVE_BUCKETS = new LongAdder();
+-    private static final LongAdder SPATIAL_LIVE_OVERFLOW = new LongAdder();
+-    private static final LongAdder SPATIAL_UNCHANGED_UPDATES = new LongAdder();
+-    private static final LongAdder SPATIAL_MOVED_UPDATES = new LongAdder();
+     private static final ThreadLocal<NativeAabbScratchStack> NATIVE_AABB_SCRATCH =
+         ThreadLocal.withInitial(NativeAabbScratchStack::new);
+ 
+@@ -96,58 +79,6 @@ public final class ChunkEntitySlices {
+ 
+     private boolean isTransient;
+ 
+-    public static void resetSpatialAabbStats() {
+-        SPATIAL_QUERIES.reset();
+-        SPATIAL_FALLBACKS.reset();
+-        SPATIAL_LOGICAL_CELLS.reset();
+-        SPATIAL_CELL_PROBES.reset();
+-        SPATIAL_OCCUPIED_CELLS.reset();
+-        SPATIAL_CANDIDATES.reset();
+-        SPATIAL_OVERFLOW_CANDIDATES.reset();
+-        SPATIAL_RESULTS.reset();
+-        SPATIAL_UNCHANGED_UPDATES.reset();
+-        SPATIAL_MOVED_UPDATES.reset();
+-    }
+-
+-    public static String spatialAabbStats() {
+-        final long queries = SPATIAL_QUERIES.sum();
+-        final long logicalCells = SPATIAL_LOGICAL_CELLS.sum();
+-        final long probes = SPATIAL_CELL_PROBES.sum();
+-        final long occupied = SPATIAL_OCCUPIED_CELLS.sum();
+-        final long liveIndexes = SPATIAL_LIVE_INDEXES.sum();
+-        final long liveBuckets = SPATIAL_LIVE_BUCKETS.sum();
+-        final long liveOverflow = SPATIAL_LIVE_OVERFLOW.sum();
+-        final long physicalSlots = liveIndexes > Long.MAX_VALUE / 4096L ? Long.MAX_VALUE : liveIndexes * 4096L;
+-        final long emptySlots = physicalSlots >= liveBuckets ? physicalSlots - liveBuckets : 0L;
+-        final double occupancyRate = physicalSlots == 0L ? 0.0D : (double)liveBuckets / (double)physicalSlots;
+-        return String.format(Locale.ROOT,
+-            "enabled=%s layout=section-direct stats=%s queries=%d fallbacks=%d avgLogicalCells=%.2f avgProbes=%.2f occupiedProbes=%d candidates=%d overflowCandidates=%d results=%d liveIndexes=%d physicalSlots=%d occupied=%d empty=%d rate=%.6f liveOverflow=%d updates=%d/%d",
+-            SPATIAL_AABB_ENABLED, SPATIAL_AABB_STATS,
+-            queries, SPATIAL_FALLBACKS.sum(), average(logicalCells, queries), average(probes, queries),
+-            occupied, SPATIAL_CANDIDATES.sum(),
+-            SPATIAL_OVERFLOW_CANDIDATES.sum(), SPATIAL_RESULTS.sum(),
+-            liveIndexes, physicalSlots, liveBuckets, emptySlots, occupancyRate, liveOverflow,
+-            SPATIAL_UNCHANGED_UPDATES.sum(), SPATIAL_MOVED_UPDATES.sum());
+-    }
+-
+-    private static double average(final long total, final long count) {
+-        return count == 0L ? 0.0D : (double)total / (double)count;
+-    }
+-
+-    private static void recordSpatialScan(final long logicalCells, final long probes, final long occupied,
+-                                          final long candidates, final long overflowCandidates, final int results) {
+-        if (!SPATIAL_AABB_STATS) {
+-            return;
+-        }
+-        SPATIAL_QUERIES.increment();
+-        SPATIAL_LOGICAL_CELLS.add(logicalCells);
+-        SPATIAL_CELL_PROBES.add(probes);
+-        SPATIAL_OCCUPIED_CELLS.add(occupied);
+-        SPATIAL_CANDIDATES.add(candidates);
+-        SPATIAL_OVERFLOW_CANDIDATES.add(overflowCandidates);
+-        SPATIAL_RESULTS.add(results);
+-    }
+-
+     public boolean isTransient() {
+         return this.isTransient;
+     }
+@@ -511,19 +442,16 @@ public final class ChunkEntitySlices {
+ 
+         private E[] storage;
+         private double[] aabbs;
+-        private int[] spatialCells;
+         private final IdentityHashMap<E, Integer> indices = new IdentityHashMap<>();
+-        private final int originX;
+-        private final int originY;
+-        private final int originZ;
+         private SpatialAabbIndex<E> spatialAabbs;
+         private int size;
+ 
+-        public BasicEntityList(final int cap, final int originX, final int originY, final int originZ) {
++        public BasicEntityList() {
++            this(0);
++        }
++
++        public BasicEntityList(final int cap) {
+             this.storage = (E[])(cap <= 0 ? EMPTY : new Entity[cap]);
+-            this.originX = originX;
+-            this.originY = originY;
+-            this.originZ = originZ;
+         }
+ 
+         public boolean isEmpty() {
+@@ -545,9 +473,6 @@ public final class ChunkEntitySlices {
+                 }
+                 this.aabbs = resizedAabbs;
+             }
+-            if (this.spatialCells != null) {
+-                this.spatialCells = Arrays.copyOf(this.spatialCells, newCapacity);
+-            }
+         }
+ 
+         public void add(final E entity) {
+@@ -561,7 +486,7 @@ public final class ChunkEntitySlices {
+                 this.writeBoundingBox(idx, entity.getBoundingBox());
+             }
+             if (this.spatialAabbs != null) {
+-                this.spatialCells[idx] = this.spatialAabbs.add(idx, entity.getBoundingBox());
++                this.spatialAabbs.add(entity, entity.getBoundingBox());
+             }
+             ++this.size;
+         }
+@@ -578,7 +503,7 @@ public final class ChunkEntitySlices {
+             }
+ 
+             if (this.spatialAabbs != null) {
+-                this.spatialAabbs.remove(idx, this.spatialCells[idx]);
++                this.spatialAabbs.remove(entity);
+             }
+ 
+             final int size = --this.size;
+@@ -592,21 +517,12 @@ public final class ChunkEntitySlices {
+                             this.aabbs, component * capacity + idx, size - idx);
+                     }
+                 }
+-                if (this.spatialCells != null) {
+-                    System.arraycopy(this.spatialCells, idx + 1, this.spatialCells, idx, size - idx);
+-                }
+                 for (int i = idx; i < size; ++i) {
+                     this.indices.put(storage[i], i);
+-                    if (this.spatialAabbs != null) {
+-                        this.spatialAabbs.reindex(i + 1, i, this.spatialCells[i]);
+-                    }
+                 }
+             }
+ 
+             storage[size] = null;
+-            if (this.spatialCells != null) {
+-                this.spatialCells[size] = 0;
+-            }
+             this.indices.remove(entity);
+ 
+             return true;
+@@ -622,7 +538,7 @@ public final class ChunkEntitySlices {
+                 this.writeBoundingBox(index, box);
+             }
+             if (this.spatialAabbs != null && index != null) {
+-                this.spatialCells[index] = this.spatialAabbs.update(index, box, this.spatialCells[index]);
++                this.spatialAabbs.update(entity, box);
+             }
+         }
+ 
+@@ -647,11 +563,10 @@ public final class ChunkEntitySlices {
+                 return;
+             }
+             this.ensureAabbCache();
+-            this.spatialAabbs = new SpatialAabbIndex<>(this.originX, this.originY, this.originZ);
+-            this.spatialCells = new int[this.storage.length];
++            this.spatialAabbs = new SpatialAabbIndex<>(this.size);
+             for (int index = 0; index < this.size; ++index) {
+                 final E entity = this.storage[index];
+-                this.spatialCells[index] = this.spatialAabbs.add(index, entity.getBoundingBox());
++                this.spatialAabbs.add(entity, entity.getBoundingBox());
+             }
+         }
+ 
+@@ -663,17 +578,7 @@ public final class ChunkEntitySlices {
+         public int scanSpatial(final Entity except, final AABB box, final List<Entity> into,
+                                final Predicate<? super Entity> predicate, final int maxCount) {
+             return this.spatialAabbs == null ? -1
+-                : this.spatialAabbs.scan(this.storage, except, box, into, predicate, maxCount);
+-        }
+-
+-        /** Releases the direct index before an empty section list is discarded. */
+-        public void releaseSpatialAabbIndex() {
+-            if (this.spatialAabbs == null) {
+-                return;
+-            }
+-            this.spatialAabbs.release();
+-            this.spatialAabbs = null;
+-            this.spatialCells = null;
++                : this.spatialAabbs.scan(except, box, into, predicate, maxCount);
+         }
+ 
+         private void writeBoundingBox(final int index, final AABB box) {
+@@ -695,134 +600,59 @@ public final class ChunkEntitySlices {
+      */
+     private static final class SpatialAabbIndex<E extends Entity> {
+ 
+-        private static final int OVERFLOW_CELL = -1;
+-
+-        private final SpatialBucket[] directCells;
+-        private int[] overflow = new int[4];
+-        private int overflowSize;
+-        private final int originX;
+-        private final int originY;
+-        private final int originZ;
+-        private boolean released;
+-
+-        SpatialAabbIndex(final int originX, final int originY, final int originZ) {
+-            this.originX = originX;
+-            this.originY = originY;
+-            this.originZ = originZ;
+-            this.directCells = new SpatialBucket[4096];
+-            if (SPATIAL_AABB_STATS) {
+-                SPATIAL_LIVE_INDEXES.increment();
+-            }
+-        }
++        private static final long OVERFLOW_CELL = Long.MIN_VALUE;
+ 
+-        int add(final int index, final AABB box) {
+-            final int cell = this.cellFor(box);
+-            this.add(index, cell);
+-            return cell;
+-        }
++        private final Long2ObjectOpenHashMap<SpatialBucket<E>> cells = new Long2ObjectOpenHashMap<>();
++        private final Reference2LongOpenHashMap<E> cellByEntity = new Reference2LongOpenHashMap<>();
++        private final ArrayList<E> overflow = new ArrayList<>();
+ 
+-        private void add(final int index, final int cell) {
+-            if (cell == OVERFLOW_CELL) {
+-                if (this.overflowSize == this.overflow.length) {
+-                    this.overflow = Arrays.copyOf(this.overflow, this.overflow.length << 1);
+-                }
+-                this.overflow[this.overflowSize++] = index;
+-                if (SPATIAL_AABB_STATS) {
+-                    SPATIAL_LIVE_OVERFLOW.increment();
+-                }
+-                return;
+-            }
+-            SpatialBucket bucket = this.getBucket(cell);
+-            if (bucket == null) {
+-                bucket = new SpatialBucket();
+-                this.putBucket(cell, bucket);
+-                if (SPATIAL_AABB_STATS) {
+-                    SPATIAL_LIVE_BUCKETS.increment();
+-                }
+-            }
+-            bucket.add(index);
++        SpatialAabbIndex(final int expectedSize) {
++            this.cellByEntity.defaultReturnValue(OVERFLOW_CELL);
++            this.cells.ensureCapacity(expectedSize);
+         }
+ 
+-        void remove(final int index, final int cell) {
++        void add(final E entity, final AABB box) {
++            final long cell = this.cellFor(box);
++            this.cellByEntity.put(entity, cell);
+             if (cell == OVERFLOW_CELL) {
+-                for (int overflowIndex = 0; overflowIndex < this.overflowSize; ++overflowIndex) {
+-                    if (this.overflow[overflowIndex] == index) {
+-                        System.arraycopy(this.overflow, overflowIndex + 1, this.overflow, overflowIndex,
+-                            --this.overflowSize - overflowIndex);
+-                        if (SPATIAL_AABB_STATS) {
+-                            SPATIAL_LIVE_OVERFLOW.decrement();
+-                        }
+-                        return;
+-                    }
+-                }
++                this.overflow.add(entity);
+                 return;
+             }
+-            final SpatialBucket bucket = this.getBucket(cell);
+-            if (bucket != null && bucket.remove(index) && bucket.isEmpty()) {
+-                this.removeBucket(cell);
+-                if (SPATIAL_AABB_STATS) {
+-                    SPATIAL_LIVE_BUCKETS.decrement();
+-                }
++            SpatialBucket<E> bucket = this.cells.get(cell);
++            if (bucket == null) {
++                this.cells.put(cell, bucket = new SpatialBucket<>());
+             }
++            bucket.add(entity);
+         }
+ 
+-        void reindex(final int oldIndex, final int newIndex, final int cell) {
++        void remove(final E entity) {
++            final long cell = this.cellByEntity.removeLong(entity);
+             if (cell == OVERFLOW_CELL) {
+-                for (int overflowIndex = 0; overflowIndex < this.overflowSize; ++overflowIndex) {
+-                    if (this.overflow[overflowIndex] == oldIndex) {
+-                        this.overflow[overflowIndex] = newIndex;
++                for (int index = 0, len = this.overflow.size(); index < len; ++index) {
++                    if (this.overflow.get(index) == entity) {
++                        this.overflow.remove(index);
+                         return;
+                     }
+                 }
+                 return;
+             }
+-            final SpatialBucket bucket = this.getBucket(cell);
+-            if (bucket != null) {
+-                bucket.reindex(oldIndex, newIndex);
+-            }
+-        }
+-
+-        void release() {
+-            if (this.released) {
+-                return;
+-            }
+-            this.released = true;
+-            if (!SPATIAL_AABB_STATS) {
+-                return;
+-            }
+-            long liveBuckets = 0L;
+-            for (final SpatialBucket bucket : this.directCells) {
+-                if (bucket != null) {
+-                    ++liveBuckets;
+-                }
+-            }
+-            if (liveBuckets != 0L) {
+-                SPATIAL_LIVE_BUCKETS.add(-liveBuckets);
++            final SpatialBucket<E> bucket = this.cells.get(cell);
++            if (bucket != null && bucket.remove(entity) && bucket.isEmpty()) {
++                this.cells.remove(cell);
+             }
+-            final int liveOverflow = this.overflowSize;
+-            if (liveOverflow != 0) {
+-                SPATIAL_LIVE_OVERFLOW.add(-liveOverflow);
+-            }
+-            SPATIAL_LIVE_INDEXES.decrement();
+         }
+ 
+-        int update(final int index, final AABB box, final int oldCell) {
+-            final int newCell = this.cellFor(box);
++        void update(final E entity, final AABB box) {
++            final long oldCell = this.cellByEntity.getLong(entity);
++            final long newCell = this.cellFor(box);
+             if (oldCell == newCell) {
+-                if (SPATIAL_AABB_STATS) {
+-                    SPATIAL_UNCHANGED_UPDATES.increment();
+-                }
+-                return oldCell;
+-            }
+-            if (SPATIAL_AABB_STATS) {
+-                SPATIAL_MOVED_UPDATES.increment();
++                return;
+             }
+-            this.remove(index, oldCell);
+-            this.add(index, newCell);
+-            return newCell;
++            this.remove(entity);
++            this.add(entity, box);
+         }
+ 
+-        int scan(final Entity[] storage, final Entity except, final AABB box, final List<Entity> into,
++        int scan(final Entity except, final AABB box, final List<Entity> into,
+                  final Predicate<? super Entity> predicate, final int maxCount) {
+             final int minX = Mth.floor(box.minX - SPATIAL_MAX_SMALL_HALF_SPAN);
+             final int minY = Mth.floor(box.minY - SPATIAL_MAX_SMALL_HALF_SPAN);
+@@ -832,86 +662,38 @@ public final class ChunkEntitySlices {
+             final int maxZ = Mth.floor(box.maxZ + SPATIAL_MAX_SMALL_HALF_SPAN);
+             final long cellsToVisit = (long)(maxX - minX + 1) * (long)(maxY - minY + 1) * (long)(maxZ - minZ + 1);
+             if (cellsToVisit > SPATIAL_MAX_QUERY_CELLS) {
+-                if (SPATIAL_AABB_STATS) {
+-                    SPATIAL_QUERIES.increment();
+-                    SPATIAL_FALLBACKS.increment();
+-                    SPATIAL_LOGICAL_CELLS.add(cellsToVisit);
+-                }
+                 return -1;
+             }
+ 
+-            return this.scanDirect(storage, except, box, into, predicate, maxCount,
+-                minX, minY, minZ, maxX, maxY, maxZ, cellsToVisit);
+-        }
+-
+-        private int scanDirect(final Entity[] storage, final Entity except, final AABB box, final List<Entity> into,
+-                               final Predicate<? super Entity> predicate, final int maxCount,
+-                               final int minX, final int minY, final int minZ,
+-                               final int maxX, final int maxY, final int maxZ, final long logicalCells) {
+-            final int localMinX = Math.max(0, minX - this.originX);
+-            final int localMinY = Math.max(0, minY - this.originY);
+-            final int localMinZ = Math.max(0, minZ - this.originZ);
+-            final int localMaxX = Math.min(15, maxX - this.originX);
+-            final int localMaxY = Math.min(15, maxY - this.originY);
+-            final int localMaxZ = Math.min(15, maxZ - this.originZ);
+-            final int initialSize = into.size();
+-            long probes = 0L;
+-            long occupied = 0L;
+-            long candidates = 0L;
+-
+-            if (localMinX <= localMaxX && localMinY <= localMaxY && localMinZ <= localMaxZ) {
+-                for (int cellY = localMinY; cellY <= localMaxY; ++cellY) {
+-                    final int layer = cellY << 8;
+-                    for (int cellZ = localMinZ; cellZ <= localMaxZ; ++cellZ) {
+-                        final int row = layer | (cellZ << 4);
+-                        for (int cellX = localMinX; cellX <= localMaxX; ++cellX) {
+-                            ++probes;
+-                            final SpatialBucket bucket = this.directCells[row | cellX];
+-                            if (bucket == null) {
+-                                continue;
+-                            }
+-                            ++occupied;
+-                            candidates += bucket.size;
+-                            if (this.scanBucket(storage, bucket, except, box, into, predicate, maxCount)) {
+-                                recordSpatialScan(logicalCells, probes, occupied, candidates, 0L, into.size() - initialSize);
+-                                return 1;
+-                            }
++            for (int cellY = minY; cellY <= maxY; ++cellY) {
++                for (int cellZ = minZ; cellZ <= maxZ; ++cellZ) {
++                    for (int cellX = minX; cellX <= maxX; ++cellX) {
++                        final SpatialBucket<E> bucket = this.cells.get(BlockPos.asLong(cellX, cellY, cellZ));
++                        if (bucket == null) {
++                            continue;
++                        }
++                        if (this.scanBucket(bucket, except, box, into, predicate, maxCount)) {
++                            return 1;
+                         }
+                     }
+                 }
+             }
+-
+-            final long overflowCandidates = this.overflowSize;
+-            for (int overflowIndex = 0, len = this.overflowSize; overflowIndex < len; ++overflowIndex) {
+-                final Entity entity = storage[this.overflow[overflowIndex]];
++            for (int index = 0, len = this.overflow.size(); index < len; ++index) {
++                final E entity = this.overflow.get(index);
+                 if (this.matches(entity, except, box, predicate)) {
+                     into.add(entity);
+                     if (into.size() >= maxCount) {
+-                        recordSpatialScan(logicalCells, probes, occupied, candidates, overflowCandidates, into.size() - initialSize);
+                         return 1;
+                     }
+                 }
+             }
+-            recordSpatialScan(logicalCells, probes, occupied, candidates, overflowCandidates, into.size() - initialSize);
+             return 0;
+         }
+ 
+-        private SpatialBucket getBucket(final int cell) {
+-            return this.directCells[cell];
+-        }
+-
+-        private void putBucket(final int cell, final SpatialBucket bucket) {
+-            this.directCells[cell] = bucket;
+-        }
+-
+-        private void removeBucket(final int cell) {
+-            this.directCells[cell] = null;
+-        }
+-
+-        private boolean scanBucket(final Entity[] storage, final SpatialBucket bucket, final Entity except, final AABB box,
++        private boolean scanBucket(final SpatialBucket<E> bucket, final Entity except, final AABB box,
+                                    final List<Entity> into, final Predicate<? super Entity> predicate, final int maxCount) {
+             for (int index = 0, len = bucket.size; index < len; ++index) {
+-                final Entity entity = storage[bucket.get(index)];
++                final E entity = bucket.get(index);
+                 if (this.matches(entity, except, box, predicate)) {
+                     into.add(entity);
+                     if (into.size() >= maxCount) {
+@@ -922,65 +704,51 @@ public final class ChunkEntitySlices {
+             return false;
+         }
+ 
+-        private boolean matches(final Entity entity, final Entity except, final AABB box, final Predicate<? super Entity> predicate) {
+-            return entity != null && !entity.isRemoved() && entity != except && entity.getBoundingBox().intersects(box)
++        private boolean matches(final E entity, final Entity except, final AABB box, final Predicate<? super Entity> predicate) {
++            return entity != except && entity.getBoundingBox().intersects(box)
+                 && (predicate == null || predicate.test(entity));
+         }
+ 
+-        private int cellFor(final AABB box) {
++        private long cellFor(final AABB box) {
+             if (box.getXsize() > SPATIAL_MAX_SMALL_SPAN || box.getYsize() > SPATIAL_MAX_SMALL_SPAN || box.getZsize() > SPATIAL_MAX_SMALL_SPAN) {
+                 return OVERFLOW_CELL;
+             }
+-            if (box.minX < this.originX || box.maxX > this.originX + 16.0D
+-                || box.minY < this.originY || box.maxY > this.originY + 16.0D
+-                || box.minZ < this.originZ || box.maxZ > this.originZ + 16.0D) {
+-                return OVERFLOW_CELL;
+-            }
+-            final int localX = Mth.floor((box.minX + box.maxX) * 0.5D) - this.originX;
+-            final int localY = Mth.floor((box.minY + box.maxY) * 0.5D) - this.originY;
+-            final int localZ = Mth.floor((box.minZ + box.maxZ) * 0.5D) - this.originZ;
+-            if ((localX | localY | localZ) < 0 || localX > 15 || localY > 15 || localZ > 15) {
+-                return OVERFLOW_CELL;
+-            }
+-            return (localY << 8) | (localZ << 4) | localX;
++            return BlockPos.asLong(
++                Mth.floor((box.minX + box.maxX) * 0.5D),
++                Mth.floor((box.minY + box.maxY) * 0.5D),
++                Mth.floor((box.minZ + box.maxZ) * 0.5D)
++            );
+         }
+     }
+ 
+-    private static final class SpatialBucket {
++    private static final class SpatialBucket<E extends Entity> {
+ 
+-        private int[] storage = new int[4];
++        private Entity[] storage = new Entity[4];
+         private int size;
+ 
+-        void add(final int entityIndex) {
++        void add(final E entity) {
+             if (this.size == this.storage.length) {
+                 this.storage = Arrays.copyOf(this.storage, this.storage.length << 1);
+             }
+-            this.storage[this.size++] = entityIndex;
++            this.storage[this.size++] = entity;
+         }
+ 
+-        boolean remove(final int entityIndex) {
++        boolean remove(final E entity) {
+             for (int index = 0; index < this.size; ++index) {
+-                if (this.storage[index] != entityIndex) {
++                if (this.storage[index] != entity) {
+                     continue;
+                 }
+                 final int last = --this.size;
+                 System.arraycopy(this.storage, index + 1, this.storage, index, last - index);
++                this.storage[last] = null;
+                 return true;
+             }
+             return false;
+         }
+ 
+-        void reindex(final int oldIndex, final int newIndex) {
+-            for (int index = 0; index < this.size; ++index) {
+-                if (this.storage[index] == oldIndex) {
+-                    this.storage[index] = newIndex;
+-                    return;
+-                }
+-            }
+-        }
+-
+-        int get(final int index) {
+-            return this.storage[index];
++        @SuppressWarnings("unchecked")
++        E get(final int index) {
++            return (E)this.storage[index];
+         }
+ 
+         boolean isEmpty() {
+@@ -1012,8 +780,7 @@ public final class ChunkEntitySlices {
+             }
+ 
+             if (list == null) {
+-                this.entitiesBySection[sectionIndex] = list = new BasicEntityList<>(0,
+-                    this.slices.chunkX << 4, (sectionIndex + this.slices.minSection) << 4, this.slices.chunkZ << 4);
++                this.entitiesBySection[sectionIndex] = list = new BasicEntityList<>();
+             }
+ 
+             list.add(entity);
+@@ -1030,7 +797,6 @@ public final class ChunkEntitySlices {
+             --this.count;
+ 
+             if (list.isEmpty()) {
+-                list.releaseSpatialAabbIndex();
+                 this.entitiesBySection[sectionIndex] = null;
+             }
+         }

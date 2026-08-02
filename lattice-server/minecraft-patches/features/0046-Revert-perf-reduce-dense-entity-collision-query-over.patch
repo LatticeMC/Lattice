@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 31 Jul 2026 23:14:46 +0800
+Subject: [PATCH] Revert "perf: reduce dense entity collision query overhead"
+
+This reverts commit 0d035037e28b90b03c3a43d68e60757552cc8bfd.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 46a7c41966e3ae23bf30e94819b4b06819652b0a..9b69d76b7910afebe55a2730a7648d43c3dfbbd4 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -47,13 +47,11 @@ public final class ChunkEntitySlices {
+     // Native setup is only amortised by dense entity sections.  The common
+     // collision query retains Moonrise's exact iteration/filter semantics.
+     private static final int NATIVE_AABB_MIN_ENTITIES = 32;
+-    // A two-block XZ broad-phase grid becomes cheaper than either a JNI call or
+-    // a full section scan once a vertical section is genuinely dense. Sections
+-    // already partition Y, so indexing it again only adds empty hash probes.
+-    // Wide entities stay in an overflow list and every candidate is still
+-    // intersect-tested below.
++    // A one-block broad-phase grid becomes cheaper than either a JNI call or
++    // a full section scan once a vertical section is genuinely dense.  Unlike
++    // the native batch broad-phase this remains exact: large entities are kept
++    // in a separate list and every candidate is still intersect-tested below.
+     private static final int SPATIAL_AABB_MIN_ENTITIES = 64;
+-    private static final int SPATIAL_CELL_SHIFT = 1;
+     private static final double SPATIAL_MAX_SMALL_SPAN = 2.0D;
+     private static final double SPATIAL_MAX_SMALL_HALF_SPAN = SPATIAL_MAX_SMALL_SPAN * 0.5D;
+     private static final int SPATIAL_MAX_QUERY_CELLS = 512;
+@@ -556,9 +554,9 @@ public final class ChunkEntitySlices {
+ 
+         /**
+          * Builds the exact, incremental broad-phase used by dense entity
+-         * queries. Each regular entity belongs to one XZ cell by its AABB centre;
+-         * entities wider than two blocks remain in an overflow list so a query can
+-         * never miss them. Y is already partitioned by EntityCollectionBySection.
++         * queries. Each regular entity belongs to one cell by its AABB centre;
++         * entities wider than two blocks remain in an overflow list so a query
++         * can never miss them.
+          */
+         public void ensureSpatialAabbIndex() {
+             if (this.spatialAabbs != null) {
+@@ -598,7 +596,7 @@ public final class ChunkEntitySlices {
+      * Exact broad-phase for a dense BasicEntityList. The important difference
+      * from the previous JNI path is that it avoids making one native call per
+      * entity query: nearby push/collision queries only visit the occupied
+-     * two-block XZ cells touching the query box.
++     * one-block cells touching the query box.
+      */
+     private static final class SpatialAabbIndex<E extends Entity> {
+ 
+@@ -656,23 +654,27 @@ public final class ChunkEntitySlices {
+ 
+         int scan(final Entity except, final AABB box, final List<Entity> into,
+                  final Predicate<? super Entity> predicate, final int maxCount) {
+-            final int minX = Mth.floor(box.minX - SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
+-            final int minZ = Mth.floor(box.minZ - SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
+-            final int maxX = Mth.floor(box.maxX + SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
+-            final int maxZ = Mth.floor(box.maxZ + SPATIAL_MAX_SMALL_HALF_SPAN) >> SPATIAL_CELL_SHIFT;
+-            final long cellsToVisit = (long)(maxX - minX + 1) * (long)(maxZ - minZ + 1);
++            final int minX = Mth.floor(box.minX - SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int minY = Mth.floor(box.minY - SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int minZ = Mth.floor(box.minZ - SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int maxX = Mth.floor(box.maxX + SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int maxY = Mth.floor(box.maxY + SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int maxZ = Mth.floor(box.maxZ + SPATIAL_MAX_SMALL_HALF_SPAN);
++            final long cellsToVisit = (long)(maxX - minX + 1) * (long)(maxY - minY + 1) * (long)(maxZ - minZ + 1);
+             if (cellsToVisit > SPATIAL_MAX_QUERY_CELLS) {
+                 return -1;
+             }
+ 
+-            for (int cellZ = minZ; cellZ <= maxZ; ++cellZ) {
+-                for (int cellX = minX; cellX <= maxX; ++cellX) {
+-                    final SpatialBucket<E> bucket = this.cells.get(ChunkPos.asLong(cellX, cellZ));
+-                    if (bucket == null) {
+-                        continue;
+-                    }
+-                    if (this.scanBucket(bucket, except, box, into, predicate, maxCount)) {
+-                        return 1;
++            for (int cellY = minY; cellY <= maxY; ++cellY) {
++                for (int cellZ = minZ; cellZ <= maxZ; ++cellZ) {
++                    for (int cellX = minX; cellX <= maxX; ++cellX) {
++                        final SpatialBucket<E> bucket = this.cells.get(BlockPos.asLong(cellX, cellY, cellZ));
++                        if (bucket == null) {
++                            continue;
++                        }
++                        if (this.scanBucket(bucket, except, box, into, predicate, maxCount)) {
++                            return 1;
++                        }
+                     }
+                 }
+             }
+@@ -708,12 +710,13 @@ public final class ChunkEntitySlices {
+         }
+ 
+         private long cellFor(final AABB box) {
+-            if (box.getXsize() > SPATIAL_MAX_SMALL_SPAN || box.getZsize() > SPATIAL_MAX_SMALL_SPAN) {
++            if (box.getXsize() > SPATIAL_MAX_SMALL_SPAN || box.getYsize() > SPATIAL_MAX_SMALL_SPAN || box.getZsize() > SPATIAL_MAX_SMALL_SPAN) {
+                 return OVERFLOW_CELL;
+             }
+-            return ChunkPos.asLong(
+-                Mth.floor((box.minX + box.maxX) * 0.5D) >> SPATIAL_CELL_SHIFT,
+-                Mth.floor((box.minZ + box.maxZ) * 0.5D) >> SPATIAL_CELL_SHIFT
++            return BlockPos.asLong(
++                Mth.floor((box.minX + box.maxX) * 0.5D),
++                Mth.floor((box.minY + box.maxY) * 0.5D),
++                Mth.floor((box.minZ + box.maxZ) * 0.5D)
+             );
+         }
+     }
+diff --git a/net/minecraft/world/entity/EntitySelector.java b/net/minecraft/world/entity/EntitySelector.java
+index 1c82b7901a16cc5e4ab62fa2f8cb68c2f979322d..cd8e22171449049b23823da9b5be6ede2c3f38d0 100644
+--- a/net/minecraft/world/entity/EntitySelector.java
++++ b/net/minecraft/world/entity/EntitySelector.java
+@@ -51,10 +51,7 @@ public final class EntitySelector {
+             ? Predicates.alwaysFalse()
+             : NO_SPECTATORS.and(
+                 entity1 -> { final Entity pushedEntity = entity1; // Paper - OBFHELPER
+-                    // Lattice - avoid duplicate pushability checks. Based on Leaf's
+-                    // "Optimize pushable selector" by OverwriteMC:
+-                    // https://github.com/Winds-Studio/Leaf/blob/178bcb4/leaf-server/minecraft-patches/features/0293-Optimize-pushable-selector.patch
+-                    if (!pushedEntity.canCollideWithBukkit(entity) || !entity.canCollideWithBukkit(pushedEntity)) { // CraftBukkit - collidable API // Paper - Climbing should not bypass cramming gamerule
++                    if (!pushedEntity.isPushable() || !pushedEntity.canCollideWithBukkit(entity) || !entity.canCollideWithBukkit(pushedEntity)) { // CraftBukkit - collidable API // Paper - Climbing should not bypass cramming gamerule
+                         return false;
+                     } else if (!entity.level().isClientSide() || entity1 instanceof Player player && player.isLocalPlayer()) {
+                         Team team1 = entity1.getTeam();

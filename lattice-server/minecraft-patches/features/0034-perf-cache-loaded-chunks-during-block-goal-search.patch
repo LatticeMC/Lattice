@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 19:11:57 +0800
+Subject: [PATCH] perf: cache loaded chunks during block goal search
+
+
+diff --git a/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java b/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
+index 7e70c7bee633c54497d1cd2854dd60f4fb5ff160..8f0bd499bb1b7a105eb696ba2d8978aabafeced5 100644
+--- a/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
++++ b/net/minecraft/world/entity/ai/goal/MoveToBlockGoal.java
+@@ -114,22 +114,34 @@ public abstract class MoveToBlockGoal extends Goal {
+         BlockPos blockPos = this.mob.blockPosition();
+         BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
+ 
+-        for (int i2 = this.verticalSearchStart; i2 <= i1; i2 = i2 > 0 ? -i2 : 1 - i2) {
+-            for (int i3 = 0; i3 < i; i3++) {
+-                for (int i4 = 0; i4 <= i3; i4 = i4 > 0 ? -i4 : 1 - i4) {
+-                    for (int i5 = i4 < i3 && i4 > -i3 ? i3 : 0; i5 <= i3; i5 = i5 > 0 ? -i5 : 1 - i5) {
+-                        mutableBlockPos.setWithOffset(blockPos, i4, i2 - 1, i5);
+-                        if (this.mob.isWithinHome(mutableBlockPos) && this.isValidTarget(this.mob.level(), mutableBlockPos)) {
+-                            this.blockPos = mutableBlockPos;
+-                            this.mob.movingTarget = mutableBlockPos == BlockPos.ZERO ? null : mutableBlockPos.immutable(); // Paper
+-                            return true;
++        this.beginFindNearestBlockSearch(this.mob.level(), blockPos, i);
++        try {
++            for (int i2 = this.verticalSearchStart; i2 <= i1; i2 = i2 > 0 ? -i2 : 1 - i2) {
++                for (int i3 = 0; i3 < i; i3++) {
++                    for (int i4 = 0; i4 <= i3; i4 = i4 > 0 ? -i4 : 1 - i4) {
++                        for (int i5 = i4 < i3 && i4 > -i3 ? i3 : 0; i5 <= i3; i5 = i5 > 0 ? -i5 : 1 - i5) {
++                            mutableBlockPos.setWithOffset(blockPos, i4, i2 - 1, i5);
++                            if (this.mob.isWithinHome(mutableBlockPos) && this.isValidTarget(this.mob.level(), mutableBlockPos)) {
++                                this.blockPos = mutableBlockPos;
++                                this.mob.movingTarget = mutableBlockPos == BlockPos.ZERO ? null : mutableBlockPos.immutable(); // Paper
++                                return true;
++                            }
+                         }
+                     }
+                 }
+             }
++
++            return false;
++        } finally {
++            this.endFindNearestBlockSearch();
+         }
++    }
++
++    /** Hooks allow goals with expensive loaded-chunk probes to cache only one search. */
++    protected void beginFindNearestBlockSearch(LevelReader level, BlockPos origin, int searchRange) {
++    }
+ 
+-        return false;
++    protected void endFindNearestBlockSearch() {
+     }
+ 
+     protected abstract boolean isValidTarget(LevelReader level, BlockPos pos);
+diff --git a/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java b/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
+index 83be00350765db043b6bf32e7814d9c7119eacc5..aae342064f3ce56b8f84251c646bb47edbf2ed09 100644
+--- a/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
++++ b/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.entity.ai.goal;
+ 
++import java.util.Arrays;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.SectionPos;
+ import net.minecraft.core.particles.ItemParticleOption;
+@@ -25,6 +26,12 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+     private final Block blockToRemove;
+     private final Mob removerMob;
+     private int ticksSinceReachedGoal;
++    private ChunkAccess[] targetSearchChunks = new ChunkAccess[0];
++    private int targetSearchMinChunkX;
++    private int targetSearchMinChunkZ;
++    private int targetSearchChunkWidth;
++    private int targetSearchChunkCount;
++    private boolean targetSearchCacheActive;
+     private static final int WAIT_AFTER_BLOCK_FOUND = 20;
+ 
+     public RemoveBlockGoal(Block blockToRemove, PathfinderMob removerMob, double speedModifier, int searchRange) {
+@@ -146,9 +153,50 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+         }
+     }
+ 
++    @Override
++    protected void beginFindNearestBlockSearch(LevelReader level, BlockPos origin, int searchRange) {
++        int minChunkX = (origin.getX() - searchRange) >> 4;
++        int maxChunkX = (origin.getX() + searchRange) >> 4;
++        int minChunkZ = (origin.getZ() - searchRange) >> 4;
++        int maxChunkZ = (origin.getZ() + searchRange) >> 4;
++        int width = maxChunkX - minChunkX + 1;
++        int count = width * (maxChunkZ - minChunkZ + 1);
++
++        if (this.targetSearchChunks.length < count) {
++            this.targetSearchChunks = new ChunkAccess[count];
++        }
++
++        this.targetSearchMinChunkX = minChunkX;
++        this.targetSearchMinChunkZ = minChunkZ;
++        this.targetSearchChunkWidth = width;
++        this.targetSearchChunkCount = count;
++        this.targetSearchCacheActive = true;
++
++        int index = 0;
++        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
++            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
++                this.targetSearchChunks[index++] = level.getChunkIfLoadedImmediately(chunkX, chunkZ);
++            }
++        }
++    }
++
++    @Override
++    protected void endFindNearestBlockSearch() {
++        Arrays.fill(this.targetSearchChunks, 0, this.targetSearchChunkCount, null);
++        this.targetSearchCacheActive = false;
++        this.targetSearchChunkCount = 0;
++    }
++
+     @Override
+     protected boolean isValidTarget(LevelReader level, BlockPos pos) {
+-        ChunkAccess chunk = level.getChunkIfLoadedImmediately(pos.getX() >> 4, pos.getZ() >> 4); // Paper - Prevent AI rules from loading chunks
++        int chunkX = pos.getX() >> 4;
++        int chunkZ = pos.getZ() >> 4;
++        ChunkAccess chunk;
++        if (this.targetSearchCacheActive) {
++            chunk = this.targetSearchChunks[chunkX - this.targetSearchMinChunkX + (chunkZ - this.targetSearchMinChunkZ) * this.targetSearchChunkWidth];
++        } else {
++            chunk = level.getChunkIfLoadedImmediately(chunkX, chunkZ); // Paper - Prevent AI rules from loading chunks
++        }
+         return chunk != null
+             && chunk.getBlockState(pos).is(this.blockToRemove)
+             && chunk.getBlockState(pos.above()).isAir()

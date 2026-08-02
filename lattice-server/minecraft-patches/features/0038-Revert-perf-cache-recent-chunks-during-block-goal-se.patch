@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 21:20:37 +0800
+Subject: [PATCH] Revert "perf: cache recent chunks during block goal search"
+
+This reverts commit aa8ed0d4db3ff97750110de34bcc59ff0a228870.
+
+diff --git a/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java b/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
+index aed9f34e687c97b56c166654351ddd2e5ea6e19e..83be00350765db043b6bf32e7814d9c7119eacc5 100644
+--- a/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
++++ b/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
+@@ -11,7 +11,6 @@ import net.minecraft.world.entity.PathfinderMob;
+ import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.item.Items;
+ import net.minecraft.world.level.BlockGetter;
+-import net.minecraft.world.level.ChunkPos;
+ import net.minecraft.world.level.Level;
+ import net.minecraft.world.level.LevelAccessor;
+ import net.minecraft.world.level.LevelReader;
+@@ -26,11 +25,6 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+     private final Block blockToRemove;
+     private final Mob removerMob;
+     private int ticksSinceReachedGoal;
+-    private long targetSearchChunkKey0 = Long.MIN_VALUE;
+-    private long targetSearchChunkKey1 = Long.MIN_VALUE;
+-    private @Nullable ChunkAccess targetSearchChunk0;
+-    private @Nullable ChunkAccess targetSearchChunk1;
+-    private boolean targetSearchCacheActive;
+     private static final int WAIT_AFTER_BLOCK_FOUND = 20;
+ 
+     public RemoveBlockGoal(Block blockToRemove, PathfinderMob removerMob, double speedModifier, int searchRange) {
+@@ -46,21 +40,7 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+         } else if (this.nextStartTick > 0) {
+             this.nextStartTick--;
+             return false;
+-        }
+-
+-        boolean found;
+-        this.targetSearchCacheActive = true;
+-        this.targetSearchChunkKey0 = Long.MIN_VALUE;
+-        this.targetSearchChunkKey1 = Long.MIN_VALUE;
+-        try {
+-            found = this.findNearestBlock();
+-        } finally {
+-            this.targetSearchCacheActive = false;
+-            this.targetSearchChunk0 = null;
+-            this.targetSearchChunk1 = null;
+-        }
+-
+-        if (found) {
++        } else if (this.findNearestBlock()) {
+             this.nextStartTick = reducedTickDelay(20);
+             return true;
+         } else {
+@@ -168,29 +148,7 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+ 
+     @Override
+     protected boolean isValidTarget(LevelReader level, BlockPos pos) {
+-        int chunkX = pos.getX() >> 4;
+-        int chunkZ = pos.getZ() >> 4;
+-        ChunkAccess chunk;
+-        if (this.targetSearchCacheActive) {
+-            long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
+-            if (chunkKey == this.targetSearchChunkKey0) {
+-                chunk = this.targetSearchChunk0;
+-            } else if (chunkKey == this.targetSearchChunkKey1) {
+-                chunk = this.targetSearchChunk1;
+-                this.targetSearchChunkKey1 = this.targetSearchChunkKey0;
+-                this.targetSearchChunk1 = this.targetSearchChunk0;
+-                this.targetSearchChunkKey0 = chunkKey;
+-                this.targetSearchChunk0 = chunk;
+-            } else {
+-                chunk = level.getChunkIfLoadedImmediately(chunkX, chunkZ); // Paper - Prevent AI rules from loading chunks
+-                this.targetSearchChunkKey1 = this.targetSearchChunkKey0;
+-                this.targetSearchChunk1 = this.targetSearchChunk0;
+-                this.targetSearchChunkKey0 = chunkKey;
+-                this.targetSearchChunk0 = chunk;
+-            }
+-        } else {
+-            chunk = level.getChunkIfLoadedImmediately(chunkX, chunkZ); // Paper - Prevent AI rules from loading chunks
+-        }
++        ChunkAccess chunk = level.getChunkIfLoadedImmediately(pos.getX() >> 4, pos.getZ() >> 4); // Paper - Prevent AI rules from loading chunks
+         return chunk != null
+             && chunk.getBlockState(pos).is(this.blockToRemove)
+             && chunk.getBlockState(pos.above()).isAir()

@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 18:45:18 +0800
+Subject: [PATCH] perf: skip local entity chunk load lookups
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 4d9455183db8ce004dd8472f0a24332a86557ed1..42b160070b93625257c15c4769ebc921bf7a05b1 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -64,6 +64,7 @@ import net.minecraft.network.syncher.SynchedEntityData;
+ import net.minecraft.resources.Identifier;
+ import net.minecraft.resources.ResourceKey;
+ import net.minecraft.server.level.ServerEntity;
++import net.minecraft.server.level.FullChunkStatus;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.server.level.ServerPlayer;
+ import net.minecraft.server.level.TicketType;
+@@ -4991,11 +4992,25 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+ 
+     public boolean touchingUnloadedChunk() {
+         AABB aabb = this.getBoundingBox().inflate(1.0);
+-        int floor = Mth.floor(aabb.minX);
+-        int ceil = Mth.ceil(aabb.maxX);
+-        int floor1 = Mth.floor(aabb.minZ);
+-        int ceil1 = Mth.ceil(aabb.maxZ);
+-        return !this.level().hasChunksAt(floor, floor1, ceil, ceil1);
++        int minBlockX = Mth.floor(aabb.minX);
++        int maxBlockX = Mth.ceil(aabb.maxX);
++        int minBlockZ = Mth.floor(aabb.minZ);
++        int maxBlockZ = Mth.ceil(aabb.maxZ);
++
++        // The entity lookup owns this status, so a fully-contained query can avoid
++        // re-looking up the same loaded chunk in ServerChunkCache's concurrent map.
++        // Cross-chunk boxes still use the canonical query to preserve unload semantics.
++        FullChunkStatus chunkStatus = this.chunkStatus;
++        if (chunkStatus != null
++            && chunkStatus.isOrAfter(FullChunkStatus.FULL)
++            && (minBlockX >> 4) == this.sectionX
++            && (maxBlockX >> 4) == this.sectionX
++            && (minBlockZ >> 4) == this.sectionZ
++            && (maxBlockZ >> 4) == this.sectionZ) {
++            return false;
++        }
++
++        return !this.level().hasChunksAt(minBlockX, minBlockZ, maxBlockX, maxBlockZ);
+     }
+ 
+     public double getFluidHeight(TagKey<Fluid> fluidTag) {

@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 17:02:16 +0800
+Subject: [PATCH] perf: cap push collision entity queries
+
+
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 3fc775aa326701f4f491d487d587dfa39ed1db47..4238250178eeb9ce7f30321e1e196db7796322bd 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -3981,7 +3981,12 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+             return;
+         }
+         // Paper end - don't run getEntities if we're not going to use its result
+-        List<Entity> pushableEntities = this.level().getPushableEntities(this, this.getBoundingBox());
++        // Paper's max-entity-collisions is an output cap, so using it to cap
++        // the lookup is equivalent for pushing and prevents a dense pile from
++        // allocating/scanning every one of its O(n^2) candidates. Cramming
++        // only needs to know whether the result reaches its configured limit.
++        final int pushableQueryLimit = Math.max(i, this.level().paperConfig().collisions.maxEntityCollisions);
++        List<Entity> pushableEntities = this.level().getPushableEntities(this, this.getBoundingBox(), pushableQueryLimit);
+         if (!pushableEntities.isEmpty()) {
+             if (this.level() instanceof ServerLevel serverLevel) {
+                 // Paper - don't run getEntities if we're not going to use its result; moved up
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index dd5e2aa4d574595a101c3924f212464f9d15c892..287ef75ae2957d727c6467ad053cbc0affab8973 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1864,6 +1864,28 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         return this.getEntities(entity, boundingBox, EntitySelector.pushableBy(entity));
+     }
+ 
++    /**
++     * Collision processing already caps the number of entities it can push.
++     * Do not materialise an unbounded candidate list merely to discard it in
++     * LivingEntity#pushEntities. A full result is not required here: a list
++     * that reaches {@code maxCount} still conveys the only cramming fact the
++     * caller needs (at least that many intersecting entities exist).
++     */
++    public List<Entity> getPushableEntities(Entity entity, AABB boundingBox, int maxCount) {
++        Profiler.get().incrementCounter("getEntities");
++        final List<Entity> ret = new java.util.ArrayList<>(Math.min(maxCount, 16));
++        final Predicate<? super Entity> predicate = EntitySelector.pushableBy(entity);
++
++        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup()
++            .getEntities(entity, boundingBox, ret, predicate, maxCount);
++        ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities((Level)(Object)this, entity, boundingBox, predicate, ret);
++
++        if (ret.size() > maxCount) {
++            ret.subList(maxCount, ret.size()).clear();
++        }
++        return ret;
++    }
++
+     public abstract @Nullable Entity getEntity(int id);
+ 
+     public @Nullable Entity getEntity(UUID uuid) {

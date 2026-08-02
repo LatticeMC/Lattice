@@ -1,0 +1,271 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 2 Aug 2026 15:10:45 +0800
+Subject: [PATCH] Revert "perf: reuse inside-block traversal scratch state"
+
+This reverts commit fb0427bdce6fad73931ac95bfd53a28ff39d9d8b.
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index c02a3bff42be007adcc7f881aef1a780c20667b7..4e219f443478e96423c5b6d9d8f6f3e1a177c2d5 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -344,10 +344,6 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     private final ArrayDeque<Entity.Movement> movementThisTick = new ArrayDeque<>(100);
+     private final List<Entity.Movement> finalMovementsThisTick = new ObjectArrayList<>();
+     private final LongSet visitedBlocks = new LongOpenHashSet();
+-    private boolean visitedBlocksInUse;
+-    private @Nullable LongOpenHashSet insideBlockTraversalScratch;
+-    private boolean insideBlockTraversalScratchInUse;
+-    private int insideBlockLastVisitedStep;
+     private final InsideBlockEffectApplier.StepBasedCollector insideEffectCollector = new InsideBlockEffectApplier.StepBasedCollector();
+     private CustomData customData = CustomData.EMPTY;
+     // CraftBukkit start
+@@ -1771,142 +1767,98 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+ 
+     private void checkInsideBlocks(List<Entity.Movement> movements, InsideBlockEffectApplier.StepBasedCollector stepBasedCollector) {
+         if (this.isAffectedByBlocks()) {
+-            LongSet visited = this.visitedBlocks;
+-            boolean sharedVisited = !this.visitedBlocksInUse;
+-            if (sharedVisited) {
+-                this.visitedBlocksInUse = true;
+-            } else {
+-                visited = new LongOpenHashSet();
+-            }
+-
+-            LongOpenHashSet traversalScratch = this.insideBlockTraversalScratch;
+-            boolean sharedTraversalScratch = !this.insideBlockTraversalScratchInUse;
+-            if (sharedTraversalScratch) {
+-                if (traversalScratch == null) {
+-                    traversalScratch = new LongOpenHashSet();
+-                    this.insideBlockTraversalScratch = traversalScratch;
+-                }
+-
+-                this.insideBlockTraversalScratchInUse = true;
+-            } else {
+-                traversalScratch = new LongOpenHashSet();
+-            }
+-
+-            try {
+-                for (Entity.Movement movement : movements) {
+-                    Vec3 vec3 = movement.from;
+-                    Vec3 vec31 = movement.to().subtract(movement.from());
+-                    int i = 16;
+-                    if (movement.axisDependentOriginalMovement().isPresent() && vec31.lengthSqr() > 0.0) {
+-                        for (Direction.Axis axis : Direction.axisStepOrder(movement.axisDependentOriginalMovement().get())) {
+-                            double d = vec31.get(axis);
+-                            if (d != 0.0) {
+-                                Vec3 vec32 = vec3.relative(axis.getPositive(), d);
+-                                i -= this.checkInsideBlocks(vec3, vec32, stepBasedCollector, visited, traversalScratch, i);
+-                                vec3 = vec32;
+-                            }
++            LongSet set = this.visitedBlocks;
++
++            for (Entity.Movement movement : movements) {
++                Vec3 vec3 = movement.from;
++                Vec3 vec31 = movement.to().subtract(movement.from());
++                int i = 16;
++                if (movement.axisDependentOriginalMovement().isPresent() && vec31.lengthSqr() > 0.0) {
++                    for (Direction.Axis axis : Direction.axisStepOrder(movement.axisDependentOriginalMovement().get())) {
++                        double d = vec31.get(axis);
++                        if (d != 0.0) {
++                            Vec3 vec32 = vec3.relative(axis.getPositive(), d);
++                            i -= this.checkInsideBlocks(vec3, vec32, stepBasedCollector, set, i);
++                            vec3 = vec32;
+                         }
+-                    } else {
+-                        i -= this.checkInsideBlocks(movement.from(), movement.to(), stepBasedCollector, visited, traversalScratch, 16);
+-                    }
+-
+-                    if (i <= 0) {
+-                        this.checkInsideBlocks(movement.to(), movement.to(), stepBasedCollector, visited, traversalScratch, 1);
+                     }
+-                }
+-            } finally {
+-                visited.clear();
+-                traversalScratch.clear();
+-                if (sharedVisited) {
+-                    this.visitedBlocksInUse = false;
++                } else {
++                    i -= this.checkInsideBlocks(movement.from(), movement.to(), stepBasedCollector, set, 16);
+                 }
+ 
+-                if (sharedTraversalScratch) {
+-                    this.insideBlockTraversalScratchInUse = false;
++                if (i <= 0) {
++                    this.checkInsideBlocks(movement.to(), movement.to(), stepBasedCollector, set, 1);
+                 }
+             }
++
++            set.clear();
+         }
+     }
+ 
+-    private int checkInsideBlocks(
+-        Vec3 from,
+-        Vec3 to,
+-        InsideBlockEffectApplier.StepBasedCollector stepBasedCollector,
+-        LongSet visited,
+-        LongSet traversalScratch,
+-        int maxSteps
+-    ) {
++    private int checkInsideBlocks(Vec3 from, Vec3 to, InsideBlockEffectApplier.StepBasedCollector stepBasedCollector, LongSet visited, int maxSteps) {
+         AABB aabb = this.makeBoundingBox(to).deflate(1.0E-5F);
+         boolean flag = from.distanceToSqr(to) > Mth.square(0.9999900000002526);
+         boolean flag1 = this.level instanceof ServerLevel serverLevel
+             && serverLevel.getServer().debugSubscribers().hasAnySubscriberFor(DebugSubscriptions.ENTITY_BLOCK_INTERSECTIONS);
+-        int previousLastVisitedStep = this.insideBlockLastVisitedStep;
+-        this.insideBlockLastVisitedStep = 0;
+-        traversalScratch.clear();
+-        try {
+-            BlockGetter.forEachBlockIntersectedBetween(
+-                from,
+-                to,
+-                aabb,
+-                (pos, index) -> {
+-                    if (!this.isAlive()) {
+-                        return false;
+-                    } else if (index >= maxSteps) {
+-                        return false;
+-                    } else {
+-                        this.insideBlockLastVisitedStep = index;
+-                        BlockState blockState = this.level().getBlockState(pos);
+-                        if (blockState.isAir()) {
+-                            if (flag1) {
+-                                this.debugBlockIntersection((ServerLevel)this.level(), pos.immutable(), false, false);
+-                            }
+-
+-                            return true;
+-                        } else {
+-                            VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(this.level(), pos, this);
+-                            boolean flag2 = entityInsideCollisionShape == Shapes.block()
+-                                || this.collidedWithShapeMovingFrom(from, to, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
+-                            boolean flag3 = this.collidedWithFluid(blockState.getFluidState(), pos, from, to);
+-                            if ((flag2 || flag3) && visited.add(pos.asLong())) {
+-                                if (flag2) {
+-                                    try {
+-                                        boolean flag4 = flag || aabb.intersects(pos);
+-                                        stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+-                                        blockState.entityInside(this.level(), pos, this, stepBasedCollector, flag4);
+-                                        this.onInsideBlock(blockState);
+-                                    } catch (Throwable var20) {
+-                                        CrashReport crashReport = CrashReport.forThrowable(var20, "Colliding entity with block");
+-                                        CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
+-                                        CrashReportCategory.populateBlockDetails(crashReportCategory, this.level(), pos, blockState);
+-                                        CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
+-                                        this.fillCrashReportCategory(crashReportCategory1);
+-                                        throw new ReportedException(crashReport);
+-                                    }
+-                                }
++        AtomicInteger atomicInteger = new AtomicInteger();
++        BlockGetter.forEachBlockIntersectedBetween(
++            from,
++            to,
++            aabb,
++            (pos, index) -> {
++                if (!this.isAlive()) {
++                    return false;
++                } else if (index >= maxSteps) {
++                    return false;
++                } else {
++                    atomicInteger.set(index);
++                    BlockState blockState = this.level().getBlockState(pos);
++                    if (blockState.isAir()) {
++                        if (flag1) {
++                            this.debugBlockIntersection((ServerLevel)this.level(), pos.immutable(), false, false);
++                        }
+ 
+-                                if (flag3) {
++                        return true;
++                    } else {
++                        VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(this.level(), pos, this);
++                        boolean flag2 = entityInsideCollisionShape == Shapes.block()
++                            || this.collidedWithShapeMovingFrom(from, to, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
++                        boolean flag3 = this.collidedWithFluid(blockState.getFluidState(), pos, from, to);
++                        if ((flag2 || flag3) && visited.add(pos.asLong())) {
++                            if (flag2) {
++                                try {
++                                    boolean flag4 = flag || aabb.intersects(pos);
+                                     stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+-                                    blockState.getFluidState().entityInside(this.level(), pos, this, stepBasedCollector);
++                                    blockState.entityInside(this.level(), pos, this, stepBasedCollector, flag4);
++                                    this.onInsideBlock(blockState);
++                                } catch (Throwable var20) {
++                                    CrashReport crashReport = CrashReport.forThrowable(var20, "Colliding entity with block");
++                                    CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
++                                    CrashReportCategory.populateBlockDetails(crashReportCategory, this.level(), pos, blockState);
++                                    CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
++                                    this.fillCrashReportCategory(crashReportCategory1);
++                                    throw new ReportedException(crashReport);
+                                 }
++                            }
+ 
+-                                if (flag1) {
+-                                    this.debugBlockIntersection((ServerLevel)this.level(), pos.immutable(), flag2, flag3);
+-                                }
++                            if (flag3) {
++                                stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
++                                blockState.getFluidState().entityInside(this.level(), pos, this, stepBasedCollector);
++                            }
+ 
+-                                return true;
+-                            } else {
+-                                return true;
++                            if (flag1) {
++                                this.debugBlockIntersection((ServerLevel)this.level(), pos.immutable(), flag2, flag3);
+                             }
++
++                            return true;
++                        } else {
++                            return true;
+                         }
+                     }
+-                },
+-                traversalScratch
+-            );
+-            return this.insideBlockLastVisitedStep + 1;
+-        } finally {
+-            traversalScratch.clear();
+-            this.insideBlockLastVisitedStep = previousLastVisitedStep;
+-        }
++                }
++            }
++        );
++        return atomicInteger.get() + 1;
+     }
+ 
+     private void debugBlockIntersection(ServerLevel level, BlockPos pos, boolean inBlock, boolean inFluid) {
+diff --git a/net/minecraft/world/level/BlockGetter.java b/net/minecraft/world/level/BlockGetter.java
+index e9b99b243816300ce553b31ec50d4a58055c0930..8a21910fe7ed61c903c4f36fced63b179ace4577 100644
+--- a/net/minecraft/world/level/BlockGetter.java
++++ b/net/minecraft/world/level/BlockGetter.java
+@@ -210,21 +210,6 @@ public interface BlockGetter extends LevelHeightAccessor {
+     }
+ 
+     static boolean forEachBlockIntersectedBetween(Vec3 from, Vec3 to, AABB boundingBox, BlockGetter.BlockStepVisitor visitor) {
+-        Vec3 vec3 = to.subtract(from);
+-        if (vec3.lengthSqr() < Mth.square(1.0E-5F)) {
+-            for (BlockPos blockPos : BlockPos.betweenClosed(boundingBox)) {
+-                if (!visitor.visit(blockPos, 0)) {
+-                    return false;
+-                }
+-            }
+-
+-            return true;
+-        }
+-
+-        return forEachBlockIntersectedBetween(from, to, boundingBox, visitor, new LongOpenHashSet());
+-    }
+-
+-    static boolean forEachBlockIntersectedBetween(Vec3 from, Vec3 to, AABB boundingBox, BlockGetter.BlockStepVisitor visitor, LongSet set) {
+         Vec3 vec3 = to.subtract(from);
+         if (vec3.lengthSqr() < Mth.square(1.0E-5F)) {
+             for (BlockPos blockPos : BlockPos.betweenClosed(boundingBox)) {
+@@ -235,6 +220,8 @@ public interface BlockGetter extends LevelHeightAccessor {
+ 
+             return true;
+         } else {
++            LongSet set = new LongOpenHashSet();
++
+             for (BlockPos blockPos1 : BlockPos.betweenCornersInDirection(boundingBox.move(vec3.scale(-1.0)), vec3)) {
+                 if (!visitor.visit(blockPos1, 0)) {
+                     return false;

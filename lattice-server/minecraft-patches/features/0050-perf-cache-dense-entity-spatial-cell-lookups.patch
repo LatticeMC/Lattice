@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 1 Aug 2026 02:10:22 +0800
+Subject: [PATCH] perf: cache dense entity spatial cell lookups
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 9b69d76b7910afebe55a2730a7648d43c3dfbbd4..d9248f51d58c097d1820d37bafb822cda056b6e7 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -6,6 +6,7 @@ import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
+ import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
+ import com.google.common.collect.ImmutableList;
+ import com.mojang.logging.LogUtils;
++import it.unimi.dsi.fastutil.HashCommon;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
+@@ -601,10 +602,18 @@ public final class ChunkEntitySlices {
+     private static final class SpatialAabbIndex<E extends Entity> {
+ 
+         private static final long OVERFLOW_CELL = Long.MIN_VALUE;
++        private static final int LOOKUP_CACHE_SIZE = 128;
++        private static final int LOOKUP_CACHE_MASK = LOOKUP_CACHE_SIZE - 1;
+ 
+         private final Long2ObjectOpenHashMap<SpatialBucket<E>> cells = new Long2ObjectOpenHashMap<>();
+         private final Reference2LongOpenHashMap<E> cellByEntity = new Reference2LongOpenHashMap<>();
+         private final ArrayList<E> overflow = new ArrayList<>();
++        // Nearby entity queries repeatedly probe the same small set of cells.
++        // Keep a tiny direct-mapped cache in front of the general-purpose map;
++        // valid bits make null (empty-cell) entries cacheable as well.
++        private final long[] lookupCacheKeys = new long[LOOKUP_CACHE_SIZE];
++        private final SpatialBucket<E>[] lookupCacheValues = new SpatialBucket[LOOKUP_CACHE_SIZE];
++        private final boolean[] lookupCacheValid = new boolean[LOOKUP_CACHE_SIZE];
+ 
+         SpatialAabbIndex(final int expectedSize) {
+             this.cellByEntity.defaultReturnValue(OVERFLOW_CELL);
+@@ -621,6 +630,7 @@ public final class ChunkEntitySlices {
+             SpatialBucket<E> bucket = this.cells.get(cell);
+             if (bucket == null) {
+                 this.cells.put(cell, bucket = new SpatialBucket<>());
++                this.cacheBucket(cell, bucket);
+             }
+             bucket.add(entity);
+         }
+@@ -639,6 +649,7 @@ public final class ChunkEntitySlices {
+             final SpatialBucket<E> bucket = this.cells.get(cell);
+             if (bucket != null && bucket.remove(entity) && bucket.isEmpty()) {
+                 this.cells.remove(cell);
++                this.cacheBucket(cell, null);
+             }
+         }
+ 
+@@ -668,7 +679,7 @@ public final class ChunkEntitySlices {
+             for (int cellY = minY; cellY <= maxY; ++cellY) {
+                 for (int cellZ = minZ; cellZ <= maxZ; ++cellZ) {
+                     for (int cellX = minX; cellX <= maxX; ++cellX) {
+-                        final SpatialBucket<E> bucket = this.cells.get(BlockPos.asLong(cellX, cellY, cellZ));
++                        final SpatialBucket<E> bucket = this.lookupBucket(BlockPos.asLong(cellX, cellY, cellZ));
+                         if (bucket == null) {
+                             continue;
+                         }
+@@ -690,6 +701,31 @@ public final class ChunkEntitySlices {
+             return 0;
+         }
+ 
++        private SpatialBucket<E> lookupBucket(final long cell) {
++            final int slot = lookupCacheSlot(cell);
++            if (this.lookupCacheValid[slot] && this.lookupCacheKeys[slot] == cell) {
++                return this.lookupCacheValues[slot];
++            }
++
++            final SpatialBucket<E> bucket = this.cells.get(cell);
++            this.cacheBucket(slot, cell, bucket);
++            return bucket;
++        }
++
++        private void cacheBucket(final long cell, final SpatialBucket<E> bucket) {
++            this.cacheBucket(lookupCacheSlot(cell), cell, bucket);
++        }
++
++        private void cacheBucket(final int slot, final long cell, final SpatialBucket<E> bucket) {
++            this.lookupCacheKeys[slot] = cell;
++            this.lookupCacheValues[slot] = bucket;
++            this.lookupCacheValid[slot] = true;
++        }
++
++        private static int lookupCacheSlot(final long cell) {
++            return (int)HashCommon.mix(cell) & LOOKUP_CACHE_MASK;
++        }
++
+         private boolean scanBucket(final SpatialBucket<E> bucket, final Entity except, final AABB box,
+                                    final List<Entity> into, final Predicate<? super Entity> predicate, final int maxCount) {
+             for (int index = 0, len = bucket.size; index < len; ++index) {

@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 30 Jul 2026 21:27:09 +0800
+Subject: [PATCH] perf: prefilter block removal goal searches
+
+
+diff --git a/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java b/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
+index 83be00350765db043b6bf32e7814d9c7119eacc5..199a9c0a8335ff28120b605807b90a3305798ec4 100644
+--- a/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
++++ b/net/minecraft/world/entity/ai/goal/RemoveBlockGoal.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.entity.ai.goal;
+ 
++import java.util.function.Predicate;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.SectionPos;
+ import net.minecraft.core.particles.ItemParticleOption;
+@@ -15,7 +16,9 @@ import net.minecraft.world.level.Level;
+ import net.minecraft.world.level.LevelAccessor;
+ import net.minecraft.world.level.LevelReader;
+ import net.minecraft.world.level.block.Block;
++import net.minecraft.world.level.block.state.BlockState;
+ import net.minecraft.world.level.chunk.ChunkAccess;
++import net.minecraft.world.level.chunk.LevelChunkSection;
+ import net.minecraft.world.level.chunk.status.ChunkStatus;
+ import net.minecraft.world.level.gamerules.GameRules;
+ import net.minecraft.world.phys.Vec3;
+@@ -23,14 +26,18 @@ import org.jspecify.annotations.Nullable;
+ 
+ public class RemoveBlockGoal extends MoveToBlockGoal {
+     private final Block blockToRemove;
++    private final Predicate<BlockState> blockToRemovePredicate;
+     private final Mob removerMob;
++    private final int verticalSearchRange;
+     private int ticksSinceReachedGoal;
+     private static final int WAIT_AFTER_BLOCK_FOUND = 20;
+ 
+     public RemoveBlockGoal(Block blockToRemove, PathfinderMob removerMob, double speedModifier, int searchRange) {
+         super(removerMob, speedModifier, 24, searchRange);
+         this.blockToRemove = blockToRemove;
++        this.blockToRemovePredicate = state -> state.is(blockToRemove);
+         this.removerMob = removerMob;
++        this.verticalSearchRange = searchRange;
+     }
+ 
+     @Override
+@@ -40,6 +47,9 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+         } else if (this.nextStartTick > 0) {
+             this.nextStartTick--;
+             return false;
++        } else if (!this.mayHaveBlockToRemoveNearby()) {
++            this.nextStartTick = this.nextStartTick(this.mob);
++            return false;
+         } else if (this.findNearestBlock()) {
+             this.nextStartTick = reducedTickDelay(20);
+             return true;
+@@ -49,6 +59,37 @@ public class RemoveBlockGoal extends MoveToBlockGoal {
+         }
+     }
+ 
++    private boolean mayHaveBlockToRemoveNearby() {
++        LevelReader level = this.removerMob.level();
++        BlockPos origin = this.removerMob.blockPosition();
++        int minChunkX = (origin.getX() - 23) >> 4;
++        int maxChunkX = (origin.getX() + 23) >> 4;
++        int minChunkZ = (origin.getZ() - 23) >> 4;
++        int maxChunkZ = (origin.getZ() + 23) >> 4;
++        int minSectionY = SectionPos.blockToSectionCoord(origin.getY() - this.verticalSearchRange - 1);
++        int maxSectionY = SectionPos.blockToSectionCoord(origin.getY() + this.verticalSearchRange - 1);
++
++        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
++            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
++                ChunkAccess chunk = level.getChunkIfLoadedImmediately(chunkX, chunkZ); // Paper - Prevent AI rules from loading chunks
++                if (chunk == null) {
++                    continue;
++                }
++
++                int fromSectionY = Math.max(minSectionY, chunk.getMinSectionY());
++                int toSectionY = Math.min(maxSectionY, chunk.getMaxSectionY());
++                for (int sectionY = fromSectionY; sectionY <= toSectionY; sectionY++) {
++                    LevelChunkSection section = chunk.getSection(chunk.getSectionIndexFromSectionY(sectionY));
++                    if (!section.hasOnlyAir() && section.maybeHas(this.blockToRemovePredicate)) {
++                        return true;
++                    }
++                }
++            }
++        }
++
++        return false;
++    }
++
+     @Override
+     public void stop() {
+         super.stop();

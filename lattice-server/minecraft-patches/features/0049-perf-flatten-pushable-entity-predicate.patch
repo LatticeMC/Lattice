@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 1 Aug 2026 01:36:23 +0800
+Subject: [PATCH] perf: flatten pushable entity predicate
+
+
+diff --git a/net/minecraft/world/entity/EntitySelector.java b/net/minecraft/world/entity/EntitySelector.java
+index cd8e22171449049b23823da9b5be6ede2c3f38d0..d72d0e68baaea87c7d408f68a61df775d9585d63 100644
+--- a/net/minecraft/world/entity/EntitySelector.java
++++ b/net/minecraft/world/entity/EntitySelector.java
+@@ -1,6 +1,5 @@
+ package net.minecraft.world.entity;
+ 
+-import com.google.common.base.Predicates;
+ import java.util.function.Predicate;
+ import net.minecraft.world.Container;
+ import net.minecraft.world.entity.player.Player;
+@@ -47,27 +46,27 @@ public final class EntitySelector {
+     public static Predicate<Entity> pushableBy(Entity entity) {
+         Team team = entity.getTeam();
+         Team.CollisionRule collisionRule = team == null ? Team.CollisionRule.ALWAYS : team.getCollisionRule();
+-        return (Predicate<Entity>)(collisionRule == Team.CollisionRule.NEVER
+-            ? Predicates.alwaysFalse()
+-            : NO_SPECTATORS.and(
+-                entity1 -> { final Entity pushedEntity = entity1; // Paper - OBFHELPER
+-                    if (!pushedEntity.isPushable() || !pushedEntity.canCollideWithBukkit(entity) || !entity.canCollideWithBukkit(pushedEntity)) { // CraftBukkit - collidable API // Paper - Climbing should not bypass cramming gamerule
++        if (collisionRule == Team.CollisionRule.NEVER) {
++            return entity1 -> false;
++        }
++
++        return entity1 -> { final Entity pushedEntity = entity1; // Paper - OBFHELPER
++                if (pushedEntity.isSpectator() || !pushedEntity.isPushable() || !pushedEntity.canCollideWithBukkit(entity) || !entity.canCollideWithBukkit(pushedEntity)) { // CraftBukkit - collidable API // Paper - Climbing should not bypass cramming gamerule
++                    return false;
++                } else if (!entity.level().isClientSide() || entity1 instanceof Player player && player.isLocalPlayer()) {
++                    Team team1 = entity1.getTeam();
++                    Team.CollisionRule collisionRule1 = team1 == null ? Team.CollisionRule.ALWAYS : team1.getCollisionRule();
++                    if (collisionRule1 == Team.CollisionRule.NEVER || (pushedEntity instanceof Player && !io.papermc.paper.configuration.GlobalConfiguration.get().collisions.enablePlayerCollisions)) { // Paper - Configurable player collision
+                         return false;
+-                    } else if (!entity.level().isClientSide() || entity1 instanceof Player player && player.isLocalPlayer()) {
+-                        Team team1 = entity1.getTeam();
+-                        Team.CollisionRule collisionRule1 = team1 == null ? Team.CollisionRule.ALWAYS : team1.getCollisionRule();
+-                        if (collisionRule1 == Team.CollisionRule.NEVER || (pushedEntity instanceof Player && !io.papermc.paper.configuration.GlobalConfiguration.get().collisions.enablePlayerCollisions)) { // Paper - Configurable player collision
+-                            return false;
+-                        } else {
+-                            boolean flag = team != null && team.isAlliedTo(team1);
+-                            return (collisionRule != Team.CollisionRule.PUSH_OWN_TEAM && collisionRule1 != Team.CollisionRule.PUSH_OWN_TEAM || !flag)
+-                                && (collisionRule != Team.CollisionRule.PUSH_OTHER_TEAMS && collisionRule1 != Team.CollisionRule.PUSH_OTHER_TEAMS || flag);
+-                        }
+                     } else {
+-                        return false;
++                        boolean flag = team != null && team.isAlliedTo(team1);
++                        return (collisionRule != Team.CollisionRule.PUSH_OWN_TEAM && collisionRule1 != Team.CollisionRule.PUSH_OWN_TEAM || !flag)
++                            && (collisionRule != Team.CollisionRule.PUSH_OTHER_TEAMS && collisionRule1 != Team.CollisionRule.PUSH_OTHER_TEAMS || flag);
+                     }
++                } else {
++                    return false;
+                 }
+-            ));
++            };
+     }
+ 
+     public static Predicate<Entity> notRiding(Entity entity) {

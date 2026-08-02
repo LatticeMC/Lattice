@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 1 Aug 2026 15:38:08 +0800
+Subject: [PATCH] perf: make vanilla profiler optional
+
+Based on Leaf's configurable vanilla profiler patch by Dreeam and Martijn Muijsers (MIT).
+
+https://github.com/Winds-Studio/Leaf/blob/178bcb4/leaf-server/minecraft-patches/features/0006-Configurable-vanilla-profiler.patch
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 799d1507b9bbc4af69fdea3f7a33db16a6bad212..a637958e7d7333a9148f2f31c6894206dd64f74b 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1374,7 +1374,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+                 // Paper - improve tick loop - done above
+ 
+-                try (Profiler.Scope scope = Profiler.use(this.createProfiler())) {
++                try (Profiler.Scope scope = Profiler.DISABLE_VANILLA_PROFILER ? null : Profiler.use(this.createProfiler())) {
+                     this.processPacketsAndTick(flag);
+                     ProfilerFiller profilerFiller = Profiler.get();
+                     profilerFiller.push("nextTickWait");
+diff --git a/net/minecraft/server/commands/DebugCommand.java b/net/minecraft/server/commands/DebugCommand.java
+index 05fa05111a99e1d4b4f992c2349f43125e8b330f..c805fc4b35ddc1a2712be30f74f18f06f3a202fa 100644
+--- a/net/minecraft/server/commands/DebugCommand.java
++++ b/net/minecraft/server/commands/DebugCommand.java
+@@ -37,6 +37,7 @@ import net.minecraft.server.permissions.LevelBasedPermissionSet;
+ import net.minecraft.util.TimeUtil;
+ import net.minecraft.util.Util;
+ import net.minecraft.util.profiling.ProfileResults;
++import net.minecraft.util.profiling.Profiler;
+ import org.apache.commons.io.IOUtils;
+ import org.slf4j.Logger;
+ 
+@@ -68,6 +69,10 @@ public class DebugCommand {
+     }
+ 
+     private static int start(CommandSourceStack source) throws CommandSyntaxException {
++        if (Profiler.DISABLE_VANILLA_PROFILER) {
++            source.sendFailure(Component.literal("Vanilla profiling is disabled; restart with -Dlattice.disableVanillaProfiler=false or use JFR/spark."));
++            return 0;
++        }
+         MinecraftServer server = source.getServer();
+         if (server.isTimeProfilerRunning()) {
+             throw ERROR_ALREADY_RUNNING.create();
+@@ -79,6 +84,10 @@ public class DebugCommand {
+     }
+ 
+     private static int stop(CommandSourceStack source) throws CommandSyntaxException {
++        if (Profiler.DISABLE_VANILLA_PROFILER) {
++            source.sendFailure(Component.literal("Vanilla profiling is disabled; restart with -Dlattice.disableVanillaProfiler=false or use JFR/spark."));
++            return 0;
++        }
+         MinecraftServer server = source.getServer();
+         if (!server.isTimeProfilerRunning()) {
+             throw ERROR_NOT_RUNNING.create();
+diff --git a/net/minecraft/server/commands/PerfCommand.java b/net/minecraft/server/commands/PerfCommand.java
+index cdb4b00d636ba20e72b00dbb8cc34406819ac1b5..c92f21d2bc8bddc3135fa8bcb9bc8b4cc03d7c94 100644
+--- a/net/minecraft/server/commands/PerfCommand.java
++++ b/net/minecraft/server/commands/PerfCommand.java
+@@ -21,6 +21,7 @@ import net.minecraft.util.TimeUtil;
+ import net.minecraft.util.Util;
+ import net.minecraft.util.profiling.EmptyProfileResults;
+ import net.minecraft.util.profiling.ProfileResults;
++import net.minecraft.util.profiling.Profiler;
+ import net.minecraft.util.profiling.metrics.storage.MetricsPersister;
+ import org.apache.commons.io.FileUtils;
+ import org.slf4j.Logger;
+@@ -42,6 +43,10 @@ public class PerfCommand {
+     }
+ 
+     private static int startProfilingDedicatedServer(CommandSourceStack source) throws CommandSyntaxException {
++        if (Profiler.DISABLE_VANILLA_PROFILER) {
++            source.sendFailure(Component.literal("Vanilla profiling is disabled; restart with -Dlattice.disableVanillaProfiler=false or use JFR/spark."));
++            return 0;
++        }
+         MinecraftServer server = source.getServer();
+         if (server.isRecordingMetrics()) {
+             throw ERROR_ALREADY_RUNNING.create();
+@@ -55,6 +60,10 @@ public class PerfCommand {
+     }
+ 
+     private static int stopProfilingDedicatedServer(CommandSourceStack source) throws CommandSyntaxException {
++        if (Profiler.DISABLE_VANILLA_PROFILER) {
++            source.sendFailure(Component.literal("Vanilla profiling is disabled; restart with -Dlattice.disableVanillaProfiler=false or use JFR/spark."));
++            return 0;
++        }
+         MinecraftServer server = source.getServer();
+         if (!server.isRecordingMetrics()) {
+             throw ERROR_NOT_RUNNING.create();
+diff --git a/net/minecraft/util/profiling/Profiler.java b/net/minecraft/util/profiling/Profiler.java
+index 9567003a8ed1a3783b743553ce8f690756da868d..8abce95b2bda9cad3bb2bb39ed9c76c5d405785c 100644
+--- a/net/minecraft/util/profiling/Profiler.java
++++ b/net/minecraft/util/profiling/Profiler.java
+@@ -6,6 +6,11 @@ import java.util.concurrent.atomic.AtomicInteger;
+ import org.jspecify.annotations.Nullable;
+ 
+ public final class Profiler {
++    // Based on Leaf's configurable vanilla profiler patch (MIT):
++    // https://github.com/Winds-Studio/Leaf/blob/178bcb4/leaf-server/minecraft-patches/features/0006-Configurable-vanilla-profiler.patch
++    public static final boolean DISABLE_VANILLA_PROFILER = Boolean.parseBoolean(
++        System.getProperty("lattice.disableVanillaProfiler", "true")
++    );
+     private static final ThreadLocal<TracyZoneFiller> TRACY_FILLER = ThreadLocal.withInitial(TracyZoneFiller::new);
+     private static final ThreadLocal<@Nullable ProfilerFiller> ACTIVE = new ThreadLocal<>();
+     private static final AtomicInteger ACTIVE_COUNT = new AtomicInteger();
+@@ -45,6 +50,9 @@ public final class Profiler {
+     }
+ 
+     public static ProfilerFiller get() {
++        if (DISABLE_VANILLA_PROFILER) {
++            return InactiveProfiler.INSTANCE;
++        }
+         return ACTIVE_COUNT.get() == 0 ? getDefaultFiller() : Objects.requireNonNullElseGet(ACTIVE.get(), Profiler::getDefaultFiller);
+     }
+ 

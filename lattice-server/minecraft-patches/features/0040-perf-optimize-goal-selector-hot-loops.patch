@@ -1,0 +1,249 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 31 Jul 2026 00:01:57 +0800
+Subject: [PATCH] perf: optimize goal selector hot loops
+
+Inspired by Leaf's optimize-goal-selector patch:
+https://github.com/Winds-Studio/Leaf/blob/178bcb4/leaf-server/minecraft-patches/features/0254-optimize-goal-selector.patch
+
+diff --git a/net/minecraft/world/entity/ai/goal/GoalSelector.java b/net/minecraft/world/entity/ai/goal/GoalSelector.java
+index 859b859d29b637200cf7c9a0bd52d9f712413e3d..79c1ba53f8249b815c94e66ec76064abdb77ffff 100644
+--- a/net/minecraft/world/entity/ai/goal/GoalSelector.java
++++ b/net/minecraft/world/entity/ai/goal/GoalSelector.java
+@@ -1,9 +1,13 @@
+ package net.minecraft.world.entity.ai.goal;
+ 
+-import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
++import java.util.AbstractSet;
++import java.util.Arrays;
+ import java.util.EnumMap;
+ import java.util.EnumSet;
++import java.util.Iterator;
+ import java.util.Map;
++import java.util.NoSuchElementException;
++import java.util.Objects;
+ import java.util.Set;
+ import java.util.function.Predicate;
+ import net.minecraft.util.profiling.Profiler;
+@@ -22,7 +26,9 @@ public class GoalSelector {
+         }
+     };
+     private final Map<Goal.Flag, WrappedGoal> lockedFlags = new EnumMap<>(Goal.Flag.class);
+-    private final Set<WrappedGoal> availableGoals = new ObjectLinkedOpenHashSet<>();
++    // Lattice - array-backed goal storage inspired by Leaf's optimize-goal-selector patch:
++    // https://github.com/Winds-Studio/Leaf/blob/178bcb4/leaf-server/minecraft-patches/features/0254-optimize-goal-selector.patch
++    private final ArrayGoalSet availableGoals = new ArrayGoalSet();
+     private static final Goal.Flag[] GOAL_FLAG_VALUES = Goal.Flag.values(); // Paper - remove streams from GoalSelector
+     private final ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<net.minecraft.world.entity.ai.goal.Goal.Flag> goalTypes = new ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<>(Goal.Flag.class); // Paper - remove streams from GoalSelector
+     private int curRate; // Paper - EAR 2
+@@ -42,7 +48,9 @@ public class GoalSelector {
+     }
+ 
+     public boolean hasTasks() {
+-        for (WrappedGoal task : this.availableGoals) {
++        WrappedGoal[] goals = this.availableGoals.elements();
++        for (int i = 0, size = this.availableGoals.size(); i < size; i++) {
++            WrappedGoal task = goals[i];
+             if (task.isRunning()) {
+                 return true;
+             }
+@@ -52,7 +60,9 @@ public class GoalSelector {
+     // Paper end - EAR 2
+ 
+     public void removeGoal(Goal goal) {
+-        for (WrappedGoal wrappedGoal : this.availableGoals) {
++        WrappedGoal[] goals = this.availableGoals.elements();
++        for (int i = 0, size = this.availableGoals.size(); i < size; i++) {
++            WrappedGoal wrappedGoal = goals[i];
+             if (wrappedGoal.getGoal() == goal && wrappedGoal.isRunning()) {
+                 wrappedGoal.stop();
+             }
+@@ -63,15 +73,14 @@ public class GoalSelector {
+ 
+     // Paper start - Perf: optimize goal types
+     private static boolean goalContainsAnyFlags(WrappedGoal goal, ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<Goal.Flag> flags) {
+-        return goal.getFlags().hasCommonElements(flags);
++        return (goal.getFlags().getBackingSet() & flags.getBackingSet()) != 0L;
+     }
+ 
+     private static boolean goalCanBeReplacedForAllFlags(WrappedGoal goal, Map<Goal.Flag, WrappedGoal> flag) {
+         long flagIterator = goal.getFlags().getBackingSet();
+-        int wrappedGoalSize = goal.getFlags().size();
+-        for (int i = 0; i < wrappedGoalSize; ++i) {
++        while (flagIterator != 0L) {
+             final Goal.Flag flag1 = GOAL_FLAG_VALUES[Long.numberOfTrailingZeros(flagIterator)];
+-            flagIterator ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator);
++            flagIterator &= flagIterator - 1L;
+             // Paper end - Perf: optimize goal types
+             if (!flag.getOrDefault(flag1, NO_GOAL).canBeReplacedBy(goal)) {
+                 return false;
+@@ -84,25 +93,35 @@ public class GoalSelector {
+     public void tick() {
+         ProfilerFiller profilerFiller = Profiler.get();
+         profilerFiller.push("goalCleanup");
++        WrappedGoal[] goals = this.availableGoals.elements();
++        int goalCount = this.availableGoals.size();
++        long disabledFlags = this.goalTypes.getBackingSet();
+ 
+-        for (WrappedGoal wrappedGoal : this.availableGoals) {
+-            if (wrappedGoal.isRunning() && (goalContainsAnyFlags(wrappedGoal, this.goalTypes) || !wrappedGoal.canContinueToUse())) { // Paper - Perf: optimize goal types by removing streams
++        for (int i = 0; i < goalCount; i++) {
++            WrappedGoal wrappedGoal = goals[i];
++            if (wrappedGoal.isRunning() && ((wrappedGoal.getFlags().getBackingSet() & disabledFlags) != 0L || !wrappedGoal.canContinueToUse())) { // Paper - Perf: optimize goal types by removing streams
+                 wrappedGoal.stop();
+             }
+         }
+ 
+-        this.lockedFlags.entrySet().removeIf(entry -> !entry.getValue().isRunning());
++        for (Goal.Flag flag : GOAL_FLAG_VALUES) {
++            WrappedGoal lockedGoal = this.lockedFlags.get(flag);
++            if (lockedGoal != null && !lockedGoal.isRunning()) {
++                this.lockedFlags.remove(flag);
++            }
++        }
+         profilerFiller.pop();
+         profilerFiller.push("goalUpdate");
+ 
+-        for (WrappedGoal wrappedGoalx : this.availableGoals) {
++        for (int goalIndex = 0; goalIndex < goalCount; goalIndex++) {
++            WrappedGoal wrappedGoalx = goals[goalIndex];
+             // Paper start
+-            if (!wrappedGoalx.isRunning() && !goalContainsAnyFlags(wrappedGoalx, this.goalTypes) && goalCanBeReplacedForAllFlags(wrappedGoalx, this.lockedFlags) && wrappedGoalx.canUse()) {
+-                long flagIterator = wrappedGoalx.getFlags().getBackingSet();
+-                int wrappedGoalSize = wrappedGoalx.getFlags().size();
+-                for (int i = 0; i < wrappedGoalSize; ++i) {
++            long goalFlags = wrappedGoalx.getFlags().getBackingSet();
++            if (!wrappedGoalx.isRunning() && (goalFlags & disabledFlags) == 0L && goalCanBeReplacedForAllFlags(wrappedGoalx, this.lockedFlags) && wrappedGoalx.canUse()) {
++                long flagIterator = goalFlags;
++                while (flagIterator != 0L) {
+                     final Goal.Flag flag = GOAL_FLAG_VALUES[Long.numberOfTrailingZeros(flagIterator)];
+-                    flagIterator ^= ca.spottedleaf.concurrentutil.util.IntegerUtil.getTrailingBit(flagIterator);
++                    flagIterator &= flagIterator - 1L;
+                     // Paper end
+                     WrappedGoal wrappedGoal1 = this.lockedFlags.getOrDefault(flag, NO_GOAL);
+                     wrappedGoal1.stop();
+@@ -121,7 +140,9 @@ public class GoalSelector {
+         ProfilerFiller profilerFiller = Profiler.get();
+         profilerFiller.push("goalTick");
+ 
+-        for (WrappedGoal wrappedGoal : this.availableGoals) {
++        WrappedGoal[] goals = this.availableGoals.elements();
++        for (int i = 0, size = this.availableGoals.size(); i < size; i++) {
++            WrappedGoal wrappedGoal = goals[i];
+             if (wrappedGoal.isRunning() && (tickAllRunning || wrappedGoal.requiresUpdateEveryTick())) {
+                 wrappedGoal.tick();
+             }
+@@ -149,4 +170,113 @@ public class GoalSelector {
+             this.disableControlFlag(flag);
+         }
+     }
++
++    private static final class ArrayGoalSet extends AbstractSet<WrappedGoal> {
++        private static final WrappedGoal[] EMPTY = new WrappedGoal[0];
++        private WrappedGoal[] elements = EMPTY;
++        private int size;
++
++        WrappedGoal[] elements() {
++            return this.elements;
++        }
++
++        @Override
++        public int size() {
++            return this.size;
++        }
++
++        @Override
++        public boolean add(WrappedGoal goal) {
++            Objects.requireNonNull(goal);
++            if (this.contains(goal)) {
++                return false;
++            }
++            if (this.size == this.elements.length) {
++                int capacity = this.elements.length == 0 ? 8 : this.elements.length + (this.elements.length >> 1);
++                this.elements = Arrays.copyOf(this.elements, capacity);
++            }
++            this.elements[this.size++] = goal;
++            return true;
++        }
++
++        @Override
++        public boolean contains(Object object) {
++            for (int i = 0; i < this.size; i++) {
++                if (Objects.equals(this.elements[i], object)) {
++                    return true;
++                }
++            }
++            return false;
++        }
++
++        @Override
++        public boolean remove(Object object) {
++            for (int i = 0; i < this.size; i++) {
++                if (Objects.equals(this.elements[i], object)) {
++                    this.removeAt(i);
++                    return true;
++                }
++            }
++            return false;
++        }
++
++        @Override
++        public boolean removeIf(Predicate<? super WrappedGoal> filter) {
++            Objects.requireNonNull(filter);
++            boolean removed = false;
++            for (int i = this.size - 1; i >= 0; i--) {
++                if (filter.test(this.elements[i])) {
++                    this.removeAt(i);
++                    removed = true;
++                }
++            }
++            return removed;
++        }
++
++        @Override
++        public void clear() {
++            Arrays.fill(this.elements, 0, this.size, null);
++            this.size = 0;
++        }
++
++        @Override
++        public Iterator<WrappedGoal> iterator() {
++            return new Iterator<>() {
++                private int cursor;
++                private int last = -1;
++
++                @Override
++                public boolean hasNext() {
++                    return this.cursor < ArrayGoalSet.this.size;
++                }
++
++                @Override
++                public WrappedGoal next() {
++                    if (!this.hasNext()) {
++                        throw new NoSuchElementException();
++                    }
++                    this.last = this.cursor;
++                    return ArrayGoalSet.this.elements[this.cursor++];
++                }
++
++                @Override
++                public void remove() {
++                    if (this.last < 0) {
++                        throw new IllegalStateException();
++                    }
++                    ArrayGoalSet.this.removeAt(this.last);
++                    this.cursor = this.last;
++                    this.last = -1;
++                }
++            };
++        }
++
++        private void removeAt(int index) {
++            int moved = this.size - index - 1;
++            if (moved > 0) {
++                System.arraycopy(this.elements, index + 1, this.elements, index, moved);
++            }
++            this.elements[--this.size] = null;
++        }
++    }
+ }
