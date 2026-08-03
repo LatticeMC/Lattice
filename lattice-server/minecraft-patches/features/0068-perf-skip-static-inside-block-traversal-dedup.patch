@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 3 Aug 2026 17:00:00 +0800
+Subject: [PATCH] perf: skip static inside-block traversal dedup
+
+
+diff --git a/net/minecraft/world/level/BlockGetter.java b/net/minecraft/world/level/BlockGetter.java
+index 8a21910fe7ed61c903c4f36fced63b179ace4577..29f45195abdec08c6cad1f700479b880a585625c 100644
+--- a/net/minecraft/world/level/BlockGetter.java
++++ b/net/minecraft/world/level/BlockGetter.java
+@@ -221,3 +221,21 @@ public interface BlockGetter extends LevelHeightAccessor {
+             return true;
+         } else {
++            AABB previous = boundingBox.move(vec3.scale(-1.0));
++            if (
++                Mth.floor(previous.minX) == Mth.floor(boundingBox.minX)
++                    && Mth.floor(previous.minY) == Mth.floor(boundingBox.minY)
++                    && Mth.floor(previous.minZ) == Mth.floor(boundingBox.minZ)
++                    && Mth.floor(previous.maxX) == Mth.floor(boundingBox.maxX)
++                    && Mth.floor(previous.maxY) == Mth.floor(boundingBox.maxY)
++                    && Mth.floor(previous.maxZ) == Mth.floor(boundingBox.maxZ)
++            ) {
++                for (BlockPos blockPos : BlockPos.betweenCornersInDirection(previous, vec3)) {
++                    if (!visitor.visit(blockPos, 0)) {
++                        return false;
++                    }
++                }
++
++                return true;
++            }
++
+             LongSet set = new LongOpenHashSet();
