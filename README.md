@@ -1,139 +1,117 @@
+<div align="center">
+
 # Lattice
 
-[English](README.md) | [中文](README_zh.md)
+[![Build](https://github.com/LatticeMC/Lattice/actions/workflows/build.yml/badge.svg)](https://github.com/LatticeMC/Lattice/actions/workflows/build.yml)
+[![Native CI](https://github.com/LatticeMC/Lattice/actions/workflows/native.yml/badge.svg)](https://github.com/LatticeMC/Lattice/actions/workflows/native.yml)
+[![GitHub release](https://img.shields.io/github/v/release/LatticeMC/Lattice?include_prereleases)](https://github.com/LatticeMC/Lattice/releases)
 
-A high-performance Minecraft server fork built on [Purpur](https://purpurmc.org), with a native C++ acceleration layer that replaces server hotspots via JNI while maintaining bit-exact compatibility with the reference Java implementations.
+A performance-oriented Minecraft server fork built on Purpur, with native C++ acceleration for selected server hotspots.
 
-## Requirements
+**English** | [中文](README_zh.md)
 
-- Java 21 (Temurin recommended)
-- Git
-- CMake >= 3.20
-- Ninja
-- A C++20 toolchain (LLVM-MinGW on Windows; GCC or Clang on Linux; Apple Clang on macOS)
+</div>
+
+> [!WARNING]
+> Lattice is under active development. Back up your worlds and configuration before switching an existing server, and validate plugins in a test environment before production use.
+
+## Features
+
+- Built on [Purpur](https://purpurmc.org/) and compatible with the Paper and Purpur plugin ecosystems.
+- Native C++ implementations for selected pathfinding, entity, world generation, compression, and data-processing hotspots.
+- Runtime SIMD dispatch for supported x86-64 and AArch64 processors without requiring `-march=native`.
+- Explicit JNI boundaries with Java fallback when native acceleration is unavailable or a request is unsupported.
+- Verification modes and parity tests for comparing accelerated paths with their Java reference implementations.
+- Paperweight source and feature patches that keep upstream changes reviewable.
+
+## Download
+
+Development builds are published by [GitHub Actions](https://github.com/LatticeMC/Lattice/actions/workflows/build.yml). Tagged builds are available from [GitHub Releases](https://github.com/LatticeMC/Lattice/releases).
+
+Only download Lattice from project-controlled sources. Third-party builds may use different patches, native libraries, or licenses.
+
+## Documentation
+
+- Report defects and compatibility problems through [GitHub Issues](https://github.com/LatticeMC/Lattice/issues).
+- Paper configuration and administration documentation is available from the [Paper documentation](https://docs.papermc.io/paper/).
+- Purpur-specific configuration is documented by the [Purpur project](https://purpurmc.org/docs/).
 
 ## Building
 
-### Full Server Build
+Requirements:
+
+- Java 21
+- Git
+- CMake 3.20 or newer
+- Ninja
+- A C++20 compiler
+
+Build the patched server and Paperclip JAR:
 
 ```bash
 ./gradlew applyAllPatches
-./gradlew build
+./gradlew :lattice-server:createMojmapPaperclipJar
 ```
 
-This applies all upstream patches (Paper -> Purpur -> Lattice), builds the C++ library with CMake and Ninja, and packages the platform native library into the server jar. On Windows, the build looks for LLVM-MinGW in `C:/Program Files/llvm-mingw`; override it with `-PlatticeLlvmMingwHome=<path>` when needed.
+On Windows, use `gradlew.bat`. The build looks for LLVM-MinGW in `C:/Program Files/llvm-mingw`; override it with `-PlatticeLlvmMingwHome=<path>` when necessary.
 
-### Native Library (standalone)
-
-The native library lives under `lattice-native/` and can be built independently:
+<details>
+<summary>Build and test the native library separately</summary>
 
 ```bash
-cmake -S lattice-native -B lattice-native/build -DCMAKE_BUILD_TYPE=Release
+cmake -S lattice-native -B lattice-native/build -DCMAKE_BUILD_TYPE=Release -DLATTICE_BUILD_TESTS=ON
 cmake --build lattice-native/build --config Release --parallel
+ctest --test-dir lattice-native/build --output-on-failure
 ```
 
-Required: C++20 toolchain (GCC >= 11, Clang >= 13, or MSVC 19.30+), and a JDK for JNI headers.
+Important CMake options:
 
-CMake options:
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `LATTICE_ENABLE_SIMD` | `ON` | Build runtime-dispatched SIMD implementations |
+| `LATTICE_ENABLE_LTO` | `ON` | Enable link-time optimization |
+| `LATTICE_BUILD_TESTS` | `OFF` | Build native tests |
+| `LATTICE_WARNINGS_AS_ERRORS` | `OFF` | Treat native compiler warnings as errors |
 
-| Option | Default | Description |
-|---|---|---|
-| `LATTICE_ENABLE_SIMD` | `ON` | Runtime-dispatched SIMD specialisations (AVX2, BMI2, NEON) |
-| `LATTICE_ENABLE_LTO` | `ON` | Link-time optimisation |
-| `LATTICE_BUILD_TESTS` | `OFF` | Build unit test binaries |
-| `LATTICE_WARNINGS_AS_ERRORS` | `OFF` | Treat compiler warnings as errors |
+</details>
 
-### Running Tests
+## Native Acceleration
 
-```bash
-# Server tests
-./gradlew test
+The native library is loaded through JNI as `liblattice.so`, `lattice.dll`, or `liblattice.dylib`. Accelerated operations keep an explicit Java fallback. `-Dlattice.verify=true` enables reference comparisons for supported paths and is intended for testing rather than production benchmarking.
 
-# Native tests (requires -DLATTICE_BUILD_TESTS=ON)
-cd lattice-native/build && ctest --output-on-failure
-```
+Current acceleration work covers areas including:
 
-## Architecture
+- pathfinding and path-type classification;
+- entity visibility, AABB queries, and collision scans;
+- packed storage, NBT, compression, and heightmaps;
+- density functions, terrain noise, ore veins, and material rules;
+- light propagation and selected AI target samplers.
 
-Lattice follows the standard Purpur/Paperweight patch system. Server integrations are implemented entirely as direct source and feature patches; no runtime bytecode transformation framework is involved. This keeps the native boundaries explicit and makes upstream rebases reviewable:
-
-- `lattice-api/paper-patches/` -- API additions on top of Paper
-- `lattice-server/paper-patches/` -- Server changes on top of Paper
-- `lattice-server/purpur-patches/` -- Server changes on top of Purpur
-- `lattice-server/minecraft-patches/` -- Direct changes to Minecraft sources
-
-The native library is a shared object (`liblattice.so` / `lattice.dll` / `liblattice.dylib`) loaded at startup via JNI. Every native call is guarded by `LatticeNative.isLoaded()` and falls back transparently to the JDK implementation when unavailable. Under `-Dlattice.verify=true`, each native call is shadowed by the JDK reference and outputs are compared.
-
-## Native Modules
-
-The `lattice-native` C++ library accelerates 20+ Minecraft server systems:
-
-| Module | Target |
-|---|---|
-| Zlib Codec | RegionFile chunk compression via libdeflate |
-| NBT Parser | Binary NBT deserialisation |
-| Packed Storage | Bit-packed `long[]` operations (scalar, BMI2, AVX2, NEON) |
-| Level Propagator | BFS-based light level propagation |
-| Block Light Engine | Full block light engine with JNI world queries |
-| Heightmap Scan | Multi-section column heightmap scanner |
-| Random Tick Filter | Random-tick candidate mask filter |
-| Biological AI | Decision layer for 20 animal species |
-| Approach/Flee/Home/Water Target Samplers | Local navigation evaluation |
-| Spawn Filter | Entity spawn eligibility |
-| Entity Visibility | O(N x M) distance scan |
-| AABB Query | O(Q x E) AABB intersection scan |
-| Collision Sweep | Swept-AABB clamp for entity movement |
-| Pathfinder | A* pathfinding with native BinaryHeap and node pool |
-| Line-of-Sight | DDA raytrace with section-level skip |
-| Density Function | Batched grid fill and evaluator |
-| Chunk Noise Sampler | NoiseRouter bundle facade |
-| Beardifier | Structure-adjacent terrain beard blending |
-| Ore Vein Sampler | Per-block vein decision with Xoroshiro128++ |
-| Material Rules | Surface builder rule tree |
-| Interpolated Noise | Legacy 1.16-style blended noise |
-| Perlin / Octave / Double / Simplex Noise | Noise generation primitives |
-
-All entity and noise modules include SIMD specialisations (AVX2 for x86-64, NEON for AArch64) with runtime CPU feature detection. The build baseline is x86-64-v1 + SSE2 or armv8-a; no `-march=native` is used, so binaries are portable across all CPUs of the same architecture.
-
-## Platform Support
-
-The native library is built and tested in CI on:
-
-| Platform | Compiler | Architecture |
-|---|---|---|
-| Ubuntu (latest) | GCC | x86-64 |
-| Ubuntu (latest) | Clang | x86-64 |
-| Windows (latest) | MSVC | x86-64 |
-| macOS 14 (ARM) | Clang | AArch64 |
-
-The Java server builds and runs on any platform with a Java 21 runtime.
-
-## Project Structure
-
-```
-Lattice/
-├── lattice-native/          C++ native acceleration library (CMake, C++20)
-│   ├── jni/                 JNI bridge layer
-│   ├── src/                 Core implementations (io, world, core)
-│   ├── include/lattice/     Public headers
-│   └── tests/               Unit tests (doctest)
-├── lattice-api/             Server API module
-│   └── paper-patches/       API patches on top of Paper
-├── lattice-server/          Server implementation module
-│   ├── paper-patches/       Server patches on top of Paper
-│   ├── purpur-patches/      Server patches on top of Purpur
-│   ├── minecraft-patches/   Direct patches to Minecraft sources
-│   └── src/                 Java sources (bootstrap, bridge, nativelib)
-├── scripts/                 Build and upstream sync scripts
-├── build.gradle.kts         Root build (paperweight patcher)
-├── settings.gradle.kts      Project settings
-└── gradle.properties        Version and build configuration
-```
+Availability and profitability depend on the request shape, CPU, world state, and runtime configuration. A native implementation is not automatically selected when the Java path is faster for a request.
 
 ## Contributing
 
-See [Purpur's contributing guide](https://github.com/PurpurMC/Purpur/blob/HEAD/CONTRIBUTING.md) for the patch workflow.
+Lattice uses the Paperweight patch workflow. See [Purpur's contributing guide](https://github.com/PurpurMC/Purpur/blob/HEAD/CONTRIBUTING.md) before editing patched upstream sources. Imported or adapted optimizations must retain their original author, source, and license attribution.
 
 ## License
 
-[MIT](LICENSE)
+Lattice inherits licenses from its upstream projects. The derived server and API distribution is GPL-3.0. Standalone Lattice-authored code is MIT unless a file or patch header states otherwise. Imported patches retain their original licenses and attribution.
+
+See [LICENSE](LICENSE), [GPL-3.0](licenses/GPL.md), [MIT](licenses/MIT.md), and [LGPL-3.0](licenses/LGPL-3.0.txt).
+
+## Credits
+
+Lattice builds on work from the Minecraft server and performance community, including:
+
+- [Paper](https://papermc.io/) and [Purpur](https://purpurmc.org/)
+- [Leaf](https://github.com/Winds-Studio/Leaf)
+- [Luminol](https://github.com/LuminolMC/Luminol)
+- [Moonrise](https://github.com/Tuinity/Moonrise)
+- [libdeflate](https://github.com/ebiggers/libdeflate)
+
+Individual imported patches carry more specific attribution in their patch headers.
+
+## Special Thanks
+
+- [YourKit](https://www.yourkit.com/) supports open source projects with profiling tools used to investigate Java and native performance.
+- [IntelliJ IDEA](https://www.jetbrains.com/idea/) provides the development environment used for Java and JVM-side work on Lattice.

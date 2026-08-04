@@ -1,139 +1,117 @@
+<div align="center">
+
 # Lattice
 
-[English](README.md) | [中文](README_zh.md)
+[![Build](https://github.com/LatticeMC/Lattice/actions/workflows/build.yml/badge.svg)](https://github.com/LatticeMC/Lattice/actions/workflows/build.yml)
+[![Native CI](https://github.com/LatticeMC/Lattice/actions/workflows/native.yml/badge.svg)](https://github.com/LatticeMC/Lattice/actions/workflows/native.yml)
+[![GitHub release](https://img.shields.io/github/v/release/LatticeMC/Lattice?include_prereleases)](https://github.com/LatticeMC/Lattice/releases)
 
-基于 [Purpur](https://purpurmc.org) 构建的高性能 Minecraft 服务端分支，通过 JNI 引入原生 C++ 加速层，在保持与参考 Java 实现位精确兼容的前提下替换服务端热点路径。
+基于 Purpur 构建的高性能 Minecraft 服务端分支，为经过筛选的服务端热点提供原生 C++ 加速。
 
-## 环境要求
+[English](README.md) | **中文**
 
-- Java 21（推荐使用 Temurin）
-- Git
-- CMake >= 3.20
-- Ninja
-- C++20 工具链（Windows 使用 LLVM-MinGW，Linux 使用 GCC 或 Clang，macOS 使用 Apple Clang）
+</div>
+
+> [!WARNING]
+> Lattice 仍在持续开发。将现有服务端迁移到 Lattice 前，请备份世界与配置，并先在测试环境验证插件兼容性。
+
+## 特性
+
+- 基于 [Purpur](https://purpurmc.org/)，兼容 Paper 与 Purpur 插件生态。
+- 为部分寻路、实体、世界生成、压缩与数据处理热点提供原生 C++ 实现。
+- 在受支持的 x86-64 与 AArch64 处理器上运行时分派 SIMD，不要求使用 `-march=native`。
+- JNI 边界明确；原生库不可用或请求不受支持时回退到 Java 实现。
+- 提供验证模式与 parity 测试，用于比较加速路径和 Java 参考实现。
+- 使用 Paperweight 源码补丁与 feature patch，便于审查上游变更。
+
+## 下载
+
+开发构建由 [GitHub Actions](https://github.com/LatticeMC/Lattice/actions/workflows/build.yml) 发布；带版本标签的构建可从 [GitHub Releases](https://github.com/LatticeMC/Lattice/releases) 获取。
+
+请只从项目控制的渠道下载 Lattice。第三方构建可能包含不同的 patch、原生库或许可证条款。
+
+## 文档
+
+- 通过 [GitHub Issues](https://github.com/LatticeMC/Lattice/issues) 报告缺陷与兼容性问题。
+- Paper 配置和管理方式参见 [Paper 文档](https://docs.papermc.io/paper/)。
+- Purpur 专有配置参见 [Purpur 文档](https://purpurmc.org/docs/)。
 
 ## 构建
 
-### 完整服务端构建
+环境要求：
+
+- Java 21
+- Git
+- CMake 3.20 或更新版本
+- Ninja
+- C++20 编译器
+
+构建已应用 patch 的服务端与 Paperclip JAR：
 
 ```bash
 ./gradlew applyAllPatches
-./gradlew build
+./gradlew :lattice-server:createMojmapPaperclipJar
 ```
 
-此命令会应用所有上游补丁（Paper -> Purpur -> Lattice），通过 CMake 和 Ninja 构建 C++ 原生库，并将当前平台的原生库自动打包进服务端 jar。Windows 默认在 `C:/Program Files/llvm-mingw` 查找 LLVM-MinGW；需要时可通过 `-PlatticeLlvmMingwHome=<路径>` 覆盖。
+Windows 使用 `gradlew.bat`。构建默认在 `C:/Program Files/llvm-mingw` 查找 LLVM-MinGW；需要时可通过 `-PlatticeLlvmMingwHome=<路径>` 覆盖。
 
-### 原生库（独立构建）
-
-原生库位于 `lattice-native/` 目录下，可以独立编译：
+<details>
+<summary>独立构建并测试原生库</summary>
 
 ```bash
-cmake -S lattice-native -B lattice-native/build -DCMAKE_BUILD_TYPE=Release
+cmake -S lattice-native -B lattice-native/build -DCMAKE_BUILD_TYPE=Release -DLATTICE_BUILD_TESTS=ON
 cmake --build lattice-native/build --config Release --parallel
+ctest --test-dir lattice-native/build --output-on-failure
 ```
 
-需要：C++20 工具链（GCC >= 11、Clang >= 13 或 MSVC 19.30+），以及 JDK（用于 JNI 头文件）。
+主要 CMake 选项：
 
-CMake 选项：
+| 选项 | 默认值 | 用途 |
+| --- | --- | --- |
+| `LATTICE_ENABLE_SIMD` | `ON` | 构建运行时分派的 SIMD 实现 |
+| `LATTICE_ENABLE_LTO` | `ON` | 启用链接时优化 |
+| `LATTICE_BUILD_TESTS` | `OFF` | 构建原生测试 |
+| `LATTICE_WARNINGS_AS_ERRORS` | `OFF` | 将原生编译器警告视为错误 |
 
-| 选项 | 默认值 | 说明 |
-|---|---|---|
-| `LATTICE_ENABLE_SIMD` | `ON` | 运行时分派 SIMD 特化（AVX2、BMI2、NEON） |
-| `LATTICE_ENABLE_LTO` | `ON` | 链接时优化 |
-| `LATTICE_BUILD_TESTS` | `OFF` | 构建单元测试 |
-| `LATTICE_WARNINGS_AS_ERRORS` | `OFF` | 将编译器警告视为错误 |
+</details>
 
-### 运行测试
+## 原生加速
 
-```bash
-# 服务端测试
-./gradlew test
+原生库通过 JNI 加载为 `liblattice.so`、`lattice.dll` 或 `liblattice.dylib`。所有加速操作都保留明确的 Java fallback。`-Dlattice.verify=true` 会为受支持路径执行参考实现比对，适合测试，不适合作为生产性能基准。
 
-# 原生库测试（需要 -DLATTICE_BUILD_TESTS=ON）
-cd lattice-native/build && ctest --output-on-failure
-```
+目前的加速工作包括：
 
-## 架构
+- 寻路与 PathType 分类；
+- 实体可见性、AABB 查询与碰撞扫描；
+- 紧凑存储、NBT、压缩与高度图；
+- 密度函数、地形噪声、矿脉与材质规则；
+- 光照传播与部分 AI 目标采样器。
 
-Lattice 遵循标准的 Purpur/Paperweight 补丁系统。所有服务端集成都已经迁移为直接源码补丁和 feature patch，不再使用运行时字节码变换框架。这样 native 边界更明确，上游变基时也更容易审查：
-
-- `lattice-api/paper-patches/` -- 在 Paper 之上的 API 新增
-- `lattice-server/paper-patches/` -- 在 Paper 之上的服务端修改
-- `lattice-server/purpur-patches/` -- 在 Purpur 之上的服务端修改
-- `lattice-server/minecraft-patches/` -- 对 Minecraft 源码的直接修改
-
-原生库以共享对象形式（`liblattice.so` / `lattice.dll` / `liblattice.dylib`）在启动时通过 JNI 加载。每个原生调用都受 `LatticeNative.isLoaded()` 保护，当原生库不可用时透明回退到 JDK 实现。在 `-Dlattice.verify=true` 模式下，每次原生调用都会被 JDK 参考实现并行执行，输出结果将被比对验证。
-
-## 原生模块
-
-`lattice-native` C++ 库加速了 20 个以上的 Minecraft 服务端系统：
-
-| 模块 | 目标 |
-|---|---|
-| Zlib 编解码器 | RegionFile 区块压缩（基于 libdeflate） |
-| NBT 解析器 | 二进制 NBT 反序列化 |
-| 紧凑存储 | 位打包 `long[]` 操作（标量、BMI2、AVX2、NEON） |
-| 光照等级传播器 | 基于 BFS 的光照等级传播 |
-| 方块光照引擎 | 完整的方块光照引擎，通过 JNI 查询世界数据 |
-| 高度图扫描 | 多段区块列高度图扫描器 |
-| 随机刻筛选器 | 随机刻候选掩码筛选 |
-| 生物 AI | 20 种动物物种的决策层 |
-| 接近/逃跑/家/水目标采样器 | 本地导航评估 |
-| 生成筛选器 | 实体生成资格判定 |
-| 实体可见性 | O(N x M) 距离扫描 |
-| AABB 查询 | O(Q x E) AABB 相交扫描 |
-| 碰撞扫描 | 实体移动的扫描式 AABB 钳位 |
-| 寻路器 | 原生 BinaryHeap 和节点池的 A* 寻路 |
-| 视野射线 | 带 Section 级跳过的 DDA 射线步进 |
-| 密度函数 | 批量网格填充与求值器 |
-| 区块噪声采样器 | NoiseRouter 包装外观 |
-| Beardifier | 结构附近地形融合（beard blending） |
-| 矿脉采样器 | 基于 Xoroshiro128++ 的逐方块矿脉判定 |
-| 材质规则 | 地表构建器规则树 |
-| 插值噪声 | 旧版 1.16 风格混合噪声 |
-| Perlin / 八度 / 双重 / Simplex 噪声 | 噪声生成基础原语 |
-
-所有实体和噪声模块均包含 SIMD 特化（x86-64 使用 AVX2，AArch64 使用 NEON），并通过运行时 CPU 特性检测进行分派。构建基线为 x86-64-v1 + SSE2 或 armv8-a；不使用 `-march=native`，因此二进制文件在同架构的所有 CPU 上均可移植。
-
-## 平台支持
-
-原生库在 CI 中于以下平台构建和测试：
-
-| 平台 | 编译器 | 架构 |
-|---|---|---|
-| Ubuntu (latest) | GCC | x86-64 |
-| Ubuntu (latest) | Clang | x86-64 |
-| Windows (latest) | MSVC | x86-64 |
-| macOS 14 (ARM) | Clang | AArch64 |
-
-Java 服务端可在任何拥有 Java 21 运行时的平台上构建和运行。
-
-## 项目结构
-
-```
-Lattice/
-├── lattice-native/          C++ 原生加速库（CMake，C++20）
-│   ├── jni/                 JNI 桥接层
-│   ├── src/                 核心实现（io、world、core）
-│   ├── include/lattice/     公共头文件
-│   └── tests/               单元测试（doctest）
-├── lattice-api/             服务端 API 模块
-│   └── paper-patches/       在 Paper 之上的 API 补丁
-├── lattice-server/          服务端实现模块
-│   ├── paper-patches/       在 Paper 之上的服务端补丁
-│   ├── purpur-patches/      在 Purpur 之上的服务端补丁
-│   ├── minecraft-patches/   对 Minecraft 源码的直接补丁
-│   └── src/                 Java 源码（bootstrap、bridge、nativelib）
-├── scripts/                 构建与上游同步脚本
-├── build.gradle.kts         根构建文件（paperweight patcher）
-├── settings.gradle.kts      项目设置
-└── gradle.properties        版本和构建配置
-```
+加速路径是否可用、是否有收益，取决于请求形态、CPU、世界状态与运行时配置。当某类请求使用 Java 更快时，不会仅因为存在 native 实现就强制进入 native。
 
 ## 参与贡献
 
-参见 [Purpur 的贡献指南](https://github.com/PurpurMC/Purpur/blob/HEAD/CONTRIBUTING.md) 了解补丁工作流。
+Lattice 使用 Paperweight patch 工作流。修改上游源码前，请先阅读 [Purpur 贡献指南](https://github.com/PurpurMC/Purpur/blob/HEAD/CONTRIBUTING.md)。引入或改编优化时，必须保留原作者、来源与许可证署名。
 
 ## 许可证
 
-[MIT](LICENSE)
+Lattice 从上游继承许可证。派生的服务端与 API 发行物遵循 GPL-3.0。Lattice 原创的独立代码在文件或 patch 头未另行声明时采用 MIT；引入的 patch 保留其原许可证与署名。
+
+详见 [LICENSE](LICENSE)、[GPL-3.0](licenses/GPL.md)、[MIT](licenses/MIT.md) 与 [LGPL-3.0](licenses/LGPL-3.0.txt)。
+
+## 致谢
+
+Lattice 建立在 Minecraft 服务端与性能优化社区的工作之上，包括：
+
+- [Paper](https://papermc.io/) 与 [Purpur](https://purpurmc.org/)
+- [Leaf](https://github.com/Winds-Studio/Leaf)
+- [Luminol](https://github.com/LuminolMC/Luminol)
+- [Moonrise](https://github.com/Tuinity/Moonrise)
+- [libdeflate](https://github.com/ebiggers/libdeflate)
+
+具体引入 patch 的原作者与来源以 patch 头中的署名为准。
+
+## 特别感谢
+
+- [YourKit](https://www.yourkit.com/) 为开源项目提供性能分析工具，帮助定位 Java 与 native 性能问题。
+- [IntelliJ IDEA](https://www.jetbrains.com/idea/) 为 Lattice 的 Java 与 JVM 侧开发提供开发环境。

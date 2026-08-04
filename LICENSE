@@ -1,23 +1,40 @@
-The MIT License (MIT)
-=====================
+Lattice licensing
+=================
 
-Permission is hereby granted, free of charge, to any person
-obtaining a copy of this software and associated documentation
-files (the “Software”), to deal in the Software without
-restriction, including without limitation the rights to use,
-copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the
-Software is furnished to do so, subject to the following
-conditions:
+Lattice inherits its licensing from the included upstream projects.
 
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
+Lattice 从上游继承许可证。
 
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
-OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
-HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
-WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
+The server and API patch stacks derive from Purpur, Paper, Spigot, Bukkit,
+CraftBukkit, and Minecraft. Source and binaries that form part of that derived
+server distribution are licensed under the GNU General Public License version
+3; see [licenses/GPL.md](licenses/GPL.md).
+
+服务端与 API 补丁栈派生自 Purpur、Paper、Spigot、Bukkit、CraftBukkit 和
+Minecraft。构成该派生服务端发行物的源码与二进制遵循 GNU 通用公共许可证
+第 3 版，许可证正文见 [licenses/GPL.md](licenses/GPL.md)。
+
+Standalone code authored for Lattice that does not derive from GPL-covered
+upstream code is released under the MIT License unless its file or patch header
+states otherwise. This includes the Lattice native library and Lattice-owned
+support code. See [licenses/MIT.md](licenses/MIT.md). Combining that code into
+the server binary does not remove the obligations inherited by the complete
+server distribution.
+
+由 Lattice 原创、且不派生自 GPL 上游代码的独立代码，在文件或 patch 头未另行
+声明时采用 MIT 许可证；这包括 Lattice native 库与 Lattice 自有支持代码。
+许可证正文见 [licenses/MIT.md](licenses/MIT.md)。这些代码被组合进服务端二进制
+后，不会消除完整服务端发行物从上游继承的许可证义务。
+
+Imported or adapted patches retain the original author, source, and license
+stated in their patch headers. Some such patches use LGPL-3.0-only; see
+[licenses/LGPL-3.0.txt](licenses/LGPL-3.0.txt). A patch without an explicit
+more-permissive license must not be presumed to be MIT. When this summary and a
+file or upstream license differ, the applicable file or upstream license takes
+precedence.
+
+引入或改编的 patch 必须在 patch 头中保留原作者、来源与原许可证。部分 patch
+采用 LGPL-3.0-only，许可证正文见
+[licenses/LGPL-3.0.txt](licenses/LGPL-3.0.txt)。未明确声明更宽松许可证的
+上游 patch 不得推定为 MIT。本说明与具体文件或上游许可证不一致时，以适用于
+该文件的许可证或上游许可证为准。

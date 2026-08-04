@@ -75,6 +75,6 @@ META-INF/
 # Replay logs
 replay_pid*.log
 
-# Compiled classes
+# Local benchmark and profiling tools
 io/
-tools/*.class
+/tools/
