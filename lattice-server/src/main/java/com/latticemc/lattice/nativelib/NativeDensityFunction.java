@@ -28,6 +28,7 @@ public final class NativeDensityFunction {
     public static final int CELL_COLUMNS_KNOWN_JAVA_ONLY = -2;
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
     private static volatile boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "true"));
+    private static final boolean GRID_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionGrid");
     private static volatile boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "true"));
     private static volatile boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "true"));
     private static volatile boolean DIRECT_CELL_COLUMN_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCellColumn", "true"));
@@ -277,6 +278,7 @@ public final class NativeDensityFunction {
                                       int nx,
                                       int ny,
                                       int nz) {
+        if (!GRID_ENABLED) return false;
         logStatusOnce();
         if (!ENABLED || values == null || function == null || nx <= 0 || ny <= 0 || nz <= 0) return false;
         if (bypassRootNative(function)) return false;
@@ -1391,6 +1393,7 @@ public final class NativeDensityFunction {
 
     public static String status() {
         return "enabled=" + ENABLED
+                + " gridEnabled=" + GRID_ENABLED
                 + " cell=" + CELL_ENABLED
                 + " directCell=" + DIRECT_CELL_ENABLED
                 + " directCellColumn=" + DIRECT_CELL_COLUMN_ENABLED
