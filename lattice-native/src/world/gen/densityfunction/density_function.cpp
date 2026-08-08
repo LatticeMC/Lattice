@@ -14,9 +14,7 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cmath>
-#include <thread>
 
 #include "lattice/dispatch.hpp"
 #include "world/gen/noise/interpolated_noise.hpp"
@@ -32,94 +30,8 @@ bool evaluate_y_column_avx2(const NodeArena&, NodeRef,
 }
 #endif
 
-#if !defined(LATTICE_HAS_DENSITY_AVX512)
-bool evaluate_y_column_avx512(const NodeArena&, NodeRef,
-                              double, double, double, double,
-                              int, int, int,
-                              CacheState*, double*) noexcept {
-    return false;
-}
-#endif
-
 namespace {
-
-using EvaluateYColumnFn = void (*)(const NodeArena&, NodeRef,
-                                  double, double, double, double,
-                                  int, int, int,
-                                  CacheState*, double*) noexcept;
-
-void evaluate_y_column_lazy_dispatch(const NodeArena&, NodeRef,
-                                      double, double, double, double,
-                                      int, int, int,
-                                      CacheState*, double*) noexcept;
-
-void evaluate_y_column_scalar_dispatch(const NodeArena& arena, NodeRef root,
-                                       double x, double y0, double z, double dy,
-                                       int cellX, int cellZ, int ny,
-                                       CacheState* cache, double* out) noexcept {
-    evaluate_y_column_fallback(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out);
-}
-
-void evaluate_y_column_avx2_dispatch(const NodeArena& arena, NodeRef root,
-                                     double x, double y0, double z, double dy,
-                                     int cellX, int cellZ, int ny,
-                                     CacheState* cache, double* out) noexcept {
-#if defined(LATTICE_HAS_DENSITY_AVX2)
-    if (evaluate_y_column_avx2(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) return;
-#endif
-    evaluate_y_column_fallback(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out);
-}
-
-void evaluate_y_column_avx512_scalar_dispatch(const NodeArena& arena, NodeRef root,
-                                               double x, double y0, double z, double dy,
-                                               int cellX, int cellZ, int ny,
-                                               CacheState* cache, double* out) noexcept {
-#if defined(LATTICE_HAS_DENSITY_AVX512)
-    if (ny >= 32
-        && evaluate_y_column_avx512(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) {
-        return;
-    }
-#endif
-    evaluate_y_column_fallback(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out);
-}
-
-void evaluate_y_column_avx512_avx2_dispatch(const NodeArena& arena, NodeRef root,
-                                             double x, double y0, double z, double dy,
-                                             int cellX, int cellZ, int ny,
-                                             CacheState* cache, double* out) noexcept {
-#if defined(LATTICE_HAS_DENSITY_AVX512)
-    if (ny >= 32
-        && evaluate_y_column_avx512(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) {
-        return;
-    }
-#endif
-#if defined(LATTICE_HAS_DENSITY_AVX2)
-    if (evaluate_y_column_avx2(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) return;
-#endif
-    evaluate_y_column_fallback(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out);
-}
-
-std::atomic<EvaluateYColumnFn> g_evaluate_y_column{&evaluate_y_column_lazy_dispatch};
-std::atomic<bool> g_density_avx2_available{false};
-std::atomic<bool> g_density_avx512_enabled{false};
-std::atomic<const char*> g_density_dispatch_name{"uninitialized"};
-
-enum class DensityDispatchState : std::uint8_t {
-    Uninitialized,
-    Initializing,
-    Initialized,
-};
-
-std::atomic<DensityDispatchState> g_density_dispatch_state{DensityDispatchState::Uninitialized};
-
-void evaluate_y_column_lazy_dispatch(const NodeArena& arena, NodeRef root,
-                                     double x, double y0, double z, double dy,
-                                     int cellX, int cellZ, int ny,
-                                     CacheState* cache, double* out) noexcept {
-    init_density_dispatch();
-    g_evaluate_y_column.load(std::memory_order_acquire)(
-        arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out);
-}
+const char* g_density_dispatch_name = "uninitialized";
 
 inline double eval_const(const Node& n) noexcept { return n.d0; }
 
@@ -1041,79 +953,35 @@ void evaluate_y_column(const NodeArena& arena, NodeRef root,
         for (int i = 0; i < ny; ++i) out[i] = 0.0;
         return;
     }
-    g_evaluate_y_column.load(std::memory_order_acquire)(
-        arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out);
+#if defined(LATTICE_HAS_DENSITY_AVX2)
+    if (lattice::cpu::features().avx2) {
+        if (evaluate_y_column_avx2(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) {
+            return;
+        }
+    }
+#endif
+    evaluate_y_column_fallback(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out);
 }
 
 void init_density_dispatch() noexcept {
-    for (;;) {
-        DensityDispatchState expected = DensityDispatchState::Uninitialized;
-        if (g_density_dispatch_state.compare_exchange_strong(
-                expected, DensityDispatchState::Initializing,
-                std::memory_order_acq_rel, std::memory_order_acquire)) {
-            break;
-        }
-        if (expected == DensityDispatchState::Initialized) return;
-        while (g_density_dispatch_state.load(std::memory_order_acquire)
-               == DensityDispatchState::Initializing) {
-            std::this_thread::yield();
-        }
-    }
-
-    EvaluateYColumnFn fn = &evaluate_y_column_scalar_dispatch;
-    const auto& features = lattice::cpu::features();
-    bool avx2_available = false;
-    const bool avx512_enabled = g_density_avx512_enabled.load(std::memory_order_acquire);
-    const char* dispatch_name = "scalar";
-
-#if defined(LATTICE_HAS_DENSITY_AVX512)
-    if (avx512_enabled && features.avx512f && features.avx512dq) {
 #if defined(LATTICE_HAS_DENSITY_AVX2)
-        avx2_available = features.avx2;
-        fn = features.avx2 ? &evaluate_y_column_avx512_avx2_dispatch
-                           : &evaluate_y_column_avx512_scalar_dispatch;
-        dispatch_name = features.avx2 ? "avx512+avx2" : "avx512+scalar";
+    g_density_dispatch_name = lattice::cpu::features().avx2 ? "avx2" : "scalar";
 #else
-        fn = &evaluate_y_column_avx512_scalar_dispatch;
-        dispatch_name = "avx512+scalar";
+    g_density_dispatch_name = "scalar";
 #endif
-    } else {
-#if defined(LATTICE_HAS_DENSITY_AVX2)
-        if (features.avx2) {
-            avx2_available = true;
-            fn = &evaluate_y_column_avx2_dispatch;
-            dispatch_name = "avx2";
-        }
-#endif
-    }
-#elif defined(LATTICE_HAS_DENSITY_AVX2)
-    if (features.avx2) {
-        avx2_available = true;
-        fn = &evaluate_y_column_avx2_dispatch;
-        dispatch_name = "avx2";
-    }
-#endif
-
-    g_density_avx2_available.store(avx2_available, std::memory_order_release);
-    g_density_dispatch_name.store(dispatch_name, std::memory_order_release);
-    g_evaluate_y_column.store(fn, std::memory_order_release);
-    g_density_dispatch_state.store(DensityDispatchState::Initialized, std::memory_order_release);
 }
 
-void set_density_avx512_enabled(bool enabled) noexcept {
-    g_density_avx512_enabled.store(enabled, std::memory_order_release);
+void set_density_avx512_enabled(bool /*enabled*/) noexcept {
+    // Kept as a no-op for binaries whose JNI loader still reads the legacy
+    // property. The current density path is intentionally AVX2/scalar only.
 }
 
 bool density_avx512_enabled() noexcept {
-    return g_density_avx512_enabled.load(std::memory_order_acquire);
+    return false;
 }
 
 const char* density_dispatch_summary() noexcept {
-    return g_density_dispatch_name.load(std::memory_order_acquire);
-}
-
-bool density_avx2_available() noexcept {
-    return g_density_avx2_available.load(std::memory_order_acquire);
+    return g_density_dispatch_name;
 }
 
 void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
