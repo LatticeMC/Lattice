@@ -1991,38 +1991,38 @@ public final class NativeDensityFunction {
     /// message construction (`Class.methodToString`) showed up in worldgen
     /// JFR at ~1.3%. The resolved member reads only tree structure, never
     /// computed density values, so this has no parity impact.
-    private record AccessorKey(Class<?> owner, String name) {}
-
-    private static final ConcurrentHashMap<AccessorKey, java.lang.reflect.AccessibleObject> ACCESSOR_CACHE =
+    private static final ConcurrentHashMap<Class<?>, ConcurrentHashMap<String, java.lang.reflect.AccessibleObject>> ACCESSOR_CACHE =
             new ConcurrentHashMap<>();
 
-    private static java.lang.reflect.AccessibleObject resolveAccessor(AccessorKey key) {
+    private static java.lang.reflect.AccessibleObject resolveAccessor(Class<?> owner, String name) {
         try {
-            Method method = key.owner().getDeclaredMethod(key.name());
+            Method method = owner.getDeclaredMethod(name);
             method.setAccessible(true);
             return method;
         } catch (NoSuchMethodException methodFailure) {
             try {
-                Field field = key.owner().getDeclaredField(key.name());
+                Field field = owner.getDeclaredField(name);
                 field.setAccessible(true);
                 return field;
             } catch (NoSuchFieldException fieldFailure) {
-                throw new IllegalStateException(key.owner().getName() + "." + key.name() + " changed shape", fieldFailure);
+                throw new IllegalStateException(owner.getName() + "." + name + " changed shape", fieldFailure);
             }
         }
     }
 
     private static Object invoke(Object owner, String methodName) {
+        Class<?> ownerClass = owner.getClass();
+        ConcurrentHashMap<String, java.lang.reflect.AccessibleObject> accessors =
+                ACCESSOR_CACHE.computeIfAbsent(ownerClass, ignored -> new ConcurrentHashMap<>());
         java.lang.reflect.AccessibleObject accessor =
-                ACCESSOR_CACHE.computeIfAbsent(new AccessorKey(owner.getClass(), methodName),
-                        NativeDensityFunction::resolveAccessor);
+                accessors.computeIfAbsent(methodName, name -> resolveAccessor(ownerClass, name));
         try {
             if (accessor instanceof Method method) {
-                return method.invoke(owner);
+                return method.invoke(owner, (Object[]) null);
             }
             return ((Field) accessor).get(owner);
         } catch (ReflectiveOperationException accessFailure) {
-            throw new IllegalStateException(owner.getClass().getName() + "." + methodName + " access failed", accessFailure);
+            throw new IllegalStateException(ownerClass.getName() + "." + methodName + " access failed", accessFailure);
         }
     }
 
