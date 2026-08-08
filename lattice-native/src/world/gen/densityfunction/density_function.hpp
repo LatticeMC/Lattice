@@ -44,8 +44,10 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 
 #include "world/gen/noise/double_perlin_noise.hpp"
@@ -174,6 +176,17 @@ enum class NodeKind : std::uint8_t {
 using NodeRef = std::int32_t;
 inline constexpr NodeRef kNullRef = -1;
 
+/// Capabilities published by a node after it is appended to an arena.
+/// A capability is valid only when the node and every operand required by
+/// that implementation have the capability.
+enum class NodeCapability : std::uint8_t {
+    kAvx512 = 1u << 0,
+};
+
+[[nodiscard]] constexpr std::uint8_t node_capability_bit(NodeCapability capability) noexcept {
+    return static_cast<std::uint8_t>(capability);
+}
+
 /// One node in the tree. We use plain-old-data with a tagged union;
 /// every field is read-only after construction.
 struct Node {
@@ -220,7 +233,13 @@ struct Node {
 /// (children first); `root` is the index of the top-level node.
 struct NodeArena {
     std::vector<Node> nodes;
+    /// SIMD capability metadata kept out-of-line so Node remains compact.
+    /// Entries are aligned by NodeRef with `nodes`.
+    std::vector<std::uint8_t> capability_bits;
     NodeRef           root = kNullRef;
+    /// Roots for a compiled Java slice batch. Materialized once at compile
+    /// time so the hot JNI row evaluator does not repin an int[] per call.
+    std::vector<NodeRef> batch_roots;
 
     /// Cache-slot counters. Each cache node is assigned a slot id as
     /// it's pushed; the caller's CacheState mirrors these counts.
@@ -247,9 +266,69 @@ struct NodeArena {
     std::vector<Spline>           splines;
     std::vector<SplineBreakpoint> spline_breakpoints;
 
+    [[nodiscard]] bool has_capability(NodeRef ref, NodeCapability capability) const noexcept {
+        return ref >= 0
+            && static_cast<std::size_t>(ref) < capability_bits.size()
+            && (capability_bits[static_cast<std::size_t>(ref)]
+                & node_capability_bit(capability)) != 0;
+    }
+
     /// Append a node and return its index. Assigns a cache slot to
     /// cache-kind nodes; caller need not do it manually.
     NodeRef push(Node n) {
+        const auto child_avx512 = [this](NodeRef ref) noexcept {
+            return ref >= 0
+                && ref < static_cast<NodeRef>(nodes.size())
+                && has_capability(ref, NodeCapability::kAvx512);
+        };
+        const auto all_children_avx512 = [&](std::initializer_list<NodeRef> refs) noexcept {
+            for (const NodeRef ref : refs) {
+                if (!child_avx512(ref)) return false;
+            }
+            return true;
+        };
+
+        bool avx512_supported = false;
+        switch (n.kind) {
+            case NodeKind::kConstant:
+            case NodeKind::kBlendAlpha:
+            case NodeKind::kBlendOffset:
+                avx512_supported = true;
+                break;
+            case NodeKind::kYClampedGradient:
+                // The AVX512 evaluator intentionally rejects a reversed
+                // gradient because min/max clamping would change its scalar
+                // semantics.
+                avx512_supported = n.i0 <= n.i1;
+                break;
+            case NodeKind::kAbs:
+            case NodeKind::kSquare:
+            case NodeKind::kCube:
+            case NodeKind::kHalfNegative:
+            case NodeKind::kQuarterNegative:
+            case NodeKind::kInvert:
+            case NodeKind::kSqueeze:
+            case NodeKind::kClamp:
+                avx512_supported = child_avx512(n.a);
+                break;
+            case NodeKind::kAdd:
+            case NodeKind::kMul:
+            case NodeKind::kMin:
+            case NodeKind::kMax:
+                avx512_supported = all_children_avx512({n.a, n.b});
+                break;
+            case NodeKind::kMapRange:
+                avx512_supported = child_avx512(n.a);
+                break;
+            case NodeKind::kRangeChoice:
+                avx512_supported = all_children_avx512({n.a, n.b, n.c});
+                break;
+            case NodeKind::kLerp:
+                avx512_supported = all_children_avx512({n.a, n.b, n.c});
+                break;
+            default:
+                break;
+        }
         switch (n.kind) {
             case NodeKind::kCache2D:        n.cache_slot_id = num_cache_2d_slots++;        break;
             case NodeKind::kCacheOnce:      n.cache_slot_id = num_cache_once_slots++;      break;
@@ -270,6 +349,9 @@ struct NodeArena {
             default: break;
         }
         nodes.push_back(n);
+        capability_bits.push_back(avx512_supported
+            ? node_capability_bit(NodeCapability::kAvx512)
+            : 0);
         return static_cast<NodeRef>(nodes.size() - 1);
     }
 
@@ -488,6 +570,9 @@ struct CacheState {
     std::vector<const double*> cache_all_in_cell_arrays;
     std::vector<std::size_t> cache_all_in_cell_array_lengths;
     std::vector<std::size_t> cache_all_in_cell_array_offsets;
+    /// Immutable roots copied from the owning arena for the slice-batch fast
+    /// ABI. The cache remains per-evaluation-context; roots are not cleared.
+    std::vector<NodeRef> batch_roots;
 
     /// Per-slot Interpolator state (one entry per kInterpolated node).
     std::vector<InterpolatorState> interpolators;
@@ -506,7 +591,6 @@ struct CacheState {
     std::vector<double> scratch_value;
     std::vector<std::vector<double>> scratch_columns;
     std::size_t scratch_column_depth = 0;
-
     /// True between sample_start_density() and stop_interpolation().
     /// When true, kInterpolated returns interpolators[slot].result;
     /// when false, it passthrough-evaluates the wrapped input.
@@ -649,6 +733,14 @@ void evaluate_y_column(const NodeArena& arena, NodeRef root,
                        CacheState* cache,
                        double* out) noexcept;
 
+/// Select the CPU-tiered Y-column evaluator once. Safe to call from
+/// JNI_OnLoad after the CPU feature snapshot has been initialised.
+void init_density_dispatch() noexcept;
+
+/// Published by `init_density_dispatch`. AVX-512 recursive evaluation uses
+/// this instead of probing CPU features for every child column.
+[[nodiscard]] bool density_avx2_available() noexcept;
+
 /// Scalar/portable column fallback used after a SIMD evaluator has already
 /// rejected a subtree. This avoids probing the same SIMD path twice.
 void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
@@ -664,6 +756,17 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                             int ny,
                             CacheState* cache,
                             double* out) noexcept;
+
+/// AVX-512 specialization for the straight-line density-function column
+/// subtrees common in noise filling. It deliberately returns false for nodes
+/// whose cache semantics need the complete AVX2 evaluator, so callers can
+/// retain the exact AVX2/scalar fallback behaviour.
+bool evaluate_y_column_avx512(const NodeArena& arena, NodeRef root,
+                              double x, double y0, double z, double dy,
+                              int cellX, int cellZ,
+                              int ny,
+                              CacheState* cache,
+                              double* out) noexcept;
 
 // ---- Interpolator operations (Mojang's DensityInterpolator API) --------
 //

@@ -134,16 +134,27 @@ struct ColumnScratchLease {
     CacheState* cache = nullptr;
     std::vector<double> local;
     std::size_t index = 0;
+    double* values = nullptr;
 
     ColumnScratchLease(CacheState* cache_in, int ny) : cache(cache_in) {
         const std::size_t count = static_cast<std::size_t>(ny);
         if (!cache) {
             local.resize(count);
+            values = local.data();
             return;
         }
         index = cache->scratch_column_depth++;
+        if (index < cache->scratch_columns.size()
+            && cache->scratch_columns[index].size() == count) {
+            values = cache->scratch_columns[index].data();
+            return;
+        }
+
+        // Direct AVX2 calls may bypass the public preparation entry point.
         if (cache->scratch_columns.size() <= index) cache->scratch_columns.resize(index + 1u);
-        cache->scratch_columns[index].resize(count);
+        auto& column = cache->scratch_columns[index];
+        column.resize(count);
+        values = column.data();
     }
 
     ~ColumnScratchLease() {
@@ -151,7 +162,7 @@ struct ColumnScratchLease {
     }
 
     double* data() noexcept {
-        return cache ? cache->scratch_columns[index].data() : local.data();
+        return values;
     }
 
     ColumnScratchLease(const ColumnScratchLease&) = delete;
