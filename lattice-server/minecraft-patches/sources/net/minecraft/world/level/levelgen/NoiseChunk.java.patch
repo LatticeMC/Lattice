@@ -54,7 +54,7 @@
          this.blendAlpha = new NoiseChunk.FlatCache(new NoiseChunk.BlendAlpha(), false);
          this.blendOffset = new NoiseChunk.FlatCache(new NoiseChunk.BlendOffset(), false);
          if (!blendifier.isEmpty()) {
-@@ -150,33 +_,64 @@
+@@ -150,33 +_,65 @@
              );
          }
  
@@ -62,11 +62,13 @@
 -        DensityFunction densityFunction = DensityFunctions.cacheAllInCell(
 -                DensityFunctions.add(noiseRouter1.finalDensity(), DensityFunctions.BeardifierMarker.INSTANCE)
 -            )
+-            .mapAll(this::wrap);
+-        list.add(context -> this.aquifer.computeSubstance(context, densityFunction.compute(context)));
 +        // Keep the structure blend in the pointwise path while allowing the
 +        // expensive terrain density subtree to use the native cell-column path.
-+        this.finalDensity = DensityFunctions.cacheAllInCell(noiseRouter1.finalDensity())
-             .mapAll(this::wrap);
--        list.add(context -> this.aquifer.computeSubstance(context, densityFunction.compute(context)));
++        // noiseRouter1 has already been mapped through this chunk's wrapper visitor;
++        // remapping the complete final-density tree here rebuilds every composite node.
++        this.finalDensity = new NoiseChunk.CacheAllInCell(noiseRouter1.finalDensity());
          if (noiseGeneratorSettings.oreVeinsEnabled()) {
 -            list.add(OreVeinifier.create(noiseRouter1.veinToggle(), noiseRouter1.veinRidged(), noiseRouter1.veinGap(), random.oreRandom()));
 +            this.oreVeinifier = OreVeinifier.create(
