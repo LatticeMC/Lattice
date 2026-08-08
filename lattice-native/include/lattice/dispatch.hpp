@@ -25,6 +25,7 @@
  *
  *   LATTICE_CPU_DISABLE=avx512,bmi2   -> force-off those features
  *   LATTICE_CPU_FORCE_SCALAR=1        -> ignore all SIMD features
+ *   -Dlattice.nativeCpu=auto|avx2|avx512|scalar -> JVM-side tier ceiling
  */
 
 #pragma once
@@ -32,6 +33,13 @@
 #include <cstdint>
 
 namespace lattice::cpu {
+
+enum class RequestedTier : uint8_t {
+    Auto,
+    Scalar,
+    Avx2,
+    Avx512,
+};
 
 struct Features {
     // --- x86 / x86-64 ----------------------------------------------------
@@ -64,6 +72,7 @@ struct Features {
 
     // --- Global overrides ------------------------------------------------
     bool forced_scalar : 1 = false;  // LATTICE_CPU_FORCE_SCALAR=1
+    RequestedTier requested_tier = RequestedTier::Auto;
 
     // --- Vendor info for logging / tuning decisions ----------------------
     enum class Vendor : uint8_t { Unknown, Intel, AMD, Apple, Arm, Other };
@@ -80,6 +89,12 @@ const Features& features() noexcept;
 /// Explicit initialisation hook. Idempotent. Returns `features()` after
 /// populating the singleton from hardware and environment overrides.
 const Features& initialize() noexcept;
+
+/// Select the highest x86 SIMD tier before `initialize()` runs. Accepted
+/// values are `auto`, `scalar`, `avx2`, and `avx512` (case-insensitive).
+/// `avx512` remains a preference: unavailable CPU/OS state safely falls back.
+/// Returns false for an invalid value or a call after initialization.
+bool configure_requested_tier(const char* value) noexcept;
 
 /// Human-readable one-line summary for logging.
 const char* summary() noexcept;
