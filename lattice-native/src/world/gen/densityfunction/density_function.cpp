@@ -235,28 +235,16 @@ struct ColumnScratchLease {
     CacheState* cache = nullptr;
     std::vector<double> local;
     std::size_t index = 0;
-    double* values = nullptr;
 
     ColumnScratchLease(CacheState* cache_in, int ny) : cache(cache_in) {
         const std::size_t count = static_cast<std::size_t>(ny);
         if (!cache) {
             local.resize(count);
-            values = local.data();
             return;
         }
         index = cache->scratch_column_depth++;
-        if (index < cache->scratch_columns.size()
-            && cache->scratch_columns[index].size() == count) {
-            values = cache->scratch_columns[index].data();
-            return;
-        }
-
-        // Direct low-level calls do not necessarily pre-provision scratch.
-        // Preserve their historical grow-on-demand behaviour.
         if (cache->scratch_columns.size() <= index) cache->scratch_columns.resize(index + 1u);
-        auto& column = cache->scratch_columns[index];
-        column.resize(count);
-        values = column.data();
+        cache->scratch_columns[index].resize(count);
     }
 
     ~ColumnScratchLease() {
@@ -264,11 +252,11 @@ struct ColumnScratchLease {
     }
 
     double* data() noexcept {
-        return values;
+        return cache ? cache->scratch_columns[index].data() : local.data();
     }
 
     const double* data() const noexcept {
-        return values;
+        return cache ? cache->scratch_columns[index].data() : local.data();
     }
 
     ColumnScratchLease(const ColumnScratchLease&) = delete;
