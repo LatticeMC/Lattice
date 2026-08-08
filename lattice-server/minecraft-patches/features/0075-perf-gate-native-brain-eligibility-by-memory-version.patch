@@ -1,0 +1,293 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 5 Aug 2026 22:07:35 +0800
+Subject: [PATCH] perf: gate native brain eligibility by memory version
+
+
+diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
+index 338fab6269842dd8e2179a3c378bb3bdc4a43877..7efef0ecb08d14404e1b0783dc61dff934ac5e0c 100644
+--- a/net/minecraft/world/entity/ai/Brain.java
++++ b/net/minecraft/world/entity/ai/Brain.java
+@@ -9,6 +9,7 @@ import com.latticemc.lattice.util.collection.ActivityArrayMap;
+ import com.latticemc.lattice.util.collection.ActivityBitSet;
+ import com.latticemc.lattice.util.collection.ActivityRegistryIndex;
+ import com.latticemc.lattice.util.collection.BehaviorControlArraySet;
++import com.latticemc.lattice.nativelib.NativeBrainEligibility;
+ import com.mojang.datafixers.util.Pair;
+ import com.mojang.logging.LogUtils;
+ import com.mojang.serialization.Codec;
+@@ -22,6 +23,7 @@ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+ import it.unimi.dsi.fastutil.objects.Object2ObjectRBTreeMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ReferenceArrayMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
++import java.util.Arrays;
+ import java.util.Collection;
+ import java.util.List;
+ import java.util.Map;
+@@ -57,6 +59,9 @@ public class Brain<E extends LivingEntity> {
+     private static final Map<?, ?>[] EMPTY_PRIORITY_GROUPS = new Map[0];
+     private static final BehaviorControlArraySet<?>[] EMPTY_BEHAVIOR_GROUPS = new BehaviorControlArraySet[0];
+     private final Map<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> memories = new Reference2ReferenceOpenHashMap<>();
++    // Lattice - Native brain eligibility: invalidate a snapshot after any memory write.
++    private long latticeMemoryVersion;
++    private NativeEligibilityPlan latticeNativeEligibilityPlan;
+     private final Map<SensorType<? extends Sensor<? super E>>, Sensor<? super E>> sensors = new Reference2ReferenceArrayMap<>();
+     private final Map<Integer, Map<Activity, Set<BehaviorControl<? super E>>>> availableBehaviorsByPriority = new Object2ObjectRBTreeMap<>();
+     private Map<Activity, Set<BehaviorControl<? super E>>>[] behaviorPriorityGroups = (Map<Activity, Set<BehaviorControl<? super E>>>[]) EMPTY_PRIORITY_GROUPS;
+@@ -178,6 +183,8 @@ public class Brain<E extends LivingEntity> {
+ 
+     public void clearMemories() {
+         this.memories.keySet().forEach(memoryModuleType -> this.memories.put((MemoryModuleType<?>)memoryModuleType, Optional.empty()));
++        this.latticeMemoryVersion++;
++        this.latticeNativeEligibilityPlan = null;
+         this.behaviorPriorityGroups = (Map<Activity, Set<BehaviorControl<? super E>>>[]) EMPTY_PRIORITY_GROUPS;
+         this.activeBehaviorGroups = (BehaviorControlArraySet<? super E>[]) EMPTY_BEHAVIOR_GROUPS;
+     }
+@@ -204,6 +211,7 @@ public class Brain<E extends LivingEntity> {
+                 this.eraseMemory(memoryType);
+             } else {
+                 this.memories.put(memoryType, memory);
++                this.latticeMemoryVersion++;
+             }
+         }
+     }
+@@ -397,6 +405,7 @@ public class Brain<E extends LivingEntity> {
+                 .add((BehaviorControl<? super E>)pair.getSecond());
+         }
+         this.activeBehaviorGroups = (BehaviorControlArraySet<? super E>[]) EMPTY_BEHAVIOR_GROUPS; // Lattice - Leaf: invalidate active behavior cache
++        this.latticeNativeEligibilityPlan = null;
+     }
+ 
+     @VisibleForTesting
+@@ -404,6 +413,7 @@ public class Brain<E extends LivingEntity> {
+         this.availableBehaviorsByPriority.clear();
+         this.behaviorPriorityGroups = (Map<Activity, Set<BehaviorControl<? super E>>>[]) EMPTY_PRIORITY_GROUPS; // Lattice - Leaf: optimized Brain collections
+         this.activeBehaviorGroups = (BehaviorControlArraySet<? super E>[]) EMPTY_BEHAVIOR_GROUPS; // Lattice - Leaf: optimized Brain collections
++        this.latticeNativeEligibilityPlan = null;
+     }
+ 
+     public boolean isActive(Activity activity) {
+@@ -475,15 +485,40 @@ public class Brain<E extends LivingEntity> {
+ 
+     private void startEachNonRunningBehavior(ServerLevel level, E entity) {
+         long gameTime = level.getGameTime();
++        BehaviorControlArraySet<? super E>[] activeBehaviorGroups = this.activeBehaviorGroups();
++        NativeEligibilityPlan nativePlan = this.latticeNativeEligibilityPlan();
++        long snapshotVersion = this.latticeMemoryVersion;
++        if (nativePlan.enabled()) {
++            nativePlan.refreshMemoryBits(this.memories);
++            snapshotVersion = this.latticeMemoryVersion;
++            NativeBrainEligibility.evaluatePreparedPackedInto(nativePlan.batch(), nativePlan.output());
++        }
++        int flattenedBehavior = 0;
++        boolean snapshotValid = nativePlan.enabled();
+ 
+         // Lattice start - Leaf: iterate a cached array of active behavior groups
+-        for (BehaviorControlArraySet<? super E> behaviors : this.activeBehaviorGroups()) {
++        for (BehaviorControlArraySet<? super E> behaviors : activeBehaviorGroups) {
+             BehaviorControl<? super E>[] raw = behaviors.raw();
+             for (int behaviorIndex = 0; behaviorIndex < behaviors.size(); behaviorIndex++) {
+                 BehaviorControl<? super E> behavior = raw[behaviorIndex];
+-                if (behavior.getStatus() == Behavior.Status.STOPPED && behavior.tryStart(level, entity, gameTime)) {
+-                    behaviors.incrementRunning();
++                if (behavior.getStatus() == Behavior.Status.STOPPED) {
++                    int nativeIndex = nativePlan.nativeIndexAt(flattenedBehavior);
++                    boolean started;
++                    if (nativeIndex >= 0 && snapshotValid && this.latticeMemoryVersion == snapshotVersion) {
++                        if ((nativePlan.output()[nativeIndex >>> 6] & (1L << (nativeIndex & 63))) == 0L) {
++                            flattenedBehavior++;
++                            continue;
++                        }
++                        started = ((Behavior) behavior).tryStartWithMemoryEligibility(level, entity, gameTime);
++                    } else {
++                        started = behavior.tryStart(level, entity, gameTime);
++                    }
++                    snapshotValid = false;
++                    if (started) {
++                        behaviors.incrementRunning();
++                    }
+                 }
++                flattenedBehavior++;
+             }
+         }
+         // Lattice end - Leaf: iterate a cached array of active behavior groups
+@@ -540,6 +575,7 @@ public class Brain<E extends LivingEntity> {
+                 }
+             }
+             this.activeBehaviorGroups = active.toArray(new BehaviorControlArraySet[0]);
++            this.latticeNativeEligibilityPlan = null;
+         }
+         return this.activeBehaviorGroups;
+     }
+@@ -560,6 +596,127 @@ public class Brain<E extends LivingEntity> {
+         }
+     }
+ 
++    private NativeEligibilityPlan latticeNativeEligibilityPlan() {
++        if (this.latticeNativeEligibilityPlan == null) {
++            this.latticeNativeEligibilityPlan = NativeEligibilityPlan.build(this.activeBehaviorGroups(), this.memories);
++        }
++        return this.latticeNativeEligibilityPlan;
++    }
++
++    private static final class NativeEligibilityPlan {
++        private static final NativeEligibilityPlan DISABLED = new NativeEligibilityPlan(null, new int[0], new long[0]);
++        private final NativeBrainEligibility.PackedBatch batch;
++        private final int[] nativeIndexByFlattenedBehavior;
++        private final long[] output;
++
++        private NativeEligibilityPlan(NativeBrainEligibility.PackedBatch batch,
++                                      int[] nativeIndexByFlattenedBehavior, long[] output) {
++            this.batch = batch;
++            this.nativeIndexByFlattenedBehavior = nativeIndexByFlattenedBehavior;
++            this.output = output;
++        }
++
++        private boolean enabled() {
++            return this.batch != null;
++        }
++
++        private NativeBrainEligibility.PackedBatch batch() {
++            return this.batch;
++        }
++
++        private long[] output() {
++            return this.output;
++        }
++
++        private int nativeIndexAt(int flattenedBehavior) {
++            return flattenedBehavior < this.nativeIndexByFlattenedBehavior.length
++                ? this.nativeIndexByFlattenedBehavior[flattenedBehavior] : -1;
++        }
++
++        private void refreshMemoryBits(Map<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> memories) {
++            long[] registered = this.batch.registeredMemoryBits();
++            long[] present = this.batch.presentMemoryBits();
++            Arrays.fill(registered, 0L);
++            Arrays.fill(present, 0L);
++            for (Entry<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> entry : memories.entrySet()) {
++                int id = BuiltInRegistries.MEMORY_MODULE_TYPE.getId(entry.getKey());
++                if (id >= 0) {
++                    long bit = 1L << (id & 63);
++                    registered[id >>> 6] |= bit;
++                    if (entry.getValue().isPresent()) {
++                        present[id >>> 6] |= bit;
++                    }
++                }
++            }
++        }
++
++        private static <T extends LivingEntity> NativeEligibilityPlan build(
++                BehaviorControlArraySet<? super T>[] groups,
++                Map<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> memories) {
++            int flattenedCount = 0;
++            int nativeCount = 0;
++            int requirementCount = 0;
++            for (BehaviorControlArraySet<? super T> group : groups) {
++                BehaviorControl<? super T>[] raw = group.raw();
++                flattenedCount += group.size();
++                for (int i = 0; i < group.size(); i++) {
++                    if (raw[i] instanceof Behavior<?> behavior) {
++                        nativeCount++;
++                        requirementCount += behavior.latticeEntryCondition().size();
++                    }
++                }
++            }
++            int memoryTypeCount = BuiltInRegistries.MEMORY_MODULE_TYPE.size();
++            int memoryWords = (memoryTypeCount + 63) >>> 6;
++            if (!NativeBrainEligibility.shouldUseNative(nativeCount, requirementCount, memoryWords)) {
++                int[] disabled = new int[flattenedCount];
++                Arrays.fill(disabled, -1);
++                return new NativeEligibilityPlan(null, disabled, new long[0]);
++            }
++            long[] registered = new long[memoryWords];
++            for (MemoryModuleType<?> type : memories.keySet()) {
++                int id = BuiltInRegistries.MEMORY_MODULE_TYPE.getId(type);
++                if (id < 0) return DISABLED;
++                registered[id >>> 6] |= 1L << (id & 63);
++            }
++            int[] nativeIndexByFlat = new int[flattenedCount];
++            Arrays.fill(nativeIndexByFlat, -1);
++            int[] behaviorEntities = new int[nativeCount];
++            int[] offsets = new int[nativeCount + 1];
++            int[] memoryIds = new int[requirementCount];
++            byte[] statuses = new byte[requirementCount];
++            int flat = 0;
++            int nativeIndex = 0;
++            int requirement = 0;
++            for (BehaviorControlArraySet<? super T> group : groups) {
++                BehaviorControl<? super T>[] raw = group.raw();
++                for (int i = 0; i < group.size(); i++, flat++) {
++                    if (raw[i] instanceof Behavior<?> behavior) {
++                        nativeIndexByFlat[flat] = nativeIndex;
++                        offsets[nativeIndex] = requirement;
++                        for (Entry<MemoryModuleType<?>, MemoryStatus> condition : behavior.latticeEntryCondition().entrySet()) {
++                            int id = BuiltInRegistries.MEMORY_MODULE_TYPE.getId(condition.getKey());
++                            if (id < 0) return DISABLED;
++                            memoryIds[requirement] = id;
++                            statuses[requirement] = switch (condition.getValue()) {
++                                case VALUE_PRESENT -> NativeBrainEligibility.VALUE_PRESENT;
++                                case VALUE_ABSENT -> NativeBrainEligibility.VALUE_ABSENT;
++                                case REGISTERED -> NativeBrainEligibility.REGISTERED;
++                            };
++                            requirement++;
++                        }
++                        nativeIndex++;
++                    }
++                }
++            }
++            offsets[nativeCount] = requirement;
++            NativeBrainEligibility.Batch csr = new NativeBrainEligibility.Batch(
++                    1, memoryTypeCount, registered, new long[memoryWords], behaviorEntities,
++                    offsets, memoryIds, statuses);
++            return new NativeEligibilityPlan(NativeBrainEligibility.pack(csr), nativeIndexByFlat,
++                    new long[(nativeCount + 63) >>> 6]);
++        }
++    }
+     private boolean isEmptyCollection(Object collection) {
+         return collection instanceof Collection && ((Collection)collection).isEmpty();
+     }
+diff --git a/net/minecraft/world/entity/ai/behavior/Behavior.java b/net/minecraft/world/entity/ai/behavior/Behavior.java
+index 5b0cadd2544fb2a627822e645ff32fec2e9cfda9..9ada4782aa6c2cc88c2fc0f2d6a5cf1aa84609e4 100644
+--- a/net/minecraft/world/entity/ai/behavior/Behavior.java
++++ b/net/minecraft/world/entity/ai/behavior/Behavior.java
+@@ -27,7 +27,7 @@ public abstract class Behavior<E extends LivingEntity> implements BehaviorContro
+     public Behavior(Map<MemoryModuleType<?>, MemoryStatus> entryCondition, int minDuration, int maxDuration) {
+         this.minDuration = minDuration;
+         this.maxDuration = maxDuration;
+-        this.entryCondition = entryCondition;
++        this.entryCondition = Map.copyOf(entryCondition);
+         // Paper start - configurable behavior tick rate and timings
+         String key = io.papermc.paper.util.MappingEnvironment.reobf() ? io.papermc.paper.util.ObfHelper.INSTANCE.deobfClassName(this.getClass().getName()) : this.getClass().getName();
+         int lastSeparator = key.lastIndexOf('.');
+@@ -62,6 +62,30 @@ public abstract class Behavior<E extends LivingEntity> implements BehaviorContro
+         }
+     }
+ 
++    /**
++     * Lattice - Native brain eligibility: starts this behavior after its
++     * entryCondition was checked against the current Brain memory version.
++     * The caller must invalidate the result when an earlier behavior changes memory.
++     */
++    public final boolean tryStartWithMemoryEligibility(ServerLevel level, E owner, long gameTime) {
++        int tickRate = java.util.Objects.requireNonNullElse(level.paperConfig().tickRates.behavior.get(owner.getType(), this.configKey), -1);
++        if (tickRate > -1 && gameTime < this.endTimestamp + tickRate) {
++            return false;
++        }
++        if (this.checkExtraStartConditions(level, owner)) {
++            this.status = Behavior.Status.RUNNING;
++            int i = this.minDuration + level.getRandom().nextInt(this.maxDuration + 1 - this.minDuration);
++            this.endTimestamp = gameTime + i;
++            this.start(level, owner, gameTime);
++            return true;
++        }
++        return false;
++    }
++
++    /** Lattice - Native brain eligibility: immutable descriptor for batch materialization. */
++    public final Map<MemoryModuleType<?>, MemoryStatus> latticeEntryCondition() {
++        return this.entryCondition;
++    }
+     protected void start(ServerLevel level, E entity, long gameTime) {
+     }
+ 

@@ -1,0 +1,17 @@
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -222,6 +_,14 @@
+     private boolean forceTime; // Purpur - Configurable daylight cycle
+     private final RandomSequences randomSequences;
+     final LevelDebugSynchronizers debugSynchronizers = new LevelDebugSynchronizers(this);
++    // Leaf start - fast bit radix sort
++    // Original author: hayanesuru <hayanesuru@outlook.jp>
++    // Co-author: Taiyou06 <kaandindar21@gmail.com>
++    // Original license: MIT
++    // Source: https://github.com/Winds-Studio/Leaf/blob/178bcb4/leaf-server/minecraft-patches/features/0268-fast-bit-radix-sort.patch
++    public final com.latticemc.lattice.util.EntityDistanceRadixSort lattice$entityDistanceRadixSort =
++        new com.latticemc.lattice.util.EntityDistanceRadixSort();
++    // Leaf end - fast bit radix sort
+ 
+     // CraftBukkit start
+     public final LevelStorageSource.LevelStorageAccess levelStorageAccess;

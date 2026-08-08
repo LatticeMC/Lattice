@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Tue, 4 Aug 2026 13:22:10 +0800
+Subject: [PATCH] Revert "perf: cache repeated spatial cell bucket lookups"
+
+This reverts commit 08f13278e1fc8f0f36e7395ec4130cca24666221.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 090af282cb9200c13e560f4e30367223ebd4d782..477368c89019ff4cd9f2c277f53ff0a584420e24 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -57,11 +57,6 @@ public final class ChunkEntitySlices {
+     private static final boolean SPATIAL_AABB_ENABLED = Boolean.parseBoolean(
+         System.getProperty("lattice.spatialAabbQuery", "true")
+     );
+-    private static final boolean SPATIAL_CELL_LOOKUP_CACHE_ENABLED = Boolean.parseBoolean(
+-        System.getProperty("lattice.spatialCellLookupCache", "true")
+-    );
+-    private static final int SPATIAL_CELL_LOOKUP_CACHE_SIZE = 64;
+-    private static final int SPATIAL_CELL_LOOKUP_CACHE_MASK = SPATIAL_CELL_LOOKUP_CACHE_SIZE - 1;
+     private static final ThreadLocal<NativeAabbScratchStack> NATIVE_AABB_SCRATCH =
+         ThreadLocal.withInitial(NativeAabbScratchStack::new);
+ 
+@@ -742,8 +737,6 @@ public final class ChunkEntitySlices {
+ 
+         private long[] keys;
+         private SpatialBucket<E>[] values;
+-        private final long[] lookupCacheKeys;
+-        private final SpatialBucket<E>[] lookupCacheValues;
+         private int mask;
+         private int maxFill;
+         private int size;
+@@ -753,35 +746,15 @@ public final class ChunkEntitySlices {
+             final int capacity = HashCommon.arraySize(expectedSize, 0.5F);
+             this.keys = new long[capacity];
+             this.values = (SpatialBucket<E>[])new SpatialBucket[capacity];
+-            this.lookupCacheKeys = SPATIAL_CELL_LOOKUP_CACHE_ENABLED ? new long[SPATIAL_CELL_LOOKUP_CACHE_SIZE] : null;
+-            this.lookupCacheValues = SPATIAL_CELL_LOOKUP_CACHE_ENABLED
+-                ? (SpatialBucket<E>[])new SpatialBucket[SPATIAL_CELL_LOOKUP_CACHE_SIZE]
+-                : null;
+             this.mask = capacity - 1;
+             this.maxFill = capacity >>> 1;
+         }
+ 
+         SpatialBucket<E> get(final long key) {
+-            final SpatialBucket<E>[] lookupCache = this.lookupCacheValues;
+-            final int cacheIndex;
+-            if (lookupCache != null) {
+-                cacheIndex = lookupCacheIndex(key);
+-                final SpatialBucket<E> cached = lookupCache[cacheIndex];
+-                if (cached != null && this.lookupCacheKeys[cacheIndex] == key) {
+-                    return cached;
+-                }
+-            } else {
+-                cacheIndex = -1;
+-            }
+-
+             int position = (int)HashCommon.mix(key) & this.mask;
+             SpatialBucket<E> value;
+             while ((value = this.values[position]) != null) {
+                 if (this.keys[position] == key) {
+-                    if (lookupCache != null) {
+-                        this.lookupCacheKeys[cacheIndex] = key;
+-                        lookupCache[cacheIndex] = value;
+-                    }
+                     return value;
+                 }
+                 position = position + 1 & this.mask;
+@@ -800,20 +773,9 @@ public final class ChunkEntitySlices {
+             this.keys[position] = key;
+             this.values[position] = value;
+             ++this.size;
+-            if (this.lookupCacheValues != null) {
+-                final int cacheIndex = lookupCacheIndex(key);
+-                this.lookupCacheKeys[cacheIndex] = key;
+-                this.lookupCacheValues[cacheIndex] = value;
+-            }
+         }
+ 
+         void remove(final long key) {
+-            if (this.lookupCacheValues != null) {
+-                final int cacheIndex = lookupCacheIndex(key);
+-                if (this.lookupCacheValues[cacheIndex] != null && this.lookupCacheKeys[cacheIndex] == key) {
+-                    this.lookupCacheValues[cacheIndex] = null;
+-                }
+-            }
+             int position = (int)HashCommon.mix(key) & this.mask;
+             SpatialBucket<E> value;
+             while ((value = this.values[position]) != null) {
+@@ -826,10 +788,6 @@ public final class ChunkEntitySlices {
+             }
+         }
+ 
+-        private static int lookupCacheIndex(final long key) {
+-            return (int)(key ^ key >>> 12 ^ key >>> 38) & SPATIAL_CELL_LOOKUP_CACHE_MASK;
+-        }
+-
+         private void shiftKeys(int position) {
+             final long[] keys = this.keys;
+             final SpatialBucket<E>[] values = this.values;

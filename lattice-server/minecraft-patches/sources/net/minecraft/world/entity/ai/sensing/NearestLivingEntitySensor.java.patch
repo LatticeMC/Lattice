@@ -1,0 +1,38 @@
+--- a/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
++++ b/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
+@@ -1,8 +_,7 @@
+ package net.minecraft.world.entity.ai.sensing;
+ 
+ import com.google.common.collect.ImmutableSet;
+-import java.util.Comparator;
+-import java.util.List;
++import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+ import java.util.Set;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.LivingEntity;
+@@ -15,12 +_,19 @@
+ public class NearestLivingEntitySensor<T extends LivingEntity> extends Sensor<T> {
+     @Override
+     protected void doTick(ServerLevel level, T entity) {
+-        double attributeValue = entity.getAttributeValue(Attributes.FOLLOW_RANGE);
+-        AABB aabb = entity.getBoundingBox().inflate(attributeValue, attributeValue, attributeValue);
+-        List<LivingEntity> entitiesOfClass = level.getEntitiesOfClass(
+-            LivingEntity.class, aabb, matchableEntity -> matchableEntity != entity && matchableEntity.isAlive()
+-        );
+-        entitiesOfClass.sort(Comparator.comparingDouble(entity::distanceToSqr));
++        double followDistance = entity.getAttributeValue(Attributes.FOLLOW_RANGE);
++        AABB area = entity.getBoundingBox().inflate(followDistance, followDistance, followDistance);
++        // Leaf start - fast bit radix sort
++        // Original author: hayanesuru <hayanesuru@outlook.jp>
++        // Co-author: Taiyou06 <kaandindar21@gmail.com>
++        // Original license: MIT
++        // Source: https://github.com/Winds-Studio/Leaf/blob/178bcb4/leaf-server/minecraft-patches/features/0268-fast-bit-radix-sort.patch
++        ObjectArrayList<LivingEntity> entitiesOfClass = new ObjectArrayList<>();
++        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel) level)
++            .moonrise$getEntityLookup()
++            .getEntities(LivingEntity.class, entity, area, entitiesOfClass, LivingEntity::isAlive);
++        level.lattice$entityDistanceRadixSort.sort(entitiesOfClass.elements(), entitiesOfClass.size(), entity.position());
++        // Leaf end - fast bit radix sort
+         Brain<?> brain = entity.getBrain();
+         brain.setMemory(MemoryModuleType.NEAREST_LIVING_ENTITIES, entitiesOfClass);
+         brain.setMemory(MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES, new NearestVisibleLivingEntities(level, entity, entitiesOfClass));

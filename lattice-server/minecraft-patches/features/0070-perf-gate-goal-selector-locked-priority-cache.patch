@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 3 Aug 2026 19:14:57 +0800
+Subject: [PATCH] perf: gate goal selector locked priority cache
+
+
+diff --git a/net/minecraft/world/entity/ai/goal/GoalSelector.java b/net/minecraft/world/entity/ai/goal/GoalSelector.java
+index 79c1ba53f8249b815c94e66ec76064abdb77ffff..9775e3b2ff0a5126da88d3075ff19dfe5eb9a1fd 100644
+--- a/net/minecraft/world/entity/ai/goal/GoalSelector.java
++++ b/net/minecraft/world/entity/ai/goal/GoalSelector.java
+@@ -14,6 +14,9 @@ import net.minecraft.util.profiling.Profiler;
+ import net.minecraft.util.profiling.ProfilerFiller;
+ 
+ public class GoalSelector {
++    private static final boolean LOCKED_PRIORITY_FAST_PATH = Boolean.parseBoolean(
++        System.getProperty("lattice.goalSelectorLockedPriorityFastPath", "true")
++    );
+     private static final WrappedGoal NO_GOAL = new WrappedGoal(Integer.MAX_VALUE, new Goal() {
+         @Override
+         public boolean canUse() {
+@@ -31,6 +34,12 @@ public class GoalSelector {
+     private final ArrayGoalSet availableGoals = new ArrayGoalSet();
+     private static final Goal.Flag[] GOAL_FLAG_VALUES = Goal.Flag.values(); // Paper - remove streams from GoalSelector
+     private final ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<net.minecraft.world.entity.ai.goal.Goal.Flag> goalTypes = new ca.spottedleaf.moonrise.common.set.OptimizedSmallEnumSet<>(Goal.Flag.class); // Paper - remove streams from GoalSelector
++    // Leaf start - optimize goal selector
++    // Original author: hayanesuru <hayanesuru@outlook.jp>
++    // Original license: MIT
++    // Source: https://github.com/Winds-Studio/Leaf/blob/178bcb4/leaf-server/minecraft-patches/features/0254-optimize-goal-selector.patch
++    private final int[] lockedPriorities = new int[GOAL_FLAG_VALUES.length];
++    // Leaf end - optimize goal selector
+     private int curRate; // Paper - EAR 2
+ 
+     public void addGoal(int priority, Goal goal) {
+@@ -91,6 +100,15 @@ public class GoalSelector {
+     }
+ 
+     public void tick() {
++        if (LOCKED_PRIORITY_FAST_PATH) {
++            this.tickLockedPriorityFastPath();
++            return;
++        }
++
++        this.tickOriginal();
++    }
++
++    private void tickOriginal() {
+         ProfilerFiller profilerFiller = Profiler.get();
+         profilerFiller.push("goalCleanup");
+         WrappedGoal[] goals = this.availableGoals.elements();
+@@ -136,6 +154,87 @@ public class GoalSelector {
+         this.tickRunningGoals(true);
+     }
+ 
++    // Leaf start - optimize goal selector
++    private void tickLockedPriorityFastPath() {
++        ProfilerFiller profilerFiller = Profiler.get();
++        profilerFiller.push("goalCleanup");
++
++        WrappedGoal[] goals = this.availableGoals.elements();
++        int goalCount = this.availableGoals.size();
++        long disabledFlags = this.goalTypes.getBackingSet();
++        Map<Goal.Flag, WrappedGoal> lockedFlags = this.lockedFlags;
++        int[] lockedPriorities = this.lockedPriorities;
++        long lockedMask = 0L;
++
++        for (int i = 0; i < goalCount; i++) {
++            WrappedGoal goal = goals[i];
++            if (goal.isRunning() && ((goal.getFlags().getBackingSet() & disabledFlags) != 0L || !goal.canContinueToUse())) {
++                goal.stop();
++            }
++        }
++
++        for (int i = 0; i < GOAL_FLAG_VALUES.length; i++) {
++            Goal.Flag flag = GOAL_FLAG_VALUES[i];
++            WrappedGoal locked = lockedFlags.get(flag);
++            if (locked == null) {
++                lockedPriorities[i] = Integer.MAX_VALUE;
++            } else if (!locked.isRunning()) {
++                lockedFlags.remove(flag);
++                lockedPriorities[i] = Integer.MAX_VALUE;
++            } else {
++                lockedPriorities[i] = locked.isInterruptable() ? locked.getPriority() : Integer.MIN_VALUE;
++                lockedMask |= 1L << i;
++            }
++        }
++
++        profilerFiller.pop();
++        profilerFiller.push("goalUpdate");
++
++        goalLoop:
++        for (int goalIndex = 0; goalIndex < goalCount; goalIndex++) {
++            WrappedGoal goal = goals[goalIndex];
++            if (goal.isRunning()) {
++                continue;
++            }
++
++            long goalFlags = goal.getFlags().getBackingSet();
++            int goalPriority = goal.getPriority();
++            if ((goalFlags & disabledFlags) != 0L) {
++                continue;
++            }
++
++            for (long conflicts = goalFlags & lockedMask; conflicts != 0L; conflicts &= conflicts - 1L) {
++                int flagIndex = Long.numberOfTrailingZeros(conflicts);
++                if (goalPriority >= lockedPriorities[flagIndex]) {
++                    continue goalLoop;
++                }
++            }
++
++            if (!goal.canUse()) {
++                continue;
++            }
++
++            for (long flagIterator = goalFlags; flagIterator != 0L; flagIterator &= flagIterator - 1L) {
++                int flagIndex = Long.numberOfTrailingZeros(flagIterator);
++                Goal.Flag flag = GOAL_FLAG_VALUES[flagIndex];
++                WrappedGoal locked = lockedFlags.get(flag);
++                if (locked != null) {
++                    locked.stop();
++                }
++
++                lockedFlags.put(flag, goal);
++                lockedPriorities[flagIndex] = goal.isInterruptable() ? goalPriority : Integer.MIN_VALUE;
++                lockedMask |= 1L << flagIndex;
++            }
++
++            goal.start();
++        }
++
++        profilerFiller.pop();
++        this.tickRunningGoals(true);
++    }
++    // Leaf end - optimize goal selector
++
+     public void tickRunningGoals(boolean tickAllRunning) {
+         ProfilerFiller profilerFiller = Profiler.get();
+         profilerFiller.push("goalTick");

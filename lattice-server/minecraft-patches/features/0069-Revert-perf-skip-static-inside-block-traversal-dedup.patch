@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 3 Aug 2026 18:09:56 +0800
+Subject: [PATCH] Revert "perf: skip static inside-block traversal dedup"
+
+This reverts commit 1089ab6f1270235ba2bd6277d085ec0e8b78b8a9.
+
+diff --git a/net/minecraft/world/level/BlockGetter.java b/net/minecraft/world/level/BlockGetter.java
+index 7f1ed06077ea2143ab0f8b816fa1cdc77cc61cf9..8a21910fe7ed61c903c4f36fced63b179ace4577 100644
+--- a/net/minecraft/world/level/BlockGetter.java
++++ b/net/minecraft/world/level/BlockGetter.java
+@@ -220,46 +220,6 @@ public interface BlockGetter extends LevelHeightAccessor {
+ 
+             return true;
+         } else {
+-            AABB previous = boundingBox.move(vec3.scale(-1.0));
+-            if (
+-                Mth.floor(previous.minX) == Mth.floor(boundingBox.minX)
+-                    && Mth.floor(previous.minY) == Mth.floor(boundingBox.minY)
+-                    && Mth.floor(previous.minZ) == Mth.floor(boundingBox.minZ)
+-                    && Mth.floor(previous.maxX) == Mth.floor(boundingBox.maxX)
+-                    && Mth.floor(previous.maxY) == Mth.floor(boundingBox.maxY)
+-                    && Mth.floor(previous.maxZ) == Mth.floor(boundingBox.maxZ)
+-            ) {
+-                double xsize = boundingBox.getXsize();
+-                double ysize = boundingBox.getYsize();
+-                double zsize = boundingBox.getZsize();
+-                Vec3i furthestCorner = getFurthestCorner(vec3);
+-                Vec3 center = boundingBox.getCenter();
+-                Vec3 vec31 = new Vec3(
+-                    center.x() + xsize * 0.5 * furthestCorner.getX(),
+-                    center.y() + ysize * 0.5 * furthestCorner.getY(),
+-                    center.z() + zsize * 0.5 * furthestCorner.getZ()
+-                );
+-                Vec3 vec32 = vec31.subtract(vec3);
+-                int i = Mth.sign(vec3.x);
+-                int i1 = Mth.sign(vec3.y);
+-                int i2 = Mth.sign(vec3.z);
+-                double d = i == 0 ? Double.MAX_VALUE : i / vec3.x;
+-                double d1 = i1 == 0 ? Double.MAX_VALUE : i1 / vec3.y;
+-                double d2 = i2 == 0 ? Double.MAX_VALUE : i2 / vec3.z;
+-                double d3 = d * (i > 0 ? 1.0 - Mth.frac(vec32.x) : Mth.frac(vec32.x));
+-                double d4 = d1 * (i1 > 0 ? 1.0 - Mth.frac(vec32.y) : Mth.frac(vec32.y));
+-                double d5 = d2 * (i2 > 0 ? 1.0 - Mth.frac(vec32.z) : Mth.frac(vec32.z));
+-                if (d3 > 1.0 && d4 > 1.0 && d5 > 1.0) {
+-                    for (BlockPos blockPos : BlockPos.betweenCornersInDirection(previous, vec3)) {
+-                        if (!visitor.visit(blockPos, 0)) {
+-                            return false;
+-                        }
+-                    }
+-
+-                    return true;
+-                }
+-            }
+-
+             LongSet set = new LongOpenHashSet();
+ 
+             for (BlockPos blockPos1 : BlockPos.betweenCornersInDirection(boundingBox.move(vec3.scale(-1.0)), vec3)) {

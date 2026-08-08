@@ -5,10 +5,10 @@ Subject: [PATCH] perf: batch dense entity push collisions per tick
 
 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 853bb92c034b6361ff8c55daf52f38a226fdae2c..286a344a5c5df0fbd21635ef4668f14173640358 100644
+index eb16e7099106c19b9ac7e39c21c280852429c8bb..ec0f29b520e171f4a21d348aedd4a5c6956baff9 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -853,6 +853,11 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -861,6 +861,11 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
              }
  
              io.papermc.paper.entity.activation.ActivationRange.activateEntities(this); // Paper - EAR

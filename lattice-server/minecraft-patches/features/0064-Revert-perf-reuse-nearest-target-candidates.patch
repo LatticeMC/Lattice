@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 3 Aug 2026 00:38:36 +0800
+Subject: [PATCH] Revert "perf: reuse nearest target candidates"
+
+This reverts commit c2e773d1fe73da568ef9ef21e804b70cfa474f8d.
+
+diff --git a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
+index accc7d0ec75da5951b98a991d7a2991688010f34..e8dc0eca01cf1a4eb1fe2a799e4dcbe391843318 100644
+--- a/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
++++ b/net/minecraft/world/entity/ai/goal/target/NearestAttackableTargetGoal.java
+@@ -1,6 +1,5 @@
+ package net.minecraft.world.entity.ai.goal.target;
+ 
+-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+ import java.util.EnumSet;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.server.level.ServerPlayer;
+@@ -18,8 +17,6 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+     protected final int randomInterval;
+     protected @Nullable LivingEntity target;
+     protected TargetingConditions targetConditions;
+-    private final ObjectArrayList<T> targetCandidates = new ObjectArrayList<>();
+-    private boolean targetCandidatesInUse;
+ 
+     public NearestAttackableTargetGoal(Mob mob, Class<T> targetType, boolean mustSee) {
+         this(mob, targetType, 10, mustSee, false, null);
+@@ -60,36 +57,14 @@ public class NearestAttackableTargetGoal<T extends LivingEntity> extends TargetG
+     protected void findTarget() {
+         ServerLevel serverLevel = getServerLevel(this.mob);
+         if (this.targetType != Player.class && this.targetType != ServerPlayer.class) {
+-            final boolean reusable = !this.targetCandidatesInUse;
+-            final ObjectArrayList<T> candidates;
+-            if (reusable) {
+-                this.targetCandidatesInUse = true;
+-                candidates = this.targetCandidates;
+-            } else {
+-                candidates = new ObjectArrayList<>();
+-            }
+-
+-            try {
+-                this.mob.level().getEntitiesOfClass(
+-                    this.targetType,
+-                    this.getTargetSearchArea(this.getFollowDistance()),
+-                    entity -> true,
+-                    candidates
+-                );
+-                this.target = serverLevel.getNearestEntity(
+-                    candidates,
+-                    this.getTargetConditions(),
+-                    this.mob,
+-                    this.mob.getX(),
+-                    this.mob.getEyeY(),
+-                    this.mob.getZ()
+-                );
+-            } finally {
+-                candidates.clear();
+-                if (reusable) {
+-                    this.targetCandidatesInUse = false;
+-                }
+-            }
++            this.target = serverLevel.getNearestEntity(
++                this.mob.level().getEntitiesOfClass(this.targetType, this.getTargetSearchArea(this.getFollowDistance()), entity -> true),
++                this.getTargetConditions(),
++                this.mob,
++                this.mob.getX(),
++                this.mob.getEyeY(),
++                this.mob.getZ()
++            );
+         } else {
+             this.target = serverLevel.getNearestPlayer(this.getTargetConditions(), this.mob, this.mob.getX(), this.mob.getEyeY(), this.mob.getZ());
+         }
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 2ca1bbb5e40a46ef333a64a483f1ae461a94d173..287ef75ae2957d727c6467ad053cbc0affab8973 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -259,18 +259,12 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+ 
+     @Override
+     public final <T extends Entity> List<T> getEntitiesOfClass(final Class<T> entityClass, final AABB boundingBox, final Predicate<? super T> predicate) {
++        Profiler.get().incrementCounter("getEntities");
+         final List<T> ret = new java.util.ArrayList<>();
+-        this.getEntitiesOfClass(entityClass, boundingBox, predicate, ret);
+-
+-        return ret;
+-    }
+ 
+-    // Appends matching entities to the caller-owned output without clearing it; order matches the returned-list API.
+-    public final <T extends Entity> void getEntitiesOfClass(final Class<T> entityClass, final AABB boundingBox,
+-                                                             final Predicate<? super T> predicate, final List<? super T> output) {
+-        Profiler.get().incrementCounter("getEntities");
++        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup().getEntities(entityClass, null, boundingBox, ret, predicate);
+ 
+-        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup().getEntities(entityClass, null, boundingBox, output, predicate);
++        return ret;
+     }
+ 
+     @Override

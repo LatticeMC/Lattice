@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 #if defined(_MSC_VER)
 #  include <intrin.h>
@@ -45,6 +46,22 @@ namespace lattice::cpu {
 
 namespace {
 
+std::atomic<RequestedTier> g_requested_tier{RequestedTier::Auto};
+bool g_auto_skylake_avx2_cap = false;
+
+enum class InitState : std::uint8_t {
+    Ready = 0,
+    Configuring = 1,
+    Initializing = 2,
+    Initialized = 3,
+};
+
+// Configuration and initialization use the same small state machine so a
+// tier write cannot race the snapshot read. Reads after Initialized only
+// perform the single acquire load used to publish the immutable payload.
+std::atomic<InitState> g_init_state{InitState::Ready};
+thread_local bool      g_initializing_this_thread = false;
+
 // ---- Environment-variable overrides ---------------------------------------
 
 struct EnvOverrides {
@@ -62,6 +79,17 @@ struct EnvOverrides {
 
 EnvOverrides read_env_overrides() noexcept {
     EnvOverrides r;
+    switch (g_requested_tier.load(std::memory_order_acquire)) {
+        case RequestedTier::Scalar:
+            r.force_scalar = true;
+            break;
+        case RequestedTier::Avx2:
+            r.disable_mask |= EnvOverrides::kDisableAvx512;
+            break;
+        case RequestedTier::Auto:
+        case RequestedTier::Avx512:
+            break;
+    }
     if (const char* s = std::getenv("LATTICE_CPU_FORCE_SCALAR"); s && s[0] == '1') {
         r.force_scalar = true;
     }
@@ -204,6 +232,21 @@ void detect_x86(Features& f, const EnvOverrides& ov) noexcept {
         f.avx512vbmi = f.avx512vbmi2 = f.avx512vpopcnt = false;
     }
     if (ov.disable_mask & EnvOverrides::kDisableBmi2)   { f.bmi2 = f.bmi2_fast = false; }
+
+    // Skylake-SP (family 0x6, model 0x55) loses more to AVX-512 frequency
+    // throttling than this workload gains from the wider implementation.
+    // Apply this only to auto selection: an explicit avx512 request remains a
+    // supported diagnostic/benchmark override. Feature and XCR0 safety checks
+    // above have already completed before this policy is applied.
+    if (f.requested_tier == RequestedTier::Auto
+        && f.vendor == Features::Vendor::Intel
+        && f.family == 0x6
+        && f.model == 0x55
+        && f.avx512f) {
+        f.avx512f = f.avx512bw = f.avx512dq = f.avx512vl = false;
+        f.avx512vbmi = f.avx512vbmi2 = f.avx512vpopcnt = false;
+        g_auto_skylake_avx2_cap = true;
+    }
 }
 
 #endif // x86
@@ -257,8 +300,17 @@ void detect_aarch64(Features& f, const EnvOverrides& ov) noexcept {
 // ---- Singleton ------------------------------------------------------------
 
 Features                 g_features{};
-std::atomic<bool>        g_initialised{false};
-char                     g_summary[128] = {0};
+char                     g_summary[160] = {0};
+
+const char* requested_tier_name(const RequestedTier tier) noexcept {
+    switch (tier) {
+        case RequestedTier::Scalar: return "scalar";
+        case RequestedTier::Avx2: return "avx2";
+        case RequestedTier::Avx512: return "avx512";
+        case RequestedTier::Auto: return "auto";
+    }
+    return "auto";
+}
 
 void populate_summary(const Features& f) noexcept {
     const char* vendor =
@@ -276,17 +328,78 @@ void populate_summary(const Features& f) noexcept {
         f.sve            ? "SVE"               :
         f.neon           ? "NEON"              : "scalar";
     const char* bmi2 = f.bmi2 ? (f.bmi2_fast ? " +BMI2(fast)" : " +BMI2(slow)") : "";
+    const char* tier_reason = g_auto_skylake_avx2_cap && !f.forced_scalar
+                                  ? " reason=skylake-auto-avx2" : "";
     std::snprintf(g_summary, sizeof g_summary,
-                  "lattice cpu: vendor=%s tier=%s%s family=0x%X model=0x%X",
-                  vendor, tier, bmi2, f.family, f.model);
+                  "lattice cpu: vendor=%s tier=%s%s requested=%s family=0x%X model=0x%X%s",
+                  vendor, tier, bmi2, requested_tier_name(f.requested_tier), f.family, f.model,
+                  tier_reason);
 }
 
 } // namespace
 
-const Features& initialize() noexcept {
-    if (g_initialised.load(std::memory_order_acquire)) return g_features;
+bool configure_requested_tier(const char* value) noexcept {
+    if (!value) return false;
+    char normalized[8] = {};
+    std::size_t size = 0;
+    for (; value[size] && size + 1 < sizeof normalized; ++size) {
+        char c = value[size];
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+        normalized[size] = c;
+    }
+    if (value[size] != '\0') return false;
 
+    RequestedTier tier = RequestedTier::Auto;
+    if (std::strcmp(normalized, "auto") == 0) {
+        tier = RequestedTier::Auto;
+    } else if (std::strcmp(normalized, "scalar") == 0) {
+        tier = RequestedTier::Scalar;
+    } else if (std::strcmp(normalized, "avx2") == 0) {
+        tier = RequestedTier::Avx2;
+    } else if (std::strcmp(normalized, "avx512") == 0) {
+        tier = RequestedTier::Avx512;
+    } else {
+        return false;
+    }
+    InitState expected = InitState::Ready;
+    if (!g_init_state.compare_exchange_strong(expected, InitState::Configuring,
+                                              std::memory_order_acq_rel,
+                                              std::memory_order_acquire)) {
+        return false;
+    }
+    g_requested_tier.store(tier, std::memory_order_release);
+    g_init_state.store(InitState::Ready, std::memory_order_release);
+    return true;
+}
+
+const Features& initialize() noexcept {
+    for (;;) {
+        InitState expected = InitState::Ready;
+        if (g_init_state.compare_exchange_strong(expected, InitState::Initializing,
+                                                  std::memory_order_acq_rel,
+                                                  std::memory_order_acquire)) {
+            break;
+        }
+        const InitState observed = g_init_state.load(std::memory_order_acquire);
+        if (observed == InitState::Initialized) return g_features;
+        if (observed == InitState::Initializing && g_initializing_this_thread) {
+            // No current detector calls back into features(), but keep the
+            // noexcept API reentrancy-safe if a future detector does.
+            return g_features;
+        }
+        if (observed == InitState::Configuring || observed == InitState::Initializing) {
+            while (g_init_state.load(std::memory_order_acquire) == observed) {
+                std::this_thread::yield();
+            }
+        }
+    }
+
+    g_initializing_this_thread = true;
+    // Every operation in this initialization path is noexcept; the native
+    // target is also built with exceptions disabled, so state publication
+    // cannot be bypassed by an exception.
     Features f{};
+    f.requested_tier = g_requested_tier.load(std::memory_order_acquire);
     const auto ov = read_env_overrides();
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
@@ -298,29 +411,31 @@ const Features& initialize() noexcept {
     if (ov.force_scalar) {
         // Wipe everything SIMD-ish, leave only vendor/family/model for logging.
         const auto v = f.vendor; const auto fam = f.family; const auto mod = f.model;
+        const auto requested = f.requested_tier;
         f = Features{};
         f.vendor = v; f.family = fam; f.model = mod;
+        f.requested_tier = requested;
         f.forced_scalar = true;
     }
 
     populate_summary(f);
-
-    // Write-once. Relaxed store for the flag is fine: the payload is written
-    // before the store, and any reader observing `true` must see the payload.
     g_features = f;
-    g_initialised.store(true, std::memory_order_release);
+    g_initializing_this_thread = false;
+    g_init_state.store(InitState::Initialized, std::memory_order_release);
     return g_features;
 }
 
 const Features& features() noexcept {
-    if (!g_initialised.load(std::memory_order_acquire)) {
+    if (g_init_state.load(std::memory_order_acquire) != InitState::Initialized) {
         return initialize();
     }
     return g_features;
 }
 
 const char* summary() noexcept {
-    if (!g_initialised.load(std::memory_order_acquire)) (void)initialize();
+    if (g_init_state.load(std::memory_order_acquire) != InitState::Initialized) {
+        (void)initialize();
+    }
     return g_summary;
 }
 

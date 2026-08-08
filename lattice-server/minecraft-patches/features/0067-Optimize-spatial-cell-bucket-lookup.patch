@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 3 Aug 2026 12:57:00 +0800
+Subject: [PATCH] Optimize spatial cell bucket lookup
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 0f8cc6ea82e7eae909d06026804da1012d397dac..477368c89019ff4cd9f2c277f53ff0a584420e24 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -6,7 +6,7 @@ import ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData;
+ import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
+ import com.google.common.collect.ImmutableList;
+ import com.mojang.logging.LogUtils;
+-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
++import it.unimi.dsi.fastutil.HashCommon;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
+ import net.minecraft.nbt.CompoundTag;
+@@ -612,11 +612,11 @@ public final class ChunkEntitySlices {
+ 
+         private static final long OVERFLOW_CELL = Long.MIN_VALUE;
+ 
+-        private final Long2ObjectOpenHashMap<SpatialBucket<E>> cells = new Long2ObjectOpenHashMap<>();
++        private final CellTable<E> cells;
+         private final ArrayList<E> overflow = new ArrayList<>();
+ 
+         SpatialAabbIndex(final int expectedSize) {
+-            this.cells.ensureCapacity(expectedSize);
++            this.cells = new CellTable<>(expectedSize);
+         }
+ 
+         long add(final E entity, final AABB box) {
+@@ -632,7 +632,8 @@ public final class ChunkEntitySlices {
+             }
+             SpatialBucket<E> bucket = this.cells.get(cell);
+             if (bucket == null) {
+-                this.cells.put(cell, bucket = new SpatialBucket<>());
++                bucket = new SpatialBucket<>();
++                this.cells.putNew(cell, bucket);
+             }
+             bucket.add(entity);
+         }
+@@ -732,6 +733,111 @@ public final class ChunkEntitySlices {
+         }
+     }
+ 
++    private static final class CellTable<E extends Entity> {
++
++        private long[] keys;
++        private SpatialBucket<E>[] values;
++        private int mask;
++        private int maxFill;
++        private int size;
++
++        @SuppressWarnings("unchecked")
++        CellTable(final int expectedSize) {
++            final int capacity = HashCommon.arraySize(expectedSize, 0.5F);
++            this.keys = new long[capacity];
++            this.values = (SpatialBucket<E>[])new SpatialBucket[capacity];
++            this.mask = capacity - 1;
++            this.maxFill = capacity >>> 1;
++        }
++
++        SpatialBucket<E> get(final long key) {
++            int position = (int)HashCommon.mix(key) & this.mask;
++            SpatialBucket<E> value;
++            while ((value = this.values[position]) != null) {
++                if (this.keys[position] == key) {
++                    return value;
++                }
++                position = position + 1 & this.mask;
++            }
++            return null;
++        }
++
++        void putNew(final long key, final SpatialBucket<E> value) {
++            if (this.size + 1 > this.maxFill) {
++                this.rehash(this.keys.length << 1);
++            }
++            int position = (int)HashCommon.mix(key) & this.mask;
++            while (this.values[position] != null) {
++                position = position + 1 & this.mask;
++            }
++            this.keys[position] = key;
++            this.values[position] = value;
++            ++this.size;
++        }
++
++        void remove(final long key) {
++            int position = (int)HashCommon.mix(key) & this.mask;
++            SpatialBucket<E> value;
++            while ((value = this.values[position]) != null) {
++                if (this.keys[position] == key) {
++                    --this.size;
++                    this.shiftKeys(position);
++                    return;
++                }
++                position = position + 1 & this.mask;
++            }
++        }
++
++        private void shiftKeys(int position) {
++            final long[] keys = this.keys;
++            final SpatialBucket<E>[] values = this.values;
++            while (true) {
++                final int last = position;
++                position = position + 1 & this.mask;
++                SpatialBucket<E> value;
++                while ((value = values[position]) != null) {
++                    final int slot = (int)HashCommon.mix(keys[position]) & this.mask;
++                    if (last <= position ? last >= slot || slot > position : last >= slot && slot > position) {
++                        break;
++                    }
++                    position = position + 1 & this.mask;
++                }
++                if (value == null) {
++                    values[last] = null;
++                    return;
++                }
++                keys[last] = keys[position];
++                values[last] = value;
++            }
++        }
++
++        @SuppressWarnings("unchecked")
++        private void rehash(final int capacity) {
++            final long[] oldKeys = this.keys;
++            final SpatialBucket<E>[] oldValues = this.values;
++            final long[] newKeys = new long[capacity];
++            final SpatialBucket<E>[] newValues = (SpatialBucket<E>[])new SpatialBucket[capacity];
++            final int newMask = capacity - 1;
++            for (int index = 0; index < oldValues.length; ++index) {
++                final SpatialBucket<E> value = oldValues[index];
++                if (value == null) {
++                    continue;
++                }
++                final long key = oldKeys[index];
++                int position = (int)HashCommon.mix(key) & newMask;
++                while (newValues[position] != null) {
++                    position = position + 1 & newMask;
++                }
++                newKeys[position] = key;
++                newValues[position] = value;
++            }
++            this.keys = newKeys;
++            this.values = newValues;
++            this.mask = newMask;
++            this.maxFill = capacity >>> 1;
++        }
++    }
++
+     private static final class SpatialBucket<E extends Entity> {
+ 
+         private Entity[] storage = new Entity[4];
