@@ -737,6 +737,17 @@ void evaluate_y_column(const NodeArena& arena, NodeRef root,
 /// JNI_OnLoad after the CPU feature snapshot has been initialised.
 void init_density_dispatch() noexcept;
 
+/// Configure the experimental DensityFunction AVX-512 path. The setting is
+/// intentionally independent from `lattice.nativeCpu`; it defaults to false
+/// and is sampled atomically when `init_density_dispatch` selects a tier.
+void set_density_avx512_enabled(bool enabled) noexcept;
+
+/// Return whether the experimental DensityFunction AVX-512 gate is enabled.
+[[nodiscard]] bool density_avx512_enabled() noexcept;
+
+/// One-line dispatch status used by the native CPU summary.
+[[nodiscard]] const char* density_dispatch_summary() noexcept;
+
 /// Published by `init_density_dispatch`. AVX-512 recursive evaluation uses
 /// this instead of probing CPU features for every child column.
 [[nodiscard]] bool density_avx2_available() noexcept;

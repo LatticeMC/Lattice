@@ -20,6 +20,16 @@ using noise::OctavePerlinNoiseSampler;
 using noise::DoublePerlinNoiseSampler;
 using noise::SimplexNoiseSampler;
 
+TEST_CASE("density: AVX512 gate defaults off and can be toggled") {
+    CHECK_FALSE(density_avx512_enabled());
+    set_density_avx512_enabled(false);
+    CHECK_FALSE(density_avx512_enabled());
+    set_density_avx512_enabled(true);
+    CHECK(density_avx512_enabled());
+    set_density_avx512_enabled(false);
+    CHECK_FALSE(density_avx512_enabled());
+}
+
 namespace {
 
 NodeArena make_constant(double v) {

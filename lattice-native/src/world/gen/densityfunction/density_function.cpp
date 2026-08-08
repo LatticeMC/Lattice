@@ -101,6 +101,8 @@ void evaluate_y_column_avx512_avx2_dispatch(const NodeArena& arena, NodeRef root
 
 std::atomic<EvaluateYColumnFn> g_evaluate_y_column{&evaluate_y_column_lazy_dispatch};
 std::atomic<bool> g_density_avx2_available{false};
+std::atomic<bool> g_density_avx512_enabled{false};
+std::atomic<const char*> g_density_dispatch_name{"uninitialized"};
 
 enum class DensityDispatchState : std::uint8_t {
     Uninitialized,
@@ -1061,21 +1063,26 @@ void init_density_dispatch() noexcept {
     EvaluateYColumnFn fn = &evaluate_y_column_scalar_dispatch;
     const auto& features = lattice::cpu::features();
     bool avx2_available = false;
+    const bool avx512_enabled = g_density_avx512_enabled.load(std::memory_order_acquire);
+    const char* dispatch_name = "scalar";
 
 #if defined(LATTICE_HAS_DENSITY_AVX512)
-    if (features.avx512f && features.avx512dq) {
+    if (avx512_enabled && features.avx512f && features.avx512dq) {
 #if defined(LATTICE_HAS_DENSITY_AVX2)
         avx2_available = features.avx2;
         fn = features.avx2 ? &evaluate_y_column_avx512_avx2_dispatch
                            : &evaluate_y_column_avx512_scalar_dispatch;
+        dispatch_name = features.avx2 ? "avx512+avx2" : "avx512+scalar";
 #else
         fn = &evaluate_y_column_avx512_scalar_dispatch;
+        dispatch_name = "avx512+scalar";
 #endif
     } else {
 #if defined(LATTICE_HAS_DENSITY_AVX2)
         if (features.avx2) {
             avx2_available = true;
             fn = &evaluate_y_column_avx2_dispatch;
+            dispatch_name = "avx2";
         }
 #endif
     }
@@ -1083,12 +1090,26 @@ void init_density_dispatch() noexcept {
     if (features.avx2) {
         avx2_available = true;
         fn = &evaluate_y_column_avx2_dispatch;
+        dispatch_name = "avx2";
     }
 #endif
 
     g_density_avx2_available.store(avx2_available, std::memory_order_release);
+    g_density_dispatch_name.store(dispatch_name, std::memory_order_release);
     g_evaluate_y_column.store(fn, std::memory_order_release);
     g_density_dispatch_state.store(DensityDispatchState::Initialized, std::memory_order_release);
+}
+
+void set_density_avx512_enabled(bool enabled) noexcept {
+    g_density_avx512_enabled.store(enabled, std::memory_order_release);
+}
+
+bool density_avx512_enabled() noexcept {
+    return g_density_avx512_enabled.load(std::memory_order_acquire);
+}
+
+const char* density_dispatch_summary() noexcept {
+    return g_density_dispatch_name.load(std::memory_order_acquire);
 }
 
 bool density_avx2_available() noexcept {
