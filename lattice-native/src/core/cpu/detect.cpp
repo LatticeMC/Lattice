@@ -47,7 +47,7 @@ namespace lattice::cpu {
 namespace {
 
 std::atomic<RequestedTier> g_requested_tier{RequestedTier::Auto};
-bool g_auto_skylake_avx2_cap = false;
+bool g_auto_avx2_cap = false;
 
 enum class InitState : std::uint8_t {
     Ready = 0,
@@ -233,19 +233,14 @@ void detect_x86(Features& f, const EnvOverrides& ov) noexcept {
     }
     if (ov.disable_mask & EnvOverrides::kDisableBmi2)   { f.bmi2 = f.bmi2_fast = false; }
 
-    // Skylake-SP (family 0x6, model 0x55) loses more to AVX-512 frequency
-    // throttling than this workload gains from the wider implementation.
-    // Apply this only to auto selection: an explicit avx512 request remains a
-    // supported diagnostic/benchmark override. Feature and XCR0 safety checks
-    // above have already completed before this policy is applied.
-    if (f.requested_tier == RequestedTier::Auto
-        && f.vendor == Features::Vendor::Intel
-        && f.family == 0x6
-        && f.model == 0x55
-        && f.avx512f) {
+    // Auto selection is capped at AVX2 whenever AVX-512 is available. An
+    // explicit avx512 request remains a supported diagnostic/benchmark
+    // override. Feature and XCR0 safety checks above have already completed
+    // before this policy is applied.
+    if (f.requested_tier == RequestedTier::Auto && f.avx512f) {
         f.avx512f = f.avx512bw = f.avx512dq = f.avx512vl = false;
         f.avx512vbmi = f.avx512vbmi2 = f.avx512vpopcnt = false;
-        g_auto_skylake_avx2_cap = true;
+        g_auto_avx2_cap = true;
     }
 }
 
@@ -328,8 +323,8 @@ void populate_summary(const Features& f) noexcept {
         f.sve            ? "SVE"               :
         f.neon           ? "NEON"              : "scalar";
     const char* bmi2 = f.bmi2 ? (f.bmi2_fast ? " +BMI2(fast)" : " +BMI2(slow)") : "";
-    const char* tier_reason = g_auto_skylake_avx2_cap && !f.forced_scalar
-                                  ? " reason=skylake-auto-avx2" : "";
+    const char* tier_reason = g_auto_avx2_cap && !f.forced_scalar
+                                  ? " reason=auto-avx2" : "";
     std::snprintf(g_summary, sizeof g_summary,
                   "lattice cpu: vendor=%s tier=%s%s requested=%s family=0x%X model=0x%X%s",
                   vendor, tier, bmi2, requested_tier_name(f.requested_tier), f.family, f.model,
