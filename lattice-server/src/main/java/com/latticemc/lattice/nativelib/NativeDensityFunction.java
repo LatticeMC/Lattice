@@ -9,7 +9,6 @@ import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -65,10 +64,9 @@ public final class NativeDensityFunction {
     private static final ThreadLocal<LastSliceRowsReject> LAST_SLICE_ROWS_REJECT = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> BYPASS_FILL_ALL_DIRECTLY = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private static final Object FAILED_COMPILE_SENTINEL = new Object();
-    private static final ThreadLocal<ThreadCompileCache> THREAD_COMPILE_CACHE = ThreadLocal.withInitial(ThreadCompileCache::new);
-    private static final ThreadLocal<ThreadCompileCache> THREAD_DIRECT_COMPILE_CACHE = ThreadLocal.withInitial(ThreadCompileCache::new);
-    private static final int THREAD_COMPILE_CACHE_CAPACITY = 32;
-    private static final Object THREAD_COMPILE_CACHE_MISS = new Object();
+    private static final ThreadLocal<IdentityHashMap<DensityFunction, Object>> THREAD_COMPILE_CACHE = ThreadLocal.withInitial(IdentityHashMap::new);
+    private static final ThreadLocal<IdentityHashMap<DensityFunction, Object>> THREAD_DIRECT_COMPILE_CACHE = ThreadLocal.withInitial(IdentityHashMap::new);
+    private static final int MAX_THREAD_COMPILE_CACHE_ENTRIES = 32;
     private static final int MAX_DIRECT_CELL_COLUMN_POOL_ENTRIES = 16;
     private static final int MAX_POOLED_DIRECT_CELL_COLUMN_LENGTH = 1 << 20;
     private static final ThreadLocal<ArrayDeque<double[]>> DIRECT_CELL_COLUMN_POOL = ThreadLocal.withInitial(ArrayDeque::new);
@@ -105,7 +103,7 @@ public final class NativeDensityFunction {
     private static final LongAdder CELL_SKIP_CELL_BYPASS = new LongAdder();
     private static final LongAdder CELL_SKIP_COMPILE_NULL = new LongAdder();
     private static final LongAdder CELL_SKIP_OUTPUT_TOO_SMALL = new LongAdder();
-    private static final LongAdder THREAD_COMPILE_CACHE_REPLACEMENTS = new LongAdder();
+    private static final LongAdder THREAD_COMPILE_CACHE_RESETS = new LongAdder();
     private static final LongAdder COMPILE_NANOS = new LongAdder();
     private static final LongAdder SLICE_NANOS = new LongAdder();
     private static final LongAdder GRID_NANOS = new LongAdder();
@@ -1026,9 +1024,9 @@ public final class NativeDensityFunction {
 
     private static NativeDensityFunction tryCompile(DensityFunction function) {
         if (!LatticeNative.isLoaded() || function == null) return null;
-        ThreadCompileCache threadCache = threadCompileCache();
+        IdentityHashMap<DensityFunction, Object> threadCache = threadCompileCache();
         Object threadCached = threadCache.get(function);
-        if (threadCached != THREAD_COMPILE_CACHE_MISS) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
+        if (threadCached != null) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
         LastCompile last = LAST_COMPILE.get();
         if (last != null && last.function() == function) {
             putThreadCompileCache(threadCache, function, compileCacheValue(last.compiled()));
@@ -1068,9 +1066,9 @@ public final class NativeDensityFunction {
     private static NativeDensityFunction tryCompileDirect(DensityFunction function) {
         if (!LatticeNative.isLoaded() || function == null) return null;
         if (DIRECT_CELL_REJECTS.get() > 65536L && CELL_DIRECT_SUCCESS.sum() < 1024L) return null;
-        ThreadCompileCache threadCache = threadDirectCompileCache();
+        IdentityHashMap<DensityFunction, Object> threadCache = threadDirectCompileCache();
         Object threadCached = threadCache.get(function);
-        if (threadCached != THREAD_COMPILE_CACHE_MISS) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
+        if (threadCached != null) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
         LastCompile last = LAST_DIRECT_COMPILE.get();
         if (last != null && last.function() == function) {
             putThreadCompileCache(threadCache, function, compileCacheValue(last.compiled()));
@@ -1112,14 +1110,18 @@ public final class NativeDensityFunction {
         return compiled == null ? FAILED_COMPILE_SENTINEL : compiled;
     }
 
-    private static void putThreadCompileCache(ThreadCompileCache cache,
+    private static void putThreadCompileCache(IdentityHashMap<DensityFunction, Object> cache,
                                               DensityFunction function,
                                               Object value) {
+        if (cache.size() >= MAX_THREAD_COMPILE_CACHE_ENTRIES && !cache.containsKey(function)) {
+            cache.clear();
+            THREAD_COMPILE_CACHE_RESETS.increment();
+        }
         cache.put(function, value);
     }
 
-    private static ThreadCompileCache threadCompileCache() {
-        ThreadCompileCache cache = THREAD_COMPILE_CACHE.get();
+    private static IdentityHashMap<DensityFunction, Object> threadCompileCache() {
+        IdentityHashMap<DensityFunction, Object> cache = THREAD_COMPILE_CACHE.get();
         if (THREAD_COMPILE_CACHE_EPOCH.get() != COMPILE_CACHE_EPOCH) {
             cache.clear();
             THREAD_COMPILE_CACHE_EPOCH.set(COMPILE_CACHE_EPOCH);
@@ -1127,8 +1129,8 @@ public final class NativeDensityFunction {
         return cache;
     }
 
-    private static ThreadCompileCache threadDirectCompileCache() {
-        ThreadCompileCache cache = THREAD_DIRECT_COMPILE_CACHE.get();
+    private static IdentityHashMap<DensityFunction, Object> threadDirectCompileCache() {
+        IdentityHashMap<DensityFunction, Object> cache = THREAD_DIRECT_COMPILE_CACHE.get();
         if (THREAD_DIRECT_COMPILE_CACHE_EPOCH.get() != COMPILE_CACHE_EPOCH) {
             cache.clear();
             THREAD_DIRECT_COMPILE_CACHE_EPOCH.set(COMPILE_CACHE_EPOCH);
@@ -1423,7 +1425,7 @@ public final class NativeDensityFunction {
                 + ", cell=" + CELL_SKIP_CELL_BYPASS.sum()
                 + ", compile=" + CELL_SKIP_COMPILE_NULL.sum()
                 + ", output=" + CELL_SKIP_OUTPUT_TOO_SMALL.sum() + '}'
-                + " threadCacheReplacement=" + THREAD_COMPILE_CACHE_REPLACEMENTS.sum()
+                + " threadCacheReset=" + THREAD_COMPILE_CACHE_RESETS.sum()
                 + " timingsUs={compile=" + avgMicros(COMPILE_NANOS.sum(), COMPILE_ATTEMPTS.sum())
                 + ", slice=" + avgMicros(SLICE_NANOS.sum(), SLICE_SUCCESS.sum())
                 + ", grid=" + avgMicros(GRID_NANOS.sum(), GRID_SUCCESS.sum())
@@ -1467,7 +1469,7 @@ public final class NativeDensityFunction {
         CELL_SKIP_CELL_BYPASS.reset();
         CELL_SKIP_COMPILE_NULL.reset();
         CELL_SKIP_OUTPUT_TOO_SMALL.reset();
-        THREAD_COMPILE_CACHE_REPLACEMENTS.reset();
+        THREAD_COMPILE_CACHE_RESETS.reset();
         COMPILE_NANOS.reset();
         SLICE_NANOS.reset();
         GRID_NANOS.reset();
@@ -1802,31 +1804,6 @@ public final class NativeDensityFunction {
 
     private static long avgMicros(long nanos, long count) {
         return count <= 0 ? 0L : nanos / count / 1_000L;
-    }
-
-    private static final class ThreadCompileCache {
-        private final DensityFunction[] keys = new DensityFunction[THREAD_COMPILE_CACHE_CAPACITY];
-        private final Object[] values = new Object[THREAD_COMPILE_CACHE_CAPACITY];
-
-        private Object get(DensityFunction function) {
-            int slot = System.identityHashCode(function) & (THREAD_COMPILE_CACHE_CAPACITY - 1);
-            return keys[slot] == function ? values[slot] : THREAD_COMPILE_CACHE_MISS;
-        }
-
-        private void put(DensityFunction function, Object value) {
-            int slot = System.identityHashCode(function) & (THREAD_COMPILE_CACHE_CAPACITY - 1);
-            DensityFunction previous = keys[slot];
-            if (previous != null && previous != function) {
-                THREAD_COMPILE_CACHE_REPLACEMENTS.increment();
-            }
-            keys[slot] = function;
-            values[slot] = value;
-        }
-
-        private void clear() {
-            Arrays.fill(keys, null);
-            Arrays.fill(values, null);
-        }
     }
 
     private static DensityFunction child(DensityFunction function, String name) {
