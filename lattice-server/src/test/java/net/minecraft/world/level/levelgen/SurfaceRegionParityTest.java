@@ -92,6 +92,9 @@ class SurfaceRegionParityTest {
         private int heightmapDifferenceChunks;
         private int blockEntityDifferenceChunks;
         private int structureDifferenceChunks;
+        private long expectedClayDifferences;
+        private long expectedClayUndergroundDifferences;
+        private long actualClayDifferences;
         private String firstDifference;
 
         void compareBlocks(Map<Integer, String> expected, Map<Integer, String> actual, int chunkX, int chunkZ) {
@@ -104,11 +107,16 @@ class SurfaceRegionParityTest {
                 String actualState = actual.get(packed);
                 if (java.util.Objects.equals(expectedState, actualState)) continue;
                 blockDifferences++;
+                int sectionY = Math.floorDiv(packed, 4096);
+                int index = Math.floorMod(packed, 4096);
+                int blockY = sectionY * 16 + ((index >>> 8) & 15);
+                if (expectedState != null && expectedState.contains("minecraft:clay")) {
+                    expectedClayDifferences++;
+                    if (blockY < 0) expectedClayUndergroundDifferences++;
+                }
+                if (actualState != null && actualState.contains("minecraft:clay")) actualClayDifferences++;
                 if (firstDifference == null) {
-                    int sectionY = Math.floorDiv(packed, 4096);
-                    int index = Math.floorMod(packed, 4096);
                     int blockX = chunkX * 16 + (index & 15);
-                    int blockY = sectionY * 16 + ((index >>> 8) & 15);
                     int blockZ = chunkZ * 16 + ((index >>> 4) & 15);
                     firstDifference = "block chunk=" + chunkX + "," + chunkZ + " world="
                             + blockX + "," + blockY + "," + blockZ
@@ -141,6 +149,9 @@ class SurfaceRegionParityTest {
                     + ", heightmapDifferenceChunks=" + heightmapDifferenceChunks
                     + ", blockEntityDifferenceChunks=" + blockEntityDifferenceChunks
                     + ", structureDifferenceChunks=" + structureDifferenceChunks
+                    + ", expectedClayDifferences=" + expectedClayDifferences
+                    + ", expectedClayUndergroundDifferences=" + expectedClayUndergroundDifferences
+                    + ", actualClayDifferences=" + actualClayDifferences
                     + "; first=" + firstDifference;
         }
     }
