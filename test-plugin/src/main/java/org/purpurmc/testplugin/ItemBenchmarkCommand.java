@@ -9,6 +9,7 @@ import java.util.Map;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.Chunk;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
@@ -25,6 +26,7 @@ final class ItemBenchmarkCommand extends Command {
     private final JavaPlugin plugin;
     private final List<Item> items = new ArrayList<>();
     private final Map<Block, BlockState> changedBlocks = new LinkedHashMap<>();
+    private final List<Chunk> loadedChunks = new ArrayList<>();
     private BukkitTask task;
     private BukkitTask pulseTask;
     private Location origin;
@@ -88,6 +90,9 @@ final class ItemBenchmarkCommand extends Command {
         this.spawned = 0;
         this.ticks = 0;
         this.measureStart = 0L;
+        final Chunk benchmarkChunk = location.getChunk();
+        benchmarkChunk.addPluginChunkTicket(plugin);
+        this.loadedChunks.add(benchmarkChunk);
         this.buildScenario();
         this.task = plugin.getServer().getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L);
         sender.sendMessage("Itembench starting: target=" + count + " perTick=" + batch + " layout=" + requestedLayout);
@@ -193,6 +198,8 @@ final class ItemBenchmarkCommand extends Command {
         Collections.reverse(states);
         for (final BlockState state : states) state.update(true, false);
         changedBlocks.clear(); origin = null; target = perTick = spawned = 0; ticks = 0; measureStart = 0L; layout = null;
+        for (final Chunk chunk : loadedChunks) chunk.removePluginChunkTicket(plugin);
+        loadedChunks.clear();
     }
 
     void shutdown() { stopInternal(); }
