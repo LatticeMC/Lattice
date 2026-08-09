@@ -181,7 +181,7 @@ public final class EntityActivationKdTree {
             for (int index = 0; index < count; index++) {
                 this.indices[index] = index;
             }
-            this.buildNode(sourceX, sourceZ, 0, count, 0);
+            this.buildNode(sourceX, sourceZ, sourceMinY, sourceMaxY, sourceHalfWidth, 0, count, 0);
         }
 
         boolean intersects(AABB target, double maximumDistance) {
@@ -231,7 +231,8 @@ public final class EntityActivationKdTree {
             return false;
         }
 
-        private int buildNode(double[] sourceX, double[] sourceZ, int start, int end, int depth) {
+        private int buildNode(double[] sourceX, double[] sourceZ, double[] sourceMinY, double[] sourceMaxY,
+                              double[] sourceHalfWidth, int start, int end, int depth) {
             final int node = this.nodeCount++;
             final int length = end - start;
             this.axis[node] = (byte) (depth & 1);
@@ -250,8 +251,8 @@ public final class EntityActivationKdTree {
             this.select(sourceX, sourceZ, start, end - 1, median, depth & 1);
             final int point = this.indices[median];
             this.x[node] = depth % 2 == 0 ? sourceX[point] : sourceZ[point];
-            this.buildNode(sourceX, sourceZ, start, median + 1, depth + 1);
-            this.right[node] = this.buildNode(sourceX, sourceZ, median + 1, end, depth + 1);
+            this.buildNode(sourceX, sourceZ, sourceMinY, sourceMaxY, sourceHalfWidth, start, median + 1, depth + 1);
+            this.right[node] = this.buildNode(sourceX, sourceZ, sourceMinY, sourceMaxY, sourceHalfWidth, median + 1, end, depth + 1);
             return node;
         }
 
