@@ -134,7 +134,9 @@ final class ItemBenchmarkCommand extends Command {
     }
 
     private void buildScenario() {
-        if (layout.equals("hopper-single")) {
+        if (hasControlledFloor()) {
+            buildControlledFloor();
+        } else if (layout.equals("hopper-single")) {
             setBlock(origin.getBlock(), Material.HOPPER);
         } else if (layout.equals("hopper-array")) {
             for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) setBlock(origin.clone().add(x, 0, z).getBlock(), Material.HOPPER);
@@ -159,6 +161,27 @@ final class ItemBenchmarkCommand extends Command {
         }
     }
 
+    private boolean hasControlledFloor() {
+        return "compact".equals(layout);
+    }
+
+    private void buildControlledFloor() {
+        final Location floorOrigin = new Location(origin.getWorld(), (origin.getBlockX() >> 4) * 16 + 8.0D, origin.getY(),
+            (origin.getBlockZ() >> 4) * 16 + 8.0D);
+        final Block baseFloor = floorOrigin.getBlock().getRelative(BlockFace.DOWN);
+        setBlockIfDifferent(baseFloor, Material.STONE);
+        clearBlock(baseFloor.getRelative(BlockFace.UP));
+        clearBlock(baseFloor.getRelative(BlockFace.UP).getRelative(BlockFace.UP));
+    }
+
+    private void setBlockIfDifferent(final Block block, final Material material) {
+        if (block.getType() != material) setBlock(block, material);
+    }
+
+    private void clearBlock(final Block block) {
+        if (!block.getType().isAir()) setBlock(block, Material.AIR);
+    }
+
     private void setBlock(final Block block, final Material material) {
         remember(block); block.setType(material, false);
     }
@@ -172,6 +195,7 @@ final class ItemBenchmarkCommand extends Command {
         final Item first = items.isEmpty() ? null : items.get(0);
         sender.sendMessage("Itembench status: phase=" + phase + " target=" + target + " spawned=" + spawned
             + " live=" + liveCount() + " ticks=" + ticks + " layout=" + layout
+            + " controlledFloor=" + hasControlledFloor()
             + " structures=" + changedBlocks.size()
             + " measuredSeconds=" + (measureStart == 0L ? 0.0D : (System.nanoTime() - measureStart) / 1_000_000_000.0D)
             + (first == null ? "" : " firstValid=" + first.isValid() + " firstDead=" + first.isDead()
