@@ -111,7 +111,6 @@ public final class EntityActivationKdTree {
         for (int index = 0; index < playerCount; index++) {
             final AABB box = players[index].getBoundingBox().inflate(maxRange, worldHeight, maxRange);
             lookup.lattice$getEntitiesForActivation(box, this.chunks, this.entities);
-            ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities(world, null, box, null, this.entities);
         }
     }
 
