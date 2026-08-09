@@ -4,6 +4,13 @@
 #include <cstdint>
 #include <immintrin.h>
 
+// Keep SIMD results bit-compatible with the scalar reference.  clang-cl may
+// enable contraction when compiling /arch:AVX2, turning scalar lane helpers
+// into FMA and changing the final rounding by one or two ULPs.
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
+
 namespace lattice::world::gen::noise {
 namespace {
 
