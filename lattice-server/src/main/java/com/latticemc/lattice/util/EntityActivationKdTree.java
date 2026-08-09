@@ -119,8 +119,7 @@ public final class EntityActivationKdTree {
             }
             final double range = ranges[entity.activationType.ordinal()];
             final AABB entityBox = entity.getBoundingBox();
-            if (entity.defaultActivationState || this.players.verticalEnvelopeIntersects(entityBox, range)
-                    && this.players.intersects(entityBox, range)) {
+            if (entity.defaultActivationState || this.players.intersects(entityBox, range)) {
                 entity.activatedTick = currentTick;
             }
         }
@@ -161,26 +160,21 @@ public final class EntityActivationKdTree {
         private double[] x = new double[0];
         private double[] z = new double[0];
         private int[] search = new int[0];
-        private double minY;
-        private double maxY;
         private double maxHalfWidth;
+        private double[] playerMinY = new double[0];
+        private double[] playerMaxY = new double[0];
+        private double[] playerHalfWidth = new double[0];
         private int nodeCount;
 
         void build(double[] sourceX, double[] sourceZ, double[] sourceMinY, double[] sourceMaxY,
                    double[] sourceHalfWidth, int count) {
             this.nodeCount = 0;
             if (count == 0) {
-                this.minY = Double.POSITIVE_INFINITY;
-                this.maxY = Double.NEGATIVE_INFINITY;
                 this.maxHalfWidth = 0.0;
                 return;
             }
-            this.minY = sourceMinY[0];
-            this.maxY = sourceMaxY[0];
             this.maxHalfWidth = sourceHalfWidth[0];
             for (int index = 1; index < count; index++) {
-                this.minY = Math.min(this.minY, sourceMinY[index]);
-                this.maxY = Math.max(this.maxY, sourceMaxY[index]);
                 this.maxHalfWidth = Math.max(this.maxHalfWidth, sourceHalfWidth[index]);
             }
             this.ensureCapacity(count);
@@ -188,12 +182,6 @@ public final class EntityActivationKdTree {
                 this.indices[index] = index;
             }
             this.buildNode(sourceX, sourceZ, 0, count, 0);
-        }
-
-        boolean verticalEnvelopeIntersects(AABB target, double maximumDistance) {
-            return maximumDistance >= 0.0
-                    && target.maxY >= this.minY - maximumDistance
-                    && target.minY <= this.maxY + maximumDistance;
         }
 
         boolean intersects(AABB target, double maximumDistance) {
@@ -214,8 +202,16 @@ public final class EntityActivationKdTree {
                 final int node = stack[--stackSize];
                 final int child = this.right[node];
                 if (child == EMPTY) {
-                    if (this.x[node] >= minX && this.x[node] <= maxX
-                            && this.z[node] >= minZ && this.z[node] <= maxZ) {
+                    final double halfWidth = this.playerHalfWidth[node];
+                    final double playerX = this.x[node];
+                    final double playerZ = this.z[node];
+                    // Keep Paper's strict AABB intersection semantics at the matching player's leaf.
+                    if (target.maxX > playerX - halfWidth - maximumDistance
+                            && target.minX < playerX + halfWidth + maximumDistance
+                            && target.maxZ > playerZ - halfWidth - maximumDistance
+                            && target.minZ < playerZ + halfWidth + maximumDistance
+                            && target.maxY > this.playerMinY[node] - maximumDistance
+                            && target.minY < this.playerMaxY[node] + maximumDistance) {
                         return true;
                     }
                     continue;
@@ -244,6 +240,9 @@ public final class EntityActivationKdTree {
                 this.right[node] = EMPTY;
                 this.x[node] = sourceX[point];
                 this.z[node] = sourceZ[point];
+                this.playerMinY[node] = sourceMinY[point];
+                this.playerMaxY[node] = sourceMaxY[point];
+                this.playerHalfWidth[node] = sourceHalfWidth[point];
                 return node;
             }
 
@@ -298,6 +297,9 @@ public final class EntityActivationKdTree {
             this.axis = new byte[nodeCapacity];
             this.x = new double[nodeCapacity];
             this.z = new double[nodeCapacity];
+            this.playerMinY = new double[nodeCapacity];
+            this.playerMaxY = new double[nodeCapacity];
+            this.playerHalfWidth = new double[nodeCapacity];
         }
     }
 }
