@@ -29,8 +29,10 @@ public final class NativeFleeTargetSampler {
             throw new IllegalArgumentException("obstacle array too short");
         }
 
-        LatticeNative.ensureLoaded();
-        if (LatticeNative.isLoaded()) {
+        if (NativeTargetSamplerGate.shouldUseNative(candidateCount, obstacleCount)) {
+            LatticeNative.ensureLoaded();
+        }
+        if (NativeTargetSamplerGate.shouldUseNative(candidateCount, obstacleCount) && LatticeNative.isLoaded()) {
             return nativeSampleFleeTarget(candidateXyz, candidateCount,
                     selfX, selfY, selfZ,
                     threatX, threatY, threatZ,

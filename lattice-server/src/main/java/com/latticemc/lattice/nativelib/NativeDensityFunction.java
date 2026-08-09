@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,6 +44,8 @@ public final class NativeDensityFunction {
     private static volatile boolean Y_COLUMN_NATIVE_AVAILABLE = true;
     private static volatile boolean GRID_ROOTS_NATIVE_AVAILABLE = true;
     private static volatile boolean Y_COLUMN_ROOTS_FLAT_ROWS_NATIVE_AVAILABLE = true;
+    private static volatile boolean Y_COLUMN_ROOTS_FLAT_ROWS_FAST_NATIVE_AVAILABLE = true;
+    private static volatile boolean Y_COLUMN_ROOTS_FLAT_ROWS_BOUND_NATIVE_AVAILABLE = true;
     private static volatile boolean Y_COLUMNS_FLAT_ROWS_NATIVE_AVAILABLE = true;
     private static volatile boolean Y_COLUMNS_FLAT_NATIVE_AVAILABLE = true;
     private static volatile boolean Y_COLUMNS_PACKED_NATIVE_AVAILABLE = true;
@@ -65,9 +68,10 @@ public final class NativeDensityFunction {
     private static final ThreadLocal<LastSliceRowsReject> LAST_SLICE_ROWS_REJECT = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> BYPASS_FILL_ALL_DIRECTLY = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private static final Object FAILED_COMPILE_SENTINEL = new Object();
-    private static final ThreadLocal<IdentityHashMap<DensityFunction, Object>> THREAD_COMPILE_CACHE = ThreadLocal.withInitial(IdentityHashMap::new);
-    private static final ThreadLocal<IdentityHashMap<DensityFunction, Object>> THREAD_DIRECT_COMPILE_CACHE = ThreadLocal.withInitial(IdentityHashMap::new);
-    private static final int MAX_THREAD_COMPILE_CACHE_ENTRIES = 32;
+    private static final ThreadLocal<ThreadCompileCache> THREAD_COMPILE_CACHE = ThreadLocal.withInitial(ThreadCompileCache::new);
+    private static final ThreadLocal<ThreadCompileCache> THREAD_DIRECT_COMPILE_CACHE = ThreadLocal.withInitial(ThreadCompileCache::new);
+    private static final int THREAD_COMPILE_CACHE_CAPACITY = 32;
+    private static final Object THREAD_COMPILE_CACHE_MISS = new Object();
     private static final int MAX_DIRECT_CELL_COLUMN_POOL_ENTRIES = 16;
     private static final int MAX_POOLED_DIRECT_CELL_COLUMN_LENGTH = 1 << 20;
     private static final ThreadLocal<ArrayDeque<double[]>> DIRECT_CELL_COLUMN_POOL = ThreadLocal.withInitial(ArrayDeque::new);
@@ -104,7 +108,7 @@ public final class NativeDensityFunction {
     private static final LongAdder CELL_SKIP_CELL_BYPASS = new LongAdder();
     private static final LongAdder CELL_SKIP_COMPILE_NULL = new LongAdder();
     private static final LongAdder CELL_SKIP_OUTPUT_TOO_SMALL = new LongAdder();
-    private static final LongAdder THREAD_COMPILE_CACHE_RESETS = new LongAdder();
+    private static final LongAdder THREAD_COMPILE_CACHE_REPLACEMENTS = new LongAdder();
     private static final LongAdder COMPILE_NANOS = new LongAdder();
     private static final LongAdder SLICE_NANOS = new LongAdder();
     private static final LongAdder GRID_NANOS = new LongAdder();
@@ -250,7 +254,7 @@ public final class NativeDensityFunction {
         }
         long start = profiling ? System.nanoTime() : 0L;
         try {
-            if (!evaluateYColumnRootsFlatRows(batch, count, x, y0, z0, dy, cellX, firstCellZ, cellWidth, yRows, zRows, flatOutputs)) {
+            if (!evaluateYColumnRootsFlatRows(buffers, batch, count, isSlice0, x, y0, z0, dy, cellX, firstCellZ, cellWidth, yRows, zRows, flatOutputs)) {
                 return false;
             }
             for (int i = 0; i < count; i++) {
@@ -558,8 +562,10 @@ public final class NativeDensityFunction {
         }
     }
 
-    private static boolean evaluateYColumnRootsFlatRows(SliceBatchCompilation batch,
+    private static boolean evaluateYColumnRootsFlatRows(SliceBatchBuffers buffers,
+                                                        SliceBatchCompilation batch,
                                                         int count,
+                                                        boolean isSlice0,
                                                         double x,
                                                         double y0,
                                                         double z0,
@@ -572,6 +578,32 @@ public final class NativeDensityFunction {
                                                         double[][] out) {
         if (!Y_COLUMN_ROOTS_FLAT_ROWS_NATIVE_AVAILABLE) return false;
         try {
+            int boundSlot = buffers.boundSliceOutputSlot(
+                    batch, count, isSlice0 ? 0 : 1, out);
+            if (boundSlot >= 0 && Y_COLUMN_ROOTS_FLAT_ROWS_BOUND_NATIVE_AVAILABLE) {
+                try {
+                    nativeEvaluateYColumnRootsFlatRowsBound(
+                            batch.handle, batch.cacheHandle, boundSlot, count,
+                            x, y0, z0, dy, cellX, firstCellZ, cellWidth, yRows, zRows);
+                    return true;
+                } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
+                    Y_COLUMN_ROOTS_FLAT_ROWS_BOUND_NATIVE_AVAILABLE = false;
+                    LatticeNative.logFallbackOnce("density_function_y_column_roots_flat_rows_bound_symbol", e.getMessage());
+                } catch (RuntimeException | LinkageError e) {
+                    LatticeNative.logFallbackOnce("density_function_y_column_roots_flat_rows_bound", e.getMessage());
+                }
+            }
+            if (Y_COLUMN_ROOTS_FLAT_ROWS_FAST_NATIVE_AVAILABLE) {
+                try {
+                    nativeEvaluateYColumnRootsFlatRowsFast(
+                            batch.handle, batch.cacheHandle, count,
+                            x, y0, z0, dy, cellX, firstCellZ, cellWidth, yRows, zRows, out);
+                    return true;
+                } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
+                    Y_COLUMN_ROOTS_FLAT_ROWS_FAST_NATIVE_AVAILABLE = false;
+                    LatticeNative.logFallbackOnce("density_function_y_column_roots_flat_rows_fast_symbol", e.getMessage());
+                }
+            }
             nativeEvaluateYColumnRootsFlatRows(
                     batch.handle, batch.cacheHandle, batch.roots, count,
                     x, y0, z0, dy, cellX, firstCellZ, cellWidth, yRows, zRows, out);
@@ -1026,9 +1058,9 @@ public final class NativeDensityFunction {
 
     private static NativeDensityFunction tryCompile(DensityFunction function) {
         if (!LatticeNative.isLoaded() || function == null) return null;
-        IdentityHashMap<DensityFunction, Object> threadCache = threadCompileCache();
+        ThreadCompileCache threadCache = threadCompileCache();
         Object threadCached = threadCache.get(function);
-        if (threadCached != null) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
+        if (threadCached != THREAD_COMPILE_CACHE_MISS) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
         LastCompile last = LAST_COMPILE.get();
         if (last != null && last.function() == function) {
             putThreadCompileCache(threadCache, function, compileCacheValue(last.compiled()));
@@ -1068,9 +1100,9 @@ public final class NativeDensityFunction {
     private static NativeDensityFunction tryCompileDirect(DensityFunction function) {
         if (!LatticeNative.isLoaded() || function == null) return null;
         if (DIRECT_CELL_REJECTS.get() > 65536L && CELL_DIRECT_SUCCESS.sum() < 1024L) return null;
-        IdentityHashMap<DensityFunction, Object> threadCache = threadDirectCompileCache();
+        ThreadCompileCache threadCache = threadDirectCompileCache();
         Object threadCached = threadCache.get(function);
-        if (threadCached != null) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
+        if (threadCached != THREAD_COMPILE_CACHE_MISS) return threadCached == FAILED_COMPILE_SENTINEL ? null : (NativeDensityFunction) threadCached;
         LastCompile last = LAST_DIRECT_COMPILE.get();
         if (last != null && last.function() == function) {
             putThreadCompileCache(threadCache, function, compileCacheValue(last.compiled()));
@@ -1112,18 +1144,14 @@ public final class NativeDensityFunction {
         return compiled == null ? FAILED_COMPILE_SENTINEL : compiled;
     }
 
-    private static void putThreadCompileCache(IdentityHashMap<DensityFunction, Object> cache,
+    private static void putThreadCompileCache(ThreadCompileCache cache,
                                               DensityFunction function,
                                               Object value) {
-        if (cache.size() >= MAX_THREAD_COMPILE_CACHE_ENTRIES && !cache.containsKey(function)) {
-            cache.clear();
-            THREAD_COMPILE_CACHE_RESETS.increment();
-        }
         cache.put(function, value);
     }
 
-    private static IdentityHashMap<DensityFunction, Object> threadCompileCache() {
-        IdentityHashMap<DensityFunction, Object> cache = THREAD_COMPILE_CACHE.get();
+    private static ThreadCompileCache threadCompileCache() {
+        ThreadCompileCache cache = THREAD_COMPILE_CACHE.get();
         if (THREAD_COMPILE_CACHE_EPOCH.get() != COMPILE_CACHE_EPOCH) {
             cache.clear();
             THREAD_COMPILE_CACHE_EPOCH.set(COMPILE_CACHE_EPOCH);
@@ -1131,8 +1159,8 @@ public final class NativeDensityFunction {
         return cache;
     }
 
-    private static IdentityHashMap<DensityFunction, Object> threadDirectCompileCache() {
-        IdentityHashMap<DensityFunction, Object> cache = THREAD_DIRECT_COMPILE_CACHE.get();
+    private static ThreadCompileCache threadDirectCompileCache() {
+        ThreadCompileCache cache = THREAD_DIRECT_COMPILE_CACHE.get();
         if (THREAD_DIRECT_COMPILE_CACHE_EPOCH.get() != COMPILE_CACHE_EPOCH) {
             cache.clear();
             THREAD_DIRECT_COMPILE_CACHE_EPOCH.set(COMPILE_CACHE_EPOCH);
@@ -1428,7 +1456,7 @@ public final class NativeDensityFunction {
                 + ", cell=" + CELL_SKIP_CELL_BYPASS.sum()
                 + ", compile=" + CELL_SKIP_COMPILE_NULL.sum()
                 + ", output=" + CELL_SKIP_OUTPUT_TOO_SMALL.sum() + '}'
-                + " threadCacheReset=" + THREAD_COMPILE_CACHE_RESETS.sum()
+                + " threadCacheReplacement=" + THREAD_COMPILE_CACHE_REPLACEMENTS.sum()
                 + " timingsUs={compile=" + avgMicros(COMPILE_NANOS.sum(), COMPILE_ATTEMPTS.sum())
                 + ", slice=" + avgMicros(SLICE_NANOS.sum(), SLICE_SUCCESS.sum())
                 + ", grid=" + avgMicros(GRID_NANOS.sum(), GRID_SUCCESS.sum())
@@ -1472,7 +1500,7 @@ public final class NativeDensityFunction {
         CELL_SKIP_CELL_BYPASS.reset();
         CELL_SKIP_COMPILE_NULL.reset();
         CELL_SKIP_OUTPUT_TOO_SMALL.reset();
-        THREAD_COMPILE_CACHE_RESETS.reset();
+        THREAD_COMPILE_CACHE_REPLACEMENTS.reset();
         COMPILE_NANOS.reset();
         SLICE_NANOS.reset();
         GRID_NANOS.reset();
@@ -1809,6 +1837,31 @@ public final class NativeDensityFunction {
         return count <= 0 ? 0L : nanos / count / 1_000L;
     }
 
+    private static final class ThreadCompileCache {
+        private final DensityFunction[] keys = new DensityFunction[THREAD_COMPILE_CACHE_CAPACITY];
+        private final Object[] values = new Object[THREAD_COMPILE_CACHE_CAPACITY];
+
+        private Object get(DensityFunction function) {
+            int slot = System.identityHashCode(function) & (THREAD_COMPILE_CACHE_CAPACITY - 1);
+            return keys[slot] == function ? values[slot] : THREAD_COMPILE_CACHE_MISS;
+        }
+
+        private void put(DensityFunction function, Object value) {
+            int slot = System.identityHashCode(function) & (THREAD_COMPILE_CACHE_CAPACITY - 1);
+            DensityFunction previous = keys[slot];
+            if (previous != null && previous != function) {
+                THREAD_COMPILE_CACHE_REPLACEMENTS.increment();
+            }
+            keys[slot] = function;
+            values[slot] = value;
+        }
+
+        private void clear() {
+            Arrays.fill(keys, null);
+            Arrays.fill(values, null);
+        }
+    }
+
     private static DensityFunction child(DensityFunction function, String name) {
         try {
             Object value = invoke(function, name);
@@ -1943,6 +1996,8 @@ public final class NativeDensityFunction {
         private NoiseChunk.NoiseInterpolator[] javaInterpolators = new NoiseChunk.NoiseInterpolator[0];
         private double[][] javaOutputs = new double[0][];
         private NativeNoiseInterpolatorAccess[] javaAccesses = new NativeNoiseInterpolatorAccess[0];
+        private final SliceBatchCompilation[] boundSliceCompilations = new SliceBatchCompilation[2];
+        private final double[][][] boundSliceOutputs = new double[2][][];
         private SliceBatchCompilation batchCompilation;
 
         private SliceBatchCompilation compilation(List<NoiseChunk.NoiseInterpolator> interpolators, Object arenaKey) {
@@ -1966,6 +2021,39 @@ public final class NativeDensityFunction {
 
         private void ensurePackedCapacity(int size) {
             if (packedOutputs.length < size) packedOutputs = new double[size];
+        }
+
+        private int boundSliceOutputSlot(SliceBatchCompilation batch, int count,
+                                         int preferredSlot, double[][] outputs) {
+            for (int slot = 0; slot < boundSliceOutputs.length; slot++) {
+                double[][] snapshot = boundSliceOutputs[slot];
+                if (boundSliceCompilations[slot] != batch || snapshot == null || snapshot.length != count) continue;
+                boolean match = true;
+                for (int i = 0; i < count; i++) {
+                    if (snapshot[i] != outputs[i]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) return slot;
+            }
+            if (!Y_COLUMN_ROOTS_FLAT_ROWS_BOUND_NATIVE_AVAILABLE) return -1;
+            int slot = preferredSlot & 1;
+            try {
+                nativeBindSliceOutputs(batch.cacheHandle, slot, count, outputs);
+            } catch (UnsatisfiedLinkError | NoSuchMethodError e) {
+                Y_COLUMN_ROOTS_FLAT_ROWS_BOUND_NATIVE_AVAILABLE = false;
+                LatticeNative.logFallbackOnce("density_function_y_column_roots_flat_rows_bound_symbol", e.getMessage());
+                return -1;
+            } catch (RuntimeException | LinkageError e) {
+                LatticeNative.logFallbackOnce("density_function_y_column_roots_flat_rows_bind", e.getMessage());
+                return -1;
+            }
+            double[][] snapshot = new double[count][];
+            System.arraycopy(outputs, 0, snapshot, 0, count);
+            boundSliceOutputs[slot] = snapshot;
+            boundSliceCompilations[slot] = batch;
+            return slot;
         }
     }
 
@@ -2517,6 +2605,9 @@ public final class NativeDensityFunction {
     private static native void nativeEvaluateGridRoots(long handle, long cacheHandle, int[] roots, int count, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateYColumn(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] out);
     private static native void nativeEvaluateYColumnRootsFlatRows(long handle, long cacheHandle, int[] roots, int count, double x, double y0, double z0, double dy, int cellX, int firstCellZ, int cellWidth, int yRows, int zRows, double[][] out);
+    private static native void nativeEvaluateYColumnRootsFlatRowsFast(long handle, long cacheHandle, int count, double x, double y0, double z0, double dy, int cellX, int firstCellZ, int cellWidth, int yRows, int zRows, double[][] out);
+    private static native void nativeBindSliceOutputs(long cacheHandle, int bindingSlot, int count, double[][] out);
+    private static native void nativeEvaluateYColumnRootsFlatRowsBound(long handle, long cacheHandle, int bindingSlot, int count, double x, double y0, double z0, double dy, int cellX, int firstCellZ, int cellWidth, int yRows, int zRows);
     private static native void nativeEvaluateYColumnsFlatRows(long[] handles, long[] cacheHandles, int count, double x, double y0, double z0, double dy, int cellX, int firstCellZ, int cellWidth, int yRows, int zRows, double[][] out);
     private static native void nativeEvaluateYColumnsFlat(long[] handles, long[] cacheHandles, int count, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[][] out, int outputOffset);
     private static native void nativeEvaluateYColumnsPacked(long[] handles, long[] cacheHandles, int count, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] outPacked);

@@ -2,6 +2,8 @@ package com.latticemc.lattice.nativelib;
 
 public final class NativeBiologicalAi {
     private static final int EXPECTED_NATIVE_ABI = 5;
+    private static final int MIN_NATIVE_STIMULI =
+            Integer.getInteger("lattice.nativeBiologicalAi.minStimuli", Integer.MAX_VALUE);
     private static volatile boolean nativeChecked;
     private static volatile boolean nativeCompatible;
     private static volatile boolean nativeDisabled;
@@ -95,8 +97,11 @@ public final class NativeBiologicalAi {
                                   Profile profile) {
         final Stimulus[] safeStimuli = stimuli != null ? stimuli : new Stimulus[0];
         final Profile safeProfile = profile != null ? profile : DEFAULT_PROFILE;
-        LatticeNative.ensureLoaded();
-        if (isNativeUsable()) {
+        final boolean useNative = shouldUseNative(safeStimuli.length);
+        if (useNative) {
+            LatticeNative.ensureLoaded();
+        }
+        if (useNative && isNativeUsable()) {
             try {
                 return nativeDecideWrapper(healthRatio, energyRatio, aggression, attackRange,
                         isOnFire, canAttack, canConsumeFood,
@@ -129,8 +134,11 @@ public final class NativeBiologicalAi {
         final Species safeSpecies = species != null ? species : Species.GENERIC;
         final Stimulus[] safeStimuli = stimuli != null ? stimuli : new Stimulus[0];
         final Profile safeProfile = resolveProfile(safeSpecies, fallbackProfile);
-        LatticeNative.ensureLoaded();
-        if (isNativeUsable()) {
+        final boolean useNative = shouldUseNative(safeStimuli.length);
+        if (useNative) {
+            LatticeNative.ensureLoaded();
+        }
+        if (useNative && isNativeUsable()) {
             try {
                 return nativeDecideForSpeciesWrapper(safeSpecies,
                         healthRatio, energyRatio, aggression, attackRange,
@@ -247,7 +255,7 @@ public final class NativeBiologicalAi {
         return new Decision(Action.IDLE, -1, 0.1F, 0.0F, 0.0F);
     }
 
-    private static Decision nativeDecideWrapper(float healthRatio,
+    static Decision nativeDecideWrapper(float healthRatio,
                                                 float energyRatio,
                                                 float aggression,
                                                 float attackRange,
@@ -298,7 +306,7 @@ public final class NativeBiologicalAi {
         return new Decision(Action.values()[outInts[0]], outInts[1], outFloats[0], outFloats[1], outFloats[2]);
     }
 
-    private static Decision nativeDecideForSpeciesWrapper(Species species,
+    static Decision nativeDecideForSpeciesWrapper(Species species,
                                                           float healthRatio,
                                                           float energyRatio,
                                                           float aggression,
@@ -335,6 +343,15 @@ public final class NativeBiologicalAi {
                 stimulusKinds, stimulusDistances, stimulusStrengths, stimulusFlags, stimuli.length,
                 outInts, outFloats);
         return new Decision(Action.values()[outInts[0]], outInts[1], outFloats[0], outFloats[1], outFloats[2]);
+    }
+
+    static boolean shouldUseNative(int stimulusCount) {
+        return shouldUseNative(stimulusCount, MIN_NATIVE_STIMULI);
+    }
+
+    static boolean shouldUseNative(int stimulusCount, int minimumNativeStimuli) {
+        if (stimulusCount < 0) throw new IllegalArgumentException("negative stimulus count");
+        return stimulusCount >= Math.max(0, minimumNativeStimuli);
     }
 
     private static Stimulus selectBestStimulus(Stimulus[] stimuli,

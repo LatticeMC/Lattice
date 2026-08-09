@@ -30,8 +30,10 @@ public final class NativeHomeTargetSampler {
             throw new IllegalArgumentException("obstacle array too short");
         }
 
-        LatticeNative.ensureLoaded();
-        if (LatticeNative.isLoaded()) {
+        if (NativeTargetSamplerGate.shouldUseNative(candidateCount, obstacleCount)) {
+            LatticeNative.ensureLoaded();
+        }
+        if (NativeTargetSamplerGate.shouldUseNative(candidateCount, obstacleCount) && LatticeNative.isLoaded()) {
             return nativeSampleHomeTarget(candidateXyz, candidateCount,
                     selfX, selfY, selfZ,
                     homeX, homeY, homeZ,

@@ -25,8 +25,10 @@ public final class NativeWaterTargetSampler {
             throw new IllegalArgumentException("water flag array too short");
         }
 
-        LatticeNative.ensureLoaded();
-        if (LatticeNative.isLoaded()) {
+        if (NativeTargetSamplerGate.shouldUseNative(candidateCount)) {
+            LatticeNative.ensureLoaded();
+        }
+        if (NativeTargetSamplerGate.shouldUseNative(candidateCount) && LatticeNative.isLoaded()) {
             return nativeSampleWaterTarget(candidateXyz, candidateIsWater, candidateCount,
                     selfX, selfY, selfZ, preferWater);
         }

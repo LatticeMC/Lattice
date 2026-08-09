@@ -30,8 +30,10 @@ public final class NativeApproachTargetSampler {
             throw new IllegalArgumentException("obstacle array too short");
         }
 
-        LatticeNative.ensureLoaded();
-        if (LatticeNative.isLoaded()) {
+        if (NativeTargetSamplerGate.shouldUseNative(candidateCount, obstacleCount)) {
+            LatticeNative.ensureLoaded();
+        }
+        if (NativeTargetSamplerGate.shouldUseNative(candidateCount, obstacleCount) && LatticeNative.isLoaded()) {
             return nativeSampleApproachTarget(candidateXyz, candidateCount,
                     selfX, selfY, selfZ,
                     targetX, targetY, targetZ,
