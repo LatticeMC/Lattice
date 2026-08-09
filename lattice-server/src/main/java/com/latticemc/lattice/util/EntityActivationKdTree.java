@@ -27,6 +27,8 @@ public final class EntityActivationKdTree {
     private static final ServerPlayer[] EMPTY_PLAYERS = {};
 
     private final ObjectArrayList<Entity> entities = new ObjectArrayList<>();
+    private final ObjectArrayList<Entity> hookEntities = new ObjectArrayList<>();
+    private final ObjectArrayList<Entity> hookScratch = new ObjectArrayList<>();
     private final LongOpenHashSet chunks = new LongOpenHashSet();
     private final PlayerTree players = new PlayerTree();
 
@@ -57,18 +59,21 @@ public final class EntityActivationKdTree {
         maxRange = Math.min((world.spigotConfig.simulationDistance << 4) - 8, maxRange);
 
         final double[] ranges = new double[ACTIVATION_TYPES.length];
-        ranges[ActivationType.WATER.ordinal()] = squareRange(waterActivationRange);
-        ranges[ActivationType.FLYING_MONSTER.ordinal()] = squareRange(flyingActivationRange);
-        ranges[ActivationType.VILLAGER.ordinal()] = squareRange(villagerActivationRange);
-        ranges[ActivationType.MONSTER.ordinal()] = squareRange(monsterActivationRange);
-        ranges[ActivationType.ANIMAL.ordinal()] = squareRange(animalActivationRange);
-        ranges[ActivationType.RAIDER.ordinal()] = squareRange(raiderActivationRange);
-        ranges[ActivationType.MISC.ordinal()] = squareRange(miscActivationRange);
+        ranges[ActivationType.WATER.ordinal()] = waterActivationRange;
+        ranges[ActivationType.FLYING_MONSTER.ordinal()] = flyingActivationRange;
+        ranges[ActivationType.VILLAGER.ordinal()] = villagerActivationRange;
+        ranges[ActivationType.MONSTER.ordinal()] = monsterActivationRange;
+        ranges[ActivationType.ANIMAL.ordinal()] = animalActivationRange;
+        ranges[ActivationType.RAIDER.ordinal()] = raiderActivationRange;
+        ranges[ActivationType.MISC.ordinal()] = miscActivationRange;
 
         final long currentTick = MinecraftServer.currentTick;
         final ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
         final double[] playerX = new double[players.length];
         final double[] playerZ = new double[players.length];
+        final double[] playerMinY = new double[players.length];
+        final double[] playerMaxY = new double[players.length];
+        final double[] playerHalfWidth = new double[players.length];
         int playerCount = 0;
         for (final ServerPlayer player : players) {
             player.activatedTick = currentTick;
@@ -80,15 +85,31 @@ public final class EntityActivationKdTree {
             }
             playerX[playerCount] = player.getX();
             playerZ[playerCount] = player.getZ();
+            final AABB playerBox = player.getBoundingBox();
+            playerMinY[playerCount] = playerBox.minY;
+            playerMaxY[playerCount] = playerBox.maxY;
+            playerHalfWidth[playerCount] = Math.max(playerBox.getXsize(), playerBox.getZsize()) * 0.5;
             players[playerCount++] = player;
         }
 
-        this.players.build(playerX, playerZ, playerCount);
-        this.collectCandidates(world, players, playerCount, maxRange);
+        try {
+            this.players.build(playerX, playerZ, playerMinY, playerMaxY, playerHalfWidth, playerCount);
+            this.collectCandidates(world, players, playerCount, maxRange);
 
-        final boolean tickMarkers = world.paperConfig().entities.markers.tick;
-        final Object[] rawEntities = this.entities.elements();
-        for (int index = 0, size = this.entities.size(); index < size; index++) {
+            final boolean tickMarkers = world.paperConfig().entities.markers.tick;
+            this.activateCollectedEntities(currentTick, tickMarkers, ranges, this.entities);
+            this.activateCollectedEntities(currentTick, tickMarkers, ranges, this.hookEntities);
+        } finally {
+            this.entities.clear();
+            this.chunks.clear();
+            this.hookEntities.clear();
+            this.hookScratch.clear();
+        }
+    }
+
+    private void activateCollectedEntities(long currentTick, boolean tickMarkers, double[] ranges, ObjectArrayList<Entity> collected) {
+        final Object[] rawEntities = collected.elements();
+        for (int index = 0, size = collected.size(); index < size; index++) {
             final Entity entity = (Entity) rawEntities[index];
             if (!tickMarkers && entity instanceof Marker) {
                 continue;
@@ -96,13 +117,13 @@ public final class EntityActivationKdTree {
             if (currentTick <= entity.activatedTick) {
                 continue;
             }
-            if (entity.defaultActivationState || this.players.nearestSqr(entity.getX(), entity.getZ(), ranges[entity.activationType.ordinal()])) {
+            final double range = ranges[entity.activationType.ordinal()];
+            final AABB entityBox = entity.getBoundingBox();
+            if (entity.defaultActivationState || this.players.verticalEnvelopeIntersects(entityBox, range)
+                    && this.players.intersects(entityBox, range)) {
                 entity.activatedTick = currentTick;
             }
         }
-
-        this.entities.clear();
-        this.chunks.clear();
     }
 
     private void collectCandidates(ServerLevel world, ServerPlayer[] players, int playerCount, int maxRange) {
@@ -111,11 +132,24 @@ public final class EntityActivationKdTree {
         for (int index = 0; index < playerCount; index++) {
             final AABB box = players[index].getBoundingBox().inflate(maxRange, worldHeight, maxRange);
             lookup.lattice$getEntitiesForActivation(box, this.chunks, this.entities);
+            this.hookScratch.clear();
+            ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities(world, null, box, null, this.hookScratch);
+            for (int hookIndex = 0, hookSize = this.hookScratch.size(); hookIndex < hookSize; hookIndex++) {
+                final Entity entity = this.hookScratch.get(hookIndex);
+                if (!containsIdentity(this.hookEntities, entity)) {
+                    this.hookEntities.add(entity);
+                }
+            }
         }
     }
 
-    private static double squareRange(int range) {
-        return range > 0 ? (double) range * range : range;
+    private static boolean containsIdentity(ObjectArrayList<Entity> entities, Entity target) {
+        for (int index = 0, size = entities.size(); index < size; index++) {
+            if (entities.get(index) == target) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static final class PlayerTree {
@@ -127,12 +161,27 @@ public final class EntityActivationKdTree {
         private double[] x = new double[0];
         private double[] z = new double[0];
         private int[] search = new int[0];
+        private double minY;
+        private double maxY;
+        private double maxHalfWidth;
         private int nodeCount;
 
-        void build(double[] sourceX, double[] sourceZ, int count) {
+        void build(double[] sourceX, double[] sourceZ, double[] sourceMinY, double[] sourceMaxY,
+                   double[] sourceHalfWidth, int count) {
             this.nodeCount = 0;
             if (count == 0) {
+                this.minY = Double.POSITIVE_INFINITY;
+                this.maxY = Double.NEGATIVE_INFINITY;
+                this.maxHalfWidth = 0.0;
                 return;
+            }
+            this.minY = sourceMinY[0];
+            this.maxY = sourceMaxY[0];
+            this.maxHalfWidth = sourceHalfWidth[0];
+            for (int index = 1; index < count; index++) {
+                this.minY = Math.min(this.minY, sourceMinY[index]);
+                this.maxY = Math.max(this.maxY, sourceMaxY[index]);
+                this.maxHalfWidth = Math.max(this.maxHalfWidth, sourceHalfWidth[index]);
             }
             this.ensureCapacity(count);
             for (int index = 0; index < count; index++) {
@@ -141,14 +190,23 @@ public final class EntityActivationKdTree {
             this.buildNode(sourceX, sourceZ, 0, count, 0);
         }
 
-        boolean nearestSqr(double targetX, double targetZ, double maximumDistance) {
-            if (this.nodeCount == 0) {
+        boolean verticalEnvelopeIntersects(AABB target, double maximumDistance) {
+            return maximumDistance >= 0.0
+                    && target.maxY >= this.minY - maximumDistance
+                    && target.minY <= this.maxY + maximumDistance;
+        }
+
+        boolean intersects(AABB target, double maximumDistance) {
+            if (this.nodeCount == 0 || maximumDistance < 0.0) {
                 return false;
             }
-            double best = maximumDistance;
             if (this.search.length < this.nodeCount) {
                 this.search = new int[this.nodeCount];
             }
+            final double minX = target.minX - maximumDistance - this.maxHalfWidth;
+            final double maxX = target.maxX + maximumDistance + this.maxHalfWidth;
+            final double minZ = target.minZ - maximumDistance - this.maxHalfWidth;
+            final double maxZ = target.maxZ + maximumDistance + this.maxHalfWidth;
             final int[] stack = this.search;
             int stackSize = 0;
             stack[stackSize++] = 0;
@@ -156,26 +214,25 @@ public final class EntityActivationKdTree {
                 final int node = stack[--stackSize];
                 final int child = this.right[node];
                 if (child == EMPTY) {
-                    final double deltaX = this.x[node] - targetX;
-                    final double deltaZ = this.z[node] - targetZ;
-                    final double distance = deltaX * deltaX + deltaZ * deltaZ;
-                    if (distance < best) {
-                        best = distance;
+                    if (this.x[node] >= minX && this.x[node] <= maxX
+                            && this.z[node] >= minZ && this.z[node] <= maxZ) {
+                        return true;
                     }
                     continue;
                 }
 
                 final int splitAxis = this.axis[node];
-                final double delta = (splitAxis == 0 ? targetX : targetZ) - this.x[node];
                 final int left = node + 1;
-                final int near = delta < 0.0 ? left : child;
-                final int far = delta < 0.0 ? child : left;
-                if (delta * delta < best) {
-                    stack[stackSize++] = far;
+                final double min = splitAxis == 0 ? minX : minZ;
+                final double max = splitAxis == 0 ? maxX : maxZ;
+                if (min <= this.x[node]) {
+                    stack[stackSize++] = left;
                 }
-                stack[stackSize++] = near;
+                if (max >= this.x[node]) {
+                    stack[stackSize++] = child;
+                }
             }
-            return best < maximumDistance;
+            return false;
         }
 
         private int buildNode(double[] sourceX, double[] sourceZ, int start, int end, int depth) {
