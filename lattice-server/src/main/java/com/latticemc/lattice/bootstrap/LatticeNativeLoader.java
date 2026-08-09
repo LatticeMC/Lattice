@@ -3,6 +3,8 @@ package com.latticemc.lattice.bootstrap;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -15,6 +17,10 @@ public final class LatticeNativeLoader {
     private static final Logger LOGGER = LoggerFactory.getLogger("LatticeNativeLoader");
     private static final String SYS_OVERRIDE = "lattice.native.path";
     private static final String SYS_CACHE_DIR = "lattice.native.cacheDir";
+    private static final String SYS_DOWNLOAD = "lattice.native.download";
+    private static final String SYS_RELEASE = "lattice.native.release";
+    private static final String SYS_RELEASE_BASE = "lattice.native.releaseBaseUrl";
+    private static final String DEFAULT_RELEASE_BASE = "https://github.com/LatticeMC/Lattice/releases/download/";
 
     private LatticeNativeLoader() {}
 
@@ -93,7 +99,7 @@ public final class LatticeNativeLoader {
         final ClassLoader cl = LatticeNativeLoader.class.getClassLoader();
 
         Path extracted;
-        try (InputStream in = cl.getResourceAsStream(resourcePath)) {
+            try (InputStream in = cl.getResourceAsStream(resourcePath)) {
             if (in != null) {
                 extracted = extractToCache(libFile, in);
             } else {
@@ -117,11 +123,42 @@ public final class LatticeNativeLoader {
                                                     String originalResourcePath) throws IOException {
         try (InputStream fallback = cl.getResourceAsStream(libFile)) {
             if (fallback == null) {
-                throw newUnsatisfied("lattice native missing from jar: " + originalResourcePath + " (and fallback resource " + libFile + ")", null);
+                return downloadReleaseNative(libFile, originalResourcePath);
             }
             LOGGER.warn("Lattice native loaded from fallback classpath resource '{}'; prefer packaging under META-INF/native/<platform>/{}", libFile, libFile);
             return extractToCache(libFile, fallback);
         }
+    }
+
+    private static Path downloadReleaseNative(String libFile, String resourcePath) throws IOException {
+        if (!Boolean.parseBoolean(System.getProperty(SYS_DOWNLOAD, "true"))) {
+            throw newUnsatisfied("lattice native missing from jar: " + resourcePath
+                    + " (download disabled with -D" + SYS_DOWNLOAD + "=false)", null);
+        }
+        final Platform platform = detect();
+        final String asset = "lattice-native-" + platform.tag() + "." + platform.os.libExt;
+        final String release = System.getProperty(SYS_RELEASE, "latest").trim();
+        final String base = System.getProperty(SYS_RELEASE_BASE, DEFAULT_RELEASE_BASE).trim();
+        final String separator = base.endsWith("/") ? "" : "/";
+        final String endpoint = base + separator + encodePath(release) + "/" + encodePath(asset);
+        final HttpURLConnection connection = (HttpURLConnection) URI.create(endpoint).toURL().openConnection();
+        connection.setConnectTimeout(15_000);
+        connection.setReadTimeout(60_000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent", "Lattice-native-loader");
+        try {
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                throw new IOException("HTTP " + connection.getResponseCode() + " for " + endpoint);
+            }
+            LOGGER.info("Downloading Lattice native release asset '{}'", asset);
+            return extractToCache(libFile, connection.getInputStream());
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private static String encodePath(String value) {
+        return value.replace("%", "%25").replace("/", "%2F").replace(" ", "%20");
     }
 
     private static Path extractToCache(String libFile, InputStream in) throws IOException {
