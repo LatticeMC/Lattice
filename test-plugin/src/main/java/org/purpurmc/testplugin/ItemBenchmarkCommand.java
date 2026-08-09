@@ -164,10 +164,14 @@ final class ItemBenchmarkCommand extends Command {
 
     private boolean status(final CommandSender sender) {
         final String phase = task == null ? "stopped" : spawned < target ? "spawning" : "measuring";
+        final Item first = items.isEmpty() ? null : items.get(0);
         sender.sendMessage("Itembench status: phase=" + phase + " target=" + target + " spawned=" + spawned
             + " live=" + liveCount() + " ticks=" + ticks + " layout=" + layout
             + " structures=" + changedBlocks.size()
-            + " measuredSeconds=" + (measureStart == 0L ? 0.0D : (System.nanoTime() - measureStart) / 1_000_000_000.0D));
+            + " measuredSeconds=" + (measureStart == 0L ? 0.0D : (System.nanoTime() - measureStart) / 1_000_000_000.0D)
+            + (first == null ? "" : " firstValid=" + first.isValid() + " firstDead=" + first.isDead()
+                + " firstWorld=" + (first.getWorld() == null ? "null" : first.getWorld().getName())
+                + " firstY=" + first.getLocation().getY()));
         return true;
     }
 
