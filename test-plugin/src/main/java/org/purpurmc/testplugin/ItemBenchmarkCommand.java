@@ -100,7 +100,9 @@ final class ItemBenchmarkCommand extends Command {
         while (spawned < end) {
             final int index = spawned++;
             final Location location = locationFor(index);
-            final Item item = origin.getWorld().dropItem(location, new ItemStack(Material.STONE));
+            // Full stacks cannot merge with each other, keeping the requested
+            // ItemEntity count stable without adding synthetic per-item NBT.
+            final Item item = origin.getWorld().dropItem(location, new ItemStack(Material.STONE, 64));
             item.setPickupDelay(Integer.MAX_VALUE);
             item.setUnlimitedLifetime(true);
             item.setCanMobPickup(false);
