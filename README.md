@@ -89,15 +89,34 @@ Current acceleration work covers areas including:
 
 Availability and profitability depend on the request shape, CPU, world state, and runtime configuration. A native implementation is not automatically selected when the Java path is faster for a request.
 
+Target samplers use a shared Java gate by default; set `-Dlattice.nativeTargetSampler.minWork=N`
+only after measuring the target CPU. The work unit is `candidateCount * max(1, obstacleCount)`.
+
+## World-generation consistency A/B
+
+Generate the same seed and chunk rectangle with Leaf and Lattice in separate worlds, stop
+both servers cleanly, then compare the decoded chunk contents:
+
+```powershell
+.\tools\run-worldgen-consistency-ab.ps1 `
+  -LatticeWorld 'C:\path\to\lattice\world' `
+  -LeafWorld 'C:\path\to\leaf\world' `
+  -CenterX 0 -CenterZ 0 -Radius 32
+```
+
+The check compares every decoded block-state and biome cell, heightmaps, block entities,
+and structures. It intentionally does not compare Anvil timestamps, compression bytes,
+palette ordering, or other runtime metadata.
+
 ## Contributing
 
 Lattice uses the Paperweight patch workflow. See [Purpur's contributing guide](https://github.com/PurpurMC/Purpur/blob/HEAD/CONTRIBUTING.md) before editing patched upstream sources. Imported or adapted optimizations must retain their original author, source, and license attribution.
 
 ## License
 
-Lattice inherits licenses from its upstream projects. The derived server and API distribution is GPL-3.0. Standalone Lattice-authored code is MIT unless a file or patch header states otherwise. Imported patches retain their original licenses and attribution.
+Lattice-original code and the derived server/API distribution are licensed under GNU GPL v3 (GPL-3.0-only). Imported or adapted files and patches retain their original licenses and attribution when their headers state one; third-party dependencies remain under their own licenses.
 
-See [LICENSE](LICENSE), [GPL-3.0](licenses/GPL.md), [MIT](licenses/MIT.md), and [LGPL-3.0](licenses/LGPL-3.0.txt).
+See [LICENSE](LICENSE), [GPL-3.0](licenses/GPL.md), and [LGPL-3.0](licenses/LGPL-3.0.txt).
 
 ## Credits
 

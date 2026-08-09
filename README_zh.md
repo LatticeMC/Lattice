@@ -89,15 +89,34 @@ ctest --test-dir lattice-native/build --output-on-failure
 
 加速路径是否可用、是否有收益，取决于请求形态、CPU、世界状态与运行时配置。当某类请求使用 Java 更快时，不会仅因为存在 native 实现就强制进入 native。
 
+目标采样器默认通过共享 Java 门禁；只有在目标 CPU 上完成测量后才设置
+`-Dlattice.nativeTargetSampler.minWork=N`。门禁工作量为
+`candidateCount * max(1, obstacleCount)`。
+
+## 世界生成一致性 A/B
+
+使用相同 seed，在 Leaf 与 Lattice 的独立世界中生成相同区块矩形，并分别正常停服后，
+运行下面的逐坐标比较：
+
+```powershell
+.\tools\run-worldgen-consistency-ab.ps1 `
+  -LatticeWorld 'C:\path\to\lattice\world' `
+  -LeafWorld 'C:\path\to\leaf\world' `
+  -CenterX 0 -CenterZ 0 -Radius 32
+```
+
+测试会解码并比较每个方块状态与群系单元，以及高度图、方块实体和结构数据；不会把
+Anvil 时间戳、压缩字节、palette 排列或其他运行时元数据误判为世界生成差异。
+
 ## 参与贡献
 
 Lattice 使用 Paperweight patch 工作流。修改上游源码前，请先阅读 [Purpur 贡献指南](https://github.com/PurpurMC/Purpur/blob/HEAD/CONTRIBUTING.md)。引入或改编优化时，必须保留原作者、来源与许可证署名。
 
 ## 许可证
 
-Lattice 从上游继承许可证。派生的服务端与 API 发行物遵循 GPL-3.0。Lattice 原创的独立代码在文件或 patch 头未另行声明时采用 MIT；引入的 patch 保留其原许可证与署名。
+Lattice 原创代码以及派生的服务端与 API 发行物遵循 GNU GPL v3（GPL-3.0-only）。文件头明确声明其他上游许可证的引入文件或 patch 继续遵循其原许可证并保留署名，第三方依赖也不因集成而改变许可证。
 
-详见 [LICENSE](LICENSE)、[GPL-3.0](licenses/GPL.md)、[MIT](licenses/MIT.md) 与 [LGPL-3.0](licenses/LGPL-3.0.txt)。
+详见 [LICENSE](LICENSE)、[GPL-3.0](licenses/GPL.md) 与 [LGPL-3.0](licenses/LGPL-3.0.txt)。
 
 ## 致谢
 
