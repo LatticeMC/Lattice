@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 9 Aug 2026 18:39:56 +0800
+Subject: [PATCH] perf: add Leaf KD-tree entity activation
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 2dfd412344a0e57f25a08d9c65656a13113baa4e..1ea2c18669d9463e1b8f0aed62b903db7d5e3516 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -213,6 +213,18 @@ public final class ChunkEntitySlices {
+         return collectedEntities;
+     }
+ 
++    // Lattice start - Leaf: optimize entity activation
++    // Original author: hayanesuru <hayanesuru@outlook.jp>
++    // Original source: https://github.com/Winds-Studio/Leaf/commit/1f36f102062075e770fb3e2aa53ea5301e3da888
++    // Licensed under: MIT
++    public void lattice$getAllEntitiesForActivation(final it.unimi.dsi.fastutil.objects.ObjectArrayList<Entity> into) {
++        final int len = this.entities.size();
++        if (len != 0) {
++            into.addElements(into.size(), this.entities.getRawData(), 0, len);
++        }
++    }
++    // Lattice end - Leaf: optimize entity activation
++
+     public boolean isEmpty() {
+         return this.entities.size() == 0;
+     }
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+index 2d24d03bbdb5ee0d862cbfff2219f58afffafe12..5035b93223e49ef0d5c9b9f225635aafa18cacb2 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+@@ -603,6 +603,49 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+         }
+     }
+ 
++    // Lattice start - Leaf: optimize entity activation with a KD-tree
++    // Original author: hayanesuru <hayanesuru@outlook.jp>
++    // Original license: MIT
++    // Source: https://github.com/Winds-Studio/Leaf/commit/1f36f102062075e770fb3e2aa53ea5301e3da888
++    public final void lattice$getEntitiesForActivation(final AABB box, final it.unimi.dsi.fastutil.longs.LongOpenHashSet chunkSet, final it.unimi.dsi.fastutil.objects.ObjectArrayList<Entity> into) {
++        final int minChunkX = (Mth.floor(box.minX) - 2) >> 4;
++        final int minChunkZ = (Mth.floor(box.minZ) - 2) >> 4;
++        final int maxChunkX = (Mth.floor(box.maxX) + 2) >> 4;
++        final int maxChunkZ = (Mth.floor(box.maxZ) + 2) >> 4;
++
++        final int minRegionX = minChunkX >> REGION_SHIFT;
++        final int minRegionZ = minChunkZ >> REGION_SHIFT;
++        final int maxRegionX = maxChunkX >> REGION_SHIFT;
++        final int maxRegionZ = maxChunkZ >> REGION_SHIFT;
++
++        for (int regionZ = minRegionZ; regionZ <= maxRegionZ; regionZ++) {
++            final int minZ = regionZ == minRegionZ ? minChunkZ & REGION_MASK : 0;
++            final int maxZ = regionZ == maxRegionZ ? maxChunkZ & REGION_MASK : REGION_MASK;
++            for (int regionX = minRegionX; regionX <= maxRegionX; regionX++) {
++                final ChunkSlicesRegion region = this.getRegion(regionX, regionZ);
++                if (region == null) {
++                    continue;
++                }
++                final int minX = regionX == minRegionX ? minChunkX & REGION_MASK : 0;
++                final int maxX = regionX == maxRegionX ? maxChunkX & REGION_MASK : REGION_MASK;
++                for (int chunkZ = minZ; chunkZ <= maxZ; chunkZ++) {
++                    for (int chunkX = minX; chunkX <= maxX; chunkX++) {
++                        final ChunkEntitySlices chunk = region.get(chunkX | (chunkZ << REGION_SHIFT));
++                        if (chunk == null || !chunk.status.isOrAfter(FullChunkStatus.FULL)) {
++                            continue;
++                        }
++                        final int absoluteChunkX = (regionX << REGION_SHIFT) | chunkX;
++                        final int absoluteChunkZ = (regionZ << REGION_SHIFT) | chunkZ;
++                        if (chunkSet.add(CoordinateUtils.getChunkKey(absoluteChunkX, absoluteChunkZ))) {
++                            chunk.lattice$getAllEntitiesForActivation(into);
++                        }
++                    }
++                }
++            }
++        }
++    }
++    // Lattice end - Leaf: optimize entity activation with a KD-tree
++
+     public void getHardCollidingEntities(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+         final int minChunkX = (Mth.floor(box.minX) - 2) >> 4;
+         final int minChunkZ = (Mth.floor(box.minZ) - 2) >> 4;
+diff --git a/io/papermc/paper/entity/activation/ActivationRange.java b/io/papermc/paper/entity/activation/ActivationRange.java
+index bc62da127a01b33ce8fc0f958bc232d6287d57ec..72163b6f4e8ab80ce2d581e3f8d5a4900a008cd2 100644
+--- a/io/papermc/paper/entity/activation/ActivationRange.java
++++ b/io/papermc/paper/entity/activation/ActivationRange.java
+@@ -121,6 +121,15 @@ public final class ActivationRange {
+      * @param world
+      */
+     public static void activateEntities(final Level world) {
++        // Lattice start - Leaf: optimize entity activation with a KD-tree
++        // Original author: hayanesuru <hayanesuru@outlook.jp>
++        // Original license: MIT
++        // Source: https://github.com/Winds-Studio/Leaf/commit/1f36f102062075e770fb3e2aa53ea5301e3da888
++        if (com.latticemc.lattice.util.EntityActivationKdTree.isEnabled() && world instanceof net.minecraft.server.level.ServerLevel serverLevel) {
++            serverLevel.lattice$entityActivationKdTree.activateEntities(serverLevel);
++            return;
++        }
++        // Lattice end - Leaf: optimize entity activation with a KD-tree
+         final int miscActivationRange = world.spigotConfig.miscActivationRange;
+         final int raiderActivationRange = world.spigotConfig.raiderActivationRange;
+         final int animalActivationRange = world.spigotConfig.animalActivationRange;
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index eb16e7099106c19b9ac7e39c21c280852429c8bb..48ff3c35af86a0f41e1c7ccae1ac302598243aac 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -230,6 +230,13 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     public final com.latticemc.lattice.util.EntityDistanceRadixSort lattice$entityDistanceRadixSort =
+         new com.latticemc.lattice.util.EntityDistanceRadixSort();
+     // Leaf end - fast bit radix sort
++    // Lattice start - Leaf: optimize entity activation with a KD-tree
++    // Original author: hayanesuru <hayanesuru@outlook.jp>
++    // Original license: MIT
++    // Source: https://github.com/Winds-Studio/Leaf/commit/1f36f102062075e770fb3e2aa53ea5301e3da888
++    public final com.latticemc.lattice.util.EntityActivationKdTree lattice$entityActivationKdTree =
++        new com.latticemc.lattice.util.EntityActivationKdTree();
++    // Lattice end - Leaf: optimize entity activation with a KD-tree
+ 
+     // CraftBukkit start
+     public final LevelStorageSource.LevelStorageAccess levelStorageAccess;
