@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 class NativeFindTopSurfaceTestSuite {
     @BeforeAll
     static void loadNativeLibrary() {
+        System.setProperty("lattice.nativeDensityFunctionGrid", "true");
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
         LatticeNative.load();
