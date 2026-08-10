@@ -86,6 +86,16 @@ void adjust_movement_avx2(const double* moving,
                           double* out_movement,
                           const double* obstacles,
                           std::size_t obstacle_count) noexcept;
+
+[[nodiscard]] double calc_max_offset_avx512(int axis, const double* moving,
+                                            double desired,
+                                            const double* obstacles,
+                                            std::size_t obstacle_count) noexcept;
+
+void adjust_movement_avx512(const double* moving,
+                            double* out_movement,
+                            const double* obstacles,
+                            std::size_t obstacle_count) noexcept;
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)

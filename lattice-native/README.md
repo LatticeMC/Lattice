@@ -102,6 +102,18 @@ Runtime environment variables:
 | `LATTICE_CPU_FORCE_SCALAR=1` | Disable all SIMD specialisations |
 | `LATTICE_CPU_DISABLE=avx512,bmi2` | Disable specific ISA extensions |
 
+World-generation SIMD coverage:
+
+- Density-function evaluation has an AVX-512 path (with its `AVX512DQ`
+  guard). Perlin, DoublePerlin and Simplex remain AVX2/scalar: their current
+  permutation lookups and branch-heavy topology do not have a verified
+  8-lane implementation that preserves the non-FMA/floor semantics.
+- Heightmap scanning and packed palette access intentionally remain on their
+  AVX2/BMI2 paths because a wider irregular scan has no demonstrated safe
+  benefit yet; scalar/NEON fallbacks remain available.
+- `-Dlattice.nativeCpu=avx2` and `scalar` cap dispatch so AVX-512 objects are
+  never entered; `auto`/`avx512` still require CPUID/XCR0 support.
+
 Notes:
 
 - The build **deliberately** does not use `-march=native`; the resulting

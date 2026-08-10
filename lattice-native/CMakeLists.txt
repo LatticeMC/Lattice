@@ -80,9 +80,10 @@ include(CheckCXXCompilerFlag)
 
 set(LATTICE_ARCH_X86 OFF)
 set(LATTICE_ARCH_ARM64 OFF)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86)$")
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" LATTICE_SYSTEM_PROCESSOR_LOWER)
+if(LATTICE_SYSTEM_PROCESSOR_LOWER MATCHES "^(x86_64|amd64|i[3-6]86)$")
     set(LATTICE_ARCH_X86 ON)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+elseif(LATTICE_SYSTEM_PROCESSOR_LOWER MATCHES "^(aarch64|arm64)$")
     set(LATTICE_ARCH_ARM64 ON)
 endif()
 
@@ -304,15 +305,21 @@ target_sources(lattice PRIVATE
 )
 
 if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
-    target_compile_definitions(lattice PRIVATE LATTICE_HAS_PERLIN_AVX2=1)
+    target_compile_definitions(lattice PRIVATE LATTICE_HAS_PERLIN_AVX2=1 LATTICE_HAS_PERLIN_AVX512=1)
     if(MSVC)
         lattice_add_simd_object(lattice_perlin_avx2
             SOURCES src/world/gen/noise/perlin_noise_avx2.cpp
             FLAGS   /arch:AVX2)
+        lattice_add_simd_object(lattice_perlin_avx512
+            SOURCES src/world/gen/noise/perlin_noise_avx512.cpp
+            FLAGS   /arch:AVX512)
     else()
         lattice_add_simd_object(lattice_perlin_avx2
             SOURCES src/world/gen/noise/perlin_noise_avx2.cpp
             FLAGS   -mavx2)
+        lattice_add_simd_object(lattice_perlin_avx512
+            SOURCES src/world/gen/noise/perlin_noise_avx512.cpp
+            FLAGS   -mavx512f -mavx512dq)
     endif()
 endif()
 
@@ -334,15 +341,21 @@ target_sources(lattice PRIVATE
 )
 
 if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
-    target_compile_definitions(lattice PRIVATE LATTICE_HAS_DOUBLE_PERLIN_AVX2=1)
+    target_compile_definitions(lattice PRIVATE LATTICE_HAS_DOUBLE_PERLIN_AVX2=1 LATTICE_HAS_DOUBLE_PERLIN_AVX512=1)
     if(MSVC)
         lattice_add_simd_object(lattice_double_perlin_avx2
             SOURCES src/world/gen/noise/double_perlin_noise_avx2.cpp
             FLAGS   /arch:AVX2)
+        lattice_add_simd_object(lattice_double_perlin_avx512
+            SOURCES src/world/gen/noise/double_perlin_noise_avx512.cpp
+            FLAGS   /arch:AVX512)
     else()
         lattice_add_simd_object(lattice_double_perlin_avx2
             SOURCES src/world/gen/noise/double_perlin_noise_avx2.cpp
             FLAGS   -mavx2)
+        lattice_add_simd_object(lattice_double_perlin_avx512
+            SOURCES src/world/gen/noise/double_perlin_noise_avx512.cpp
+            FLAGS   -mavx512f)
     endif()
 endif()
 
@@ -448,11 +461,13 @@ target_sources(lattice PRIVATE
     src/world/entity/los.cpp
     src/world/entity/pathfinder.cpp
     src/world/entity/biological_ai.cpp
+    src/world/entity/brain_eligibility.cpp
     src/world/entity/flee_target_sampler.cpp
     src/world/entity/home_target_sampler.cpp
     src/world/entity/water_target_sampler.cpp
     src/world/entity/spawn_filter.cpp
     jni/biological_ai.cpp
+    jni/brain_eligibility.cpp
     jni/entity_query.cpp
     jni/entity_visibility.cpp
     jni/los.cpp
@@ -469,12 +484,24 @@ if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
         lattice_add_simd_object(lattice_entity_aabb_avx2
             SOURCES src/world/entity/aabb_query_avx2.cpp
             FLAGS   /arch:AVX2)
+        lattice_add_simd_object(lattice_entity_aabb_avx512
+            SOURCES src/world/entity/aabb_query_avx512.cpp
+            FLAGS   /arch:AVX512)
+        lattice_add_simd_object(lattice_entity_vis_avx512
+            SOURCES src/world/entity/visibility_scan_avx512.cpp
+            FLAGS   /arch:AVX512)
         lattice_add_simd_object(lattice_entity_collision_avx2
             SOURCES src/world/entity/collision_sweep_avx2.cpp
             FLAGS   /arch:AVX2)
+        lattice_add_simd_object(lattice_entity_collision_avx512
+            SOURCES src/world/entity/collision_sweep_avx512.cpp
+            FLAGS   /arch:AVX512)
         lattice_add_simd_object(lattice_entity_pathfinder_avx2
             SOURCES src/world/entity/pathfinder_avx2.cpp
             FLAGS   /arch:AVX2)
+        lattice_add_simd_object(lattice_entity_pathfinder_avx512
+            SOURCES src/world/entity/pathfinder_avx512.cpp
+            FLAGS   /arch:AVX512)
     else()
         lattice_add_simd_object(lattice_entity_vis_avx2
             SOURCES src/world/entity/visibility_scan_avx2.cpp
@@ -482,17 +509,30 @@ if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
         lattice_add_simd_object(lattice_entity_aabb_avx2
             SOURCES src/world/entity/aabb_query_avx2.cpp
             FLAGS   -mavx2)
+        lattice_add_simd_object(lattice_entity_aabb_avx512
+            SOURCES src/world/entity/aabb_query_avx512.cpp
+            FLAGS   -mavx512f)
+        lattice_add_simd_object(lattice_entity_vis_avx512
+            SOURCES src/world/entity/visibility_scan_avx512.cpp
+            FLAGS   -mavx512f)
         lattice_add_simd_object(lattice_entity_collision_avx2
             SOURCES src/world/entity/collision_sweep_avx2.cpp
             FLAGS   -mavx2)
+        lattice_add_simd_object(lattice_entity_collision_avx512
+            SOURCES src/world/entity/collision_sweep_avx512.cpp
+            FLAGS   -mavx512f)
         lattice_add_simd_object(lattice_entity_pathfinder_avx2
             SOURCES src/world/entity/pathfinder_avx2.cpp
             FLAGS   -mavx2)
+        lattice_add_simd_object(lattice_entity_pathfinder_avx512
+            SOURCES src/world/entity/pathfinder_avx512.cpp
+            FLAGS   -mavx512f -mavx512bw)
     endif()
 endif()
 
 # NEON specialisations (AArch64). float64x2_t, 2 elements per iteration.
 if(LATTICE_ARCH_ARM64 AND LATTICE_ENABLE_SIMD)
+    target_compile_definitions(lattice PRIVATE LATTICE_HAS_BRAIN_ELIGIBILITY_NEON=1)
     if(MSVC)
         lattice_add_simd_object(lattice_entity_vis_neon
             SOURCES src/world/entity/visibility_scan_neon.cpp)
@@ -502,6 +542,8 @@ if(LATTICE_ARCH_ARM64 AND LATTICE_ENABLE_SIMD)
             SOURCES src/world/entity/collision_sweep_neon.cpp)
         lattice_add_simd_object(lattice_entity_pathfinder_neon
             SOURCES src/world/entity/pathfinder_neon.cpp)
+        lattice_add_simd_object(lattice_brain_eligibility_neon
+            SOURCES src/world/entity/brain_eligibility_neon.cpp)
     else()
         lattice_add_simd_object(lattice_entity_vis_neon
             SOURCES src/world/entity/visibility_scan_neon.cpp
@@ -515,7 +557,11 @@ if(LATTICE_ARCH_ARM64 AND LATTICE_ENABLE_SIMD)
         lattice_add_simd_object(lattice_entity_pathfinder_neon
             SOURCES src/world/entity/pathfinder_neon.cpp
             FLAGS   -O3)
+        lattice_add_simd_object(lattice_brain_eligibility_neon
+            SOURCES src/world/entity/brain_eligibility_neon.cpp
+            FLAGS   -O3)
     endif()
+
 endif()
 
 # All T1 modules (ChunkSerializer, PaletteOps, LightEngine) are now wired

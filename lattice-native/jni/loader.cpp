@@ -13,12 +13,13 @@
 #include <jni.h>
 
 #include <cstdio>
-#include <cstring>
 
 #include "lattice/dispatch.hpp"
 #include "world/gen/densityfunction/density_function.hpp" // init_density_dispatch
 #include "world/entity/aabb_query.hpp"       // init_aabb_dispatch
+#include "world/entity/brain_eligibility.hpp" // init_brain_eligibility_dispatch
 #include "world/entity/collision_sweep.hpp"  // init_collision_dispatch
+#include "world/entity/pathfinder.hpp"        // init_pathfinder_dispatch
 #include "world/entity/visibility_scan.hpp"  // init_visibility_dispatch
 #include "world/heightmap/heightmap_scan.hpp" // init_heightmap_dispatch
 #include "world/palette/packed_storage.hpp"  // init_palette_dispatch
@@ -33,7 +34,7 @@ JavaVM* vm() noexcept { return g_vm; }
 
 namespace {
 
-void configure_density_avx512_from_jvm(JNIEnv* env) noexcept {
+void configure_cpu_tier_from_jvm(JNIEnv* env) noexcept {
     if (!env) return;
     jclass system = env->FindClass("java/lang/System");
     if (!system || env->ExceptionCheck()) {
@@ -47,18 +48,17 @@ void configure_density_avx512_from_jvm(JNIEnv* env) noexcept {
         env->DeleteLocalRef(system);
         return;
     }
-    jstring key = env->NewStringUTF("lattice.nativeDensityFunctionAvx512");
+    jstring key = env->NewStringUTF("lattice.nativeCpu");
     if (!key || env->ExceptionCheck()) {
         env->ExceptionClear();
         env->DeleteLocalRef(system);
         return;
     }
-    bool enabled = false;
     auto* value = static_cast<jstring>(env->CallStaticObjectMethod(system, get_property, key));
     if (!env->ExceptionCheck() && value) {
         const char* chars = env->GetStringUTFChars(value, nullptr);
         if (chars) {
-            enabled = std::strcmp(chars, "true") == 0;
+            (void)lattice::cpu::configure_requested_tier(chars);
             env->ReleaseStringUTFChars(value, chars);
         }
     }
@@ -66,16 +66,16 @@ void configure_density_avx512_from_jvm(JNIEnv* env) noexcept {
     if (value) env->DeleteLocalRef(value);
     env->DeleteLocalRef(key);
     env->DeleteLocalRef(system);
-    lattice::world::gen::densityfunction::set_density_avx512_enabled(enabled);
 }
 
 } // namespace
+
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     lattice::runtime::g_vm = vm;
 
     JNIEnv* env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) == JNI_OK) {
-        configure_density_avx512_from_jvm(env);
+        configure_cpu_tier_from_jvm(env);
     }
 
     // Populate CPU features once, up front. Cheap (CPUID + a couple getenv).
@@ -90,6 +90,8 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     lattice::world::entity::init_visibility_dispatch();
     lattice::world::entity::init_aabb_dispatch();
     lattice::world::entity::init_collision_dispatch();
+    lattice::world::entity::init_brain_eligibility_dispatch();
+    lattice::world::entity::init_pathfinder_dispatch();
     lattice::world::gen::densityfunction::init_density_dispatch();
 
     // We rely on JNI 1.8 (varargs NewObject, direct buffers, critical arrays).
@@ -115,9 +117,7 @@ Java_com_latticemc_lattice_nativelib_LatticeNative_nativeCpuSummary(
     const char* s = lattice::cpu::summary();
     const char* density = lattice::world::gen::densityfunction::density_dispatch_summary();
     char summary[256] = {};
-    std::snprintf(summary, sizeof summary, "%s density=%s gate=%s",
-                  s ? s : "", density ? density : "uninitialized",
-                  lattice::world::gen::densityfunction::density_avx512_enabled()
-                      ? "enabled" : "disabled");
+    std::snprintf(summary, sizeof summary, "%s density=%s",
+                  s ? s : "", density ? density : "uninitialized");
     return env->NewStringUTF(summary);
 }

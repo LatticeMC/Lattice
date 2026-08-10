@@ -100,7 +100,10 @@ void init_aabb_dispatch() noexcept {
     (void)f;
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    if (f.avx2) {
+    if (f.avx512f) {
+        fn = &aabb_scan_avx512;
+        soa_fn = &aabb_scan_soa_avx512;
+    } else if (f.avx2) {
         fn = &aabb_scan_avx2;
         soa_fn = &aabb_scan_soa_avx2;
     }

@@ -174,4 +174,26 @@ void sample_y_scaled_array_ymax_avx2(const PerlinNoiseSampler& s,
                                      double y_scale, const double* y_max,
                                      std::size_t count, double* out) noexcept;
 
+void sample_batch_avx512(const PerlinNoiseSampler& s,
+                         const double* x, const double* y, const double* z,
+                         std::size_t count, double* out) noexcept;
+void sample_y_column_avx512(const PerlinNoiseSampler& s,
+                            double x, double y0, double z, double dy,
+                            std::size_t count, double* out) noexcept;
+void sample_y_array_avx512(const PerlinNoiseSampler& s,
+                           double x, const double* y, double z,
+                           std::size_t count, double* out) noexcept;
+void sample_y_scaled_batch_avx512(const PerlinNoiseSampler& s,
+                                  const double* x, const double* y, const double* z,
+                                  double y_scale, double y_max,
+                                  std::size_t count, double* out) noexcept;
+void sample_y_scaled_batch_ymax_avx512(const PerlinNoiseSampler& s,
+                                       const double* x, const double* y, const double* z,
+                                       double y_scale, const double* y_max,
+                                       std::size_t count, double* out) noexcept;
+void sample_y_scaled_array_ymax_avx512(const PerlinNoiseSampler& s,
+                                       double x, const double* y, double z,
+                                       double y_scale, const double* y_max,
+                                       std::size_t count, double* out) noexcept;
+
 } // namespace lattice::world::gen::noise

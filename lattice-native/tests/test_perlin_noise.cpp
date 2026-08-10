@@ -216,3 +216,33 @@ TEST_CASE("perlin: AVX2 batch paths match scalar reference") {
     for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
 }
 #endif
+
+#if defined(LATTICE_TEST_HAS_PERLIN_AVX512)
+TEST_CASE("perlin: AVX-512 eight-lane paths match scalar reference") {
+    const auto& cpu = lattice::cpu::initialize();
+    if (!cpu.avx512f || !cpu.avx512dq) return;
+
+    auto s = make_shuffled_sampler();
+    constexpr std::size_t count = 21; // 16 vector lanes plus a five-element tail.
+    std::vector<double> x(count), y(count), z(count), y_max(count), scalar(count), avx512(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const double fi = static_cast<double>(i);
+        x[i] = -17.25 + fi * 0.37;
+        y[i] = 9.50 - fi * 0.41;
+        z[i] = -6.75 + fi * 0.43;
+        y_max[i] = (i % 4 == 0) ? -1.0 : 0.0625 + fi * 0.03125;
+    }
+
+    sample_batch_scalar(s, x.data(), y.data(), z.data(), count, scalar.data());
+    sample_batch_avx512(s, x.data(), y.data(), z.data(), count, avx512.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+
+    sample_y_column_scalar(s, 1.25, -4.5, 8.75, 0.125, count, scalar.data());
+    sample_y_column_avx512(s, 1.25, -4.5, 8.75, 0.125, count, avx512.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+
+    sample_y_scaled_batch_ymax_scalar(s, x.data(), y.data(), z.data(), 0.125, y_max.data(), count, scalar.data());
+    sample_y_scaled_batch_ymax_avx512(s, x.data(), y.data(), z.data(), 0.125, y_max.data(), count, avx512.data());
+    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+}
+#endif

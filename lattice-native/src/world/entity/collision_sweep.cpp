@@ -123,7 +123,13 @@ void init_collision_dispatch() noexcept {
     (void)f;
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    if (f.avx2) { fn = &adjust_movement_avx2; cfn = &calc_max_offset_avx2; }
+    if (f.avx512f) {
+        fn = &adjust_movement_avx512;
+        cfn = &calc_max_offset_avx512;
+    } else if (f.avx2) {
+        fn = &adjust_movement_avx2;
+        cfn = &calc_max_offset_avx2;
+    }
 #elif defined(__aarch64__) || defined(_M_ARM64)
     if (f.neon) { fn = &adjust_movement_neon; cfn = &calc_max_offset_neon; }
 #endif

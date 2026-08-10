@@ -84,6 +84,16 @@ cmake --build build
 | `LATTICE_CPU_FORCE_SCALAR=1` | 禁用所有 SIMD 特化 |
 | `LATTICE_CPU_DISABLE=avx512,bmi2` | 禁用特定 ISA 扩展 |
 
+世界生成 SIMD 覆盖范围：
+
+- DensityFunction 已有独立的 AVX-512 内核（要求 `AVX512DQ`）。Perlin、
+  DoublePerlin 和 Simplex 仍保留 AVX2/scalar：当前 permutation 查表和分支
+  密集的拓扑尚没有通过验证、同时保持非 FMA/`floor` 语义的 8-lane 实现。
+- Heightmap 扫描和压缩 palette 访问有意保留 AVX2/BMI2：扩大不规则扫描的
+  向量宽度尚无已证实的安全收益，因此继续保留 scalar/NEON fallback。
+- `-Dlattice.nativeCpu=avx2` 和 `scalar` 会限制分派，绝不会进入 AVX-512
+  对象；`auto`/`avx512` 仍受 CPUID/XCR0 能力门控。
+
 注意事项：
 
 - 构建**有意**不使用 `-march=native`；生成的二进制文件在基线 ISA 级别（x86-64-v1 + SSE2 或 armv8-a）可移植，SIMD 特化通过运行时分派实现。

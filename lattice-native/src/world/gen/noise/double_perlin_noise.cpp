@@ -63,6 +63,12 @@ void sample_batch(const DoublePerlinNoiseSampler& s,
                   const double* x, const double* y, const double* z,
                   std::size_t count, double* out) noexcept {
     if (!x || !y || !z || !out) return;
+#if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX512)
+    if (lattice::cpu::features().avx512f && lattice::cpu::features().avx512dq) {
+        sample_batch_avx512(s, x, y, z, count, out);
+        return;
+    }
+#endif
 #if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX2)
     if (lattice::cpu::features().avx2) {
         sample_batch_avx2(s, x, y, z, count, out);
@@ -95,6 +101,12 @@ void sample_y_column(const DoublePerlinNoiseSampler& s,
                      double x, double y0, double z, double dy,
                      std::size_t count, double* out) noexcept {
     if (!out) return;
+#if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX512)
+    if (lattice::cpu::features().avx512f && lattice::cpu::features().avx512dq) {
+        sample_y_column_avx512(s, x, y0, z, dy, count, out);
+        return;
+    }
+#endif
 #if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX2)
     if (lattice::cpu::features().avx2) {
         sample_y_column_avx2(s, x, y0, z, dy, count, out);

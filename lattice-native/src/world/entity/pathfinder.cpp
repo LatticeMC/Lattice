@@ -440,7 +440,11 @@ void init_pathfinder_dispatch() noexcept {
     (void)f;
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    if (f.avx2) fn = &build_pathfinder_masks_avx2;
+    if (f.avx512bw) {
+        fn = &build_pathfinder_masks_avx512;
+    } else if (f.avx2) {
+        fn = &build_pathfinder_masks_avx2;
+    }
 #elif defined(__aarch64__) || defined(_M_ARM64)
     if (f.neon) fn = &build_pathfinder_masks_neon;
 #endif

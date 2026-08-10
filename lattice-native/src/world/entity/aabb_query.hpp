@@ -66,6 +66,12 @@ void aabb_scan_avx2(const double* query_aabbs, std::size_t query_count,
 void aabb_scan_soa_avx2(const double* query_aabbs, std::size_t query_count,
                         const double* entity_aabbs, std::size_t entity_count, std::size_t entity_stride,
                         std::uint64_t* visibility) noexcept;
+void aabb_scan_avx512(const double* query_aabbs, std::size_t query_count,
+                      const double* entity_aabbs, std::size_t entity_count,
+                      std::uint64_t* visibility) noexcept;
+void aabb_scan_soa_avx512(const double* query_aabbs, std::size_t query_count,
+                          const double* entity_aabbs, std::size_t entity_count, std::size_t entity_stride,
+                          std::uint64_t* visibility) noexcept;
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)

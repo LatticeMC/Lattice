@@ -70,6 +70,14 @@ void scan_avx2(const double* entity_xyz, const double* entity_range_sq,
                std::size_t player_count,
                std::uint64_t* visibility) noexcept;
 
+/// AVX-512-accelerated scan. Processes 8 players per entity per iteration.
+/// Pre-condition: `lattice::cpu::features().avx512f`.
+void scan_avx512(const double* entity_xyz, const double* entity_range_sq,
+                 std::size_t entity_count,
+                 const double* player_xyz,
+                 std::size_t player_count,
+                 std::uint64_t* visibility) noexcept;
+
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)

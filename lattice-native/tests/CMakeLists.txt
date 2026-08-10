@@ -61,9 +61,12 @@ endfunction()
 # must include the matching SIMD source.
 set(_palette_simd_srcs "")
 set(_entity_simd_srcs "")
+set(_entity_avx512_srcs "")
 set(_heightmap_simd_srcs "")
 set(_pathfinder_simd_srcs "")
+set(_brain_eligibility_simd_srcs "")
 set(_perlin_simd_srcs "")
+set(_perlin_avx512_srcs "")
 set(_double_perlin_simd_srcs "")
 set(_simplex_simd_srcs "")
 set(_density_simd_srcs "")
@@ -74,8 +77,14 @@ if(LATTICE_ARCH_X86)
         ${CMAKE_SOURCE_DIR}/src/world/entity/visibility_scan_avx2.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query_avx2.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep_avx2.cpp)
+    list(APPEND _entity_avx512_srcs
+        ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query_avx512.cpp
+        ${CMAKE_SOURCE_DIR}/src/world/entity/visibility_scan_avx512.cpp
+        ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep_avx512.cpp)
     list(APPEND _pathfinder_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder_avx2.cpp)
+    list(APPEND _pathfinder_avx512_srcs ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder_avx512.cpp)
     list(APPEND _perlin_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise_avx2.cpp)
+    list(APPEND _perlin_avx512_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise_avx512.cpp)
     list(APPEND _double_perlin_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise_avx2.cpp)
     list(APPEND _simplex_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise_avx2.cpp)
     list(APPEND _density_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function_avx2.cpp)
@@ -87,24 +96,49 @@ elseif(LATTICE_ARCH_ARM64)
         ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query_neon.cpp
         ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep_neon.cpp)
     list(APPEND _pathfinder_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder_neon.cpp)
+    list(APPEND _brain_eligibility_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/entity/brain_eligibility_neon.cpp)
 endif()
 
 # We compile the SIMD TUs into the test binary at the same per-source
 # flag level that the main library uses. CMake's source-file properties
 # carry the flag.
 foreach(s IN LISTS _palette_simd_srcs)
-    if(MSVC)
+    if(MSVC AND LATTICE_ARCH_X86)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     elseif(LATTICE_ARCH_X86)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mbmi2;-mavx2")
     endif()
 endforeach()
 
-foreach(s IN LISTS _heightmap_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs _perlin_simd_srcs _double_perlin_simd_srcs _simplex_simd_srcs _density_simd_srcs)
-    if(MSVC)
+foreach(s IN LISTS _heightmap_simd_srcs _entity_simd_srcs _pathfinder_simd_srcs _brain_eligibility_simd_srcs _perlin_simd_srcs _double_perlin_simd_srcs _simplex_simd_srcs _density_simd_srcs)
+    if(MSVC AND LATTICE_ARCH_X86)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX2")
     elseif(LATTICE_ARCH_X86)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mavx2")
+    endif()
+endforeach()
+
+foreach(s IN LISTS _entity_avx512_srcs)
+    if(MSVC)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX512")
+    elseif(LATTICE_ARCH_X86)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mavx512f")
+    endif()
+endforeach()
+
+foreach(s IN LISTS _pathfinder_avx512_srcs)
+    if(MSVC)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX512")
+    elseif(LATTICE_ARCH_X86)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512bw")
+    endif()
+endforeach()
+
+foreach(s IN LISTS _perlin_avx512_srcs)
+    if(MSVC)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX512")
+    elseif(LATTICE_ARCH_X86)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512dq")
     endif()
 endforeach()
 
@@ -132,6 +166,7 @@ lattice_add_test(entity_visibility
     SOURCES  test_entity_visibility.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/visibility_scan.cpp
              ${_entity_simd_srcs}
+             ${_entity_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
 lattice_add_test(los
@@ -142,6 +177,7 @@ lattice_add_test(aabb_query
     SOURCES  test_aabb_query.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/aabb_query.cpp
              ${_entity_simd_srcs}
+             ${_entity_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
 lattice_add_test(entity_query
@@ -152,12 +188,14 @@ lattice_add_test(collision_sweep
     SOURCES  test_collision_sweep.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/collision_sweep.cpp
              ${_entity_simd_srcs}
+             ${_entity_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
 lattice_add_test(pathfinder
     SOURCES  test_pathfinder.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder.cpp
              ${_pathfinder_simd_srcs}
+             ${_pathfinder_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
 lattice_add_test(spawn_filter
@@ -170,6 +208,15 @@ lattice_add_test(spawn_filter
 lattice_add_test(biological_ai
     SOURCES  test_biological_ai.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/biological_ai.cpp)
+
+lattice_add_test(brain_eligibility
+    SOURCES  test_brain_eligibility.cpp
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/entity/brain_eligibility.cpp
+             ${_brain_eligibility_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+if(LATTICE_ARCH_ARM64 AND LATTICE_ENABLE_SIMD)
+    target_compile_definitions(lattice_test_brain_eligibility PRIVATE LATTICE_HAS_BRAIN_ELIGIBILITY_NEON=1)
+endif()
 
 lattice_add_test(approach_target_sampler
     SOURCES  test_approach_target_sampler.cpp
@@ -203,9 +250,10 @@ lattice_add_test(perlin_noise
     SOURCES  test_perlin_noise.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
              ${_perlin_simd_srcs}
+             ${_perlin_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 if(LATTICE_ARCH_X86)
-    target_compile_definitions(lattice_test_perlin_noise PRIVATE LATTICE_TEST_HAS_PERLIN_AVX2=1)
+    target_compile_definitions(lattice_test_perlin_noise PRIVATE LATTICE_HAS_PERLIN_AVX512=1 LATTICE_TEST_HAS_PERLIN_AVX512=1 LATTICE_TEST_HAS_PERLIN_AVX2=1)
 endif()
 
 lattice_add_test(octave_perlin_noise
@@ -218,6 +266,7 @@ lattice_add_test(double_perlin_noise
     SOURCES  test_double_perlin_noise.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
              ${_perlin_simd_srcs}
+             ${_perlin_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
              ${_double_perlin_simd_srcs}
@@ -230,6 +279,7 @@ lattice_add_test(density_function
     SOURCES  test_density_function.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
              ${_perlin_simd_srcs}
+             ${_perlin_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
              ${_double_perlin_simd_srcs}
@@ -265,6 +315,7 @@ lattice_add_test(interpolated_noise
     SOURCES  test_interpolated_noise.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
              ${_perlin_simd_srcs}
+             ${_perlin_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp)
 
@@ -272,6 +323,7 @@ lattice_add_test(chunk_noise_sampler
     SOURCES  test_chunk_noise_sampler.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
              ${_perlin_simd_srcs}
+             ${_perlin_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
              ${_double_perlin_simd_srcs}

@@ -49,6 +49,10 @@ void sample_batch_avx2(const DoublePerlinNoiseSampler& s,
                        const double* x, const double* y, const double* z,
                        std::size_t count, double* out) noexcept;
 
+void sample_batch_avx512(const DoublePerlinNoiseSampler& s,
+                         const double* x, const double* y, const double* z,
+                         std::size_t count, double* out) noexcept;
+
 void sample_y_column(const DoublePerlinNoiseSampler& s,
                      double x, double y0, double z, double dy,
                      std::size_t count, double* out) noexcept;
@@ -60,6 +64,10 @@ void sample_y_column_scalar(const DoublePerlinNoiseSampler& s,
 void sample_y_column_avx2(const DoublePerlinNoiseSampler& s,
                           double x, double y0, double z, double dy,
                           std::size_t count, double* out) noexcept;
+
+void sample_y_column_avx512(const DoublePerlinNoiseSampler& s,
+                            double x, double y0, double z, double dy,
+                            std::size_t count, double* out) noexcept;
 
 /// `method_27407 createAmplitude(octaves)` — Mojang's amplitude scaling
 /// based on octave count. Mirrored exactly:

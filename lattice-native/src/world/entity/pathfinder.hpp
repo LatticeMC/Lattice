@@ -181,6 +181,12 @@ void build_pathfinder_masks_avx2(const std::int8_t* path_types,
                                  const float* pathfinding_malus,
                                  int pathfinding_malus_count,
                                  PathfinderMasks masks) noexcept;
+
+void build_pathfinder_masks_avx512(const std::int8_t* path_types,
+                                   std::size_t count,
+                                   const float* pathfinding_malus,
+                                   int pathfinding_malus_count,
+                                   PathfinderMasks masks) noexcept;
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
