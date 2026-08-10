@@ -82,7 +82,7 @@ jobs:
           cmake -S lattice-native -B lattice-native/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLATTICE_WARNINGS_AS_ERRORS=ON -DLATTICE_BUILD_TESTS=ON
           cmake --build lattice-native/build --parallel
           ctest --test-dir lattice-native/build --output-on-failure
-          file_output="$(file "${{ matrix.artifact_path }}")"
+          file_output="$(file -L "${{ matrix.artifact_path }}")"
           printf '%s\n' "$file_output"
           if [[ '${{ matrix.arch }}' == 'x86_64' ]]; then
             grep -Eqi '(x86[-_ ]64|x86-64)' <<<"$file_output"
@@ -121,7 +121,7 @@ jobs:
             cmake -S lattice-native -B lattice-native/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLATTICE_WARNINGS_AS_ERRORS=ON -DLATTICE_BUILD_TESTS=ON
             cmake --build lattice-native/build --parallel
             ctest --test-dir lattice-native/build --output-on-failure
-            file_output="$(file '${{ matrix.artifact_path }}')"
+            file_output="$(file -L '${{ matrix.artifact_path }}')"
             printf '%s\n' "$file_output"
             if [ '${{ matrix.arch }}' = 'x86_64' ]; then
               printf '%s\n' "$file_output" | grep -Eqi '(x86[-_ ]64|x86-64)'
@@ -140,7 +140,7 @@ jobs:
           staging_dir="$RUNNER_TEMP/lattice-native-release"
           rm -rf "$staging_dir"
           mkdir -p "$staging_dir"
-          cp -- "$SOURCE_PATH" "$staging_dir/$ASSET_NAME"
+          cp -L "$SOURCE_PATH" "$staging_dir/$ASSET_NAME"
           (cd "$staging_dir" && sha256sum "$ASSET_NAME" > "$ASSET_NAME.sha256")
 
       - name: Stage canonical release asset (Windows)
