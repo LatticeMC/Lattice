@@ -55,6 +55,7 @@ public final class ActivationBenchBotRunner {
     private static final long SETTLE_WINDOW_MILLIS = 2_000L;
     private static final long MOVE_INTERVAL_MILLIS = 1_000L;
     private static final long POLL_MILLIS = 100L;
+    private static final int MAX_CONFIGURATION_PACKET_RUNS = 256;
     private static final int MAX_BOTS = 100;
 
     private ActivationBenchBotRunner() {
@@ -103,6 +104,7 @@ public final class ActivationBenchBotRunner {
             // completed. Disable the default listener's otherwise identical blank reply.
             session.setFlag(MinecraftConstants.SEND_BLANK_KNOWN_PACKS_RESPONSE, false);
             state.session = session;
+            state.recordProtocolStateIfChanged();
             session.addListener(state.listener());
             states.add(state);
         }
@@ -166,6 +168,7 @@ public final class ActivationBenchBotRunner {
 
     private static boolean allHealthyAndPositioned(List<BotState> states) {
         for (BotState state : states) {
+            state.recordProtocolStateIfChanged();
             if (!state.session.isConnected() || !state.loginComplete || !state.hasPosition() || state.hasErrors()) {
                 return false;
             }
@@ -189,6 +192,7 @@ public final class ActivationBenchBotRunner {
         while (System.nanoTime() < deadline) {
             boolean ready = true;
             for (BotState state : states) {
+                state.recordProtocolStateIfChanged();
                 state.sendClientInformationIfConfiguration();
                 if (!state.session.isConnected()
                     || state.session.getPacketProtocol().getOutboundState() != ProtocolState.GAME) {
@@ -361,11 +365,16 @@ public final class ActivationBenchBotRunner {
         private final List<ConnectionEvent> connectionEvents = Collections.synchronizedList(new ArrayList<>());
         private final List<String> disconnectErrors = Collections.synchronizedList(new ArrayList<>());
         private final List<TeleportEvent> teleports = Collections.synchronizedList(new ArrayList<>());
+        private final List<ConfigurationPacketRun> configurationPackets = Collections.synchronizedList(new ArrayList<>());
+        private final List<ProtocolStateEvent> protocolStateEvents = Collections.synchronizedList(new ArrayList<>());
         private volatile ClientNetworkSession session;
         private volatile boolean loginComplete;
         private volatile boolean intentionalClose;
         private volatile boolean clientInformationSent;
         private volatile boolean knownPacksResponseSent;
+        private volatile ProtocolState lastInboundState;
+        private volatile ProtocolState lastOutboundState;
+        private volatile int configurationPacketsDropped;
         private volatile Coordinates latestCoordinates;
 
         private BotState(String name, CountDownLatch loginLatch) {
@@ -381,18 +390,21 @@ public final class ActivationBenchBotRunner {
                 }
 
                 @Override
-                public void packetReceived(Session ignored, Packet packet) {
+                public void packetReceived(Session current, Packet packet) {
+                    recordProtocolStateIfChanged(current);
+                    recordConfigurationPacket(current, packet);
                     if (packet instanceof ClientboundLoginFinishedPacket) {
                         loginComplete = true;
                         connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "login_complete"));
                         loginLatch.countDown();
                     } else if (packet instanceof ClientboundSelectKnownPacks) {
-                        respondToKnownPacks(ignored);
+                        respondToKnownPacks(current);
                     } else if (packet instanceof ClientboundFinishConfigurationPacket) {
-                        finishConfiguration(ignored);
+                        finishConfiguration(current);
                     } else if (packet instanceof ClientboundPlayerPositionPacket teleport) {
                         handleTeleport(teleport);
                     }
+                    recordProtocolStateIfChanged(current);
                 }
 
                 @Override
@@ -445,6 +457,51 @@ public final class ActivationBenchBotRunner {
                 current.send(new ServerboundSelectKnownPacks(Collections.emptyList()));
                 knownPacksResponseSent = true;
                 connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "known_packs_response_sent"));
+            }
+        }
+
+        private void recordConfigurationPacket(Session current, Packet packet) {
+            MinecraftProtocol protocol = current.getPacketProtocol();
+            if (protocol.getInboundState() != ProtocolState.CONFIGURATION
+                && protocol.getOutboundState() != ProtocolState.CONFIGURATION) {
+                return;
+            }
+            String type = packet.getClass().getSimpleName();
+            synchronized (configurationPackets) {
+                int size = configurationPackets.size();
+                if (size > 0) {
+                    ConfigurationPacketRun previous = configurationPackets.get(size - 1);
+                    if (previous.type().equals(type)) {
+                        configurationPackets.set(size - 1, new ConfigurationPacketRun(type, previous.count() + 1));
+                        return;
+                    }
+                }
+                if (size < MAX_CONFIGURATION_PACKET_RUNS) {
+                    configurationPackets.add(new ConfigurationPacketRun(type, 1));
+                } else {
+                    configurationPacketsDropped++;
+                }
+            }
+        }
+
+        private void recordProtocolStateIfChanged() {
+            ClientNetworkSession current = session;
+            if (current != null) {
+                recordProtocolStateIfChanged(current);
+            }
+        }
+
+        private void recordProtocolStateIfChanged(Session current) {
+            MinecraftProtocol protocol = current.getPacketProtocol();
+            ProtocolState inbound = protocol.getInboundState();
+            ProtocolState outbound = protocol.getOutboundState();
+            synchronized (protocolStateEvents) {
+                if (inbound == lastInboundState && outbound == lastOutboundState) {
+                    return;
+                }
+                lastInboundState = inbound;
+                lastOutboundState = outbound;
+                protocolStateEvents.add(new ProtocolStateEvent(Instant.now().toString(), inbound.name(), outbound.name()));
             }
         }
 
@@ -523,8 +580,10 @@ public final class ActivationBenchBotRunner {
         }
 
         private BotSnapshot snapshot() {
+            recordProtocolStateIfChanged();
             return new BotSnapshot(name, loginComplete, session != null && session.isConnected(), latestCoordinates,
-                new ArrayList<>(connectionEvents), new ArrayList<>(disconnectErrors), new ArrayList<>(teleports));
+                new ArrayList<>(connectionEvents), new ArrayList<>(disconnectErrors), new ArrayList<>(teleports),
+                new ArrayList<>(configurationPackets), configurationPacketsDropped, new ArrayList<>(protocolStateEvents));
         }
     }
 
@@ -538,9 +597,16 @@ public final class ActivationBenchBotRunner {
                                  Coordinates targetCoordinates, Coordinates latestCoordinates) {
     }
 
+    private record ConfigurationPacketRun(String type, int count) {
+    }
+
+    private record ProtocolStateEvent(String timestamp, String inbound, String outbound) {
+    }
+
     private record BotSnapshot(String name, boolean loginComplete, boolean connected, Coordinates latestCoordinates,
                                List<ConnectionEvent> connectionEvents, List<String> disconnectErrors,
-                               List<TeleportEvent> teleports) {
+                               List<TeleportEvent> teleports, List<ConfigurationPacketRun> configurationPackets,
+                               int configurationPacketsDropped, List<ProtocolStateEvent> protocolStateEvents) {
     }
 
     private static final class Result {
@@ -638,6 +704,25 @@ public final class ActivationBenchBotRunner {
                     .append(coordinates(teleport.serverCoordinates)).append(",\"targetCoordinates\":")
                     .append(coordinates(teleport.targetCoordinates)).append(",\"latestCoordinates\":")
                     .append(coordinates(teleport.latestCoordinates)).append('}');
+            }
+            json.append("],\"configurationPackets\":[");
+            for (int index = 0; index < bot.configurationPackets.size(); index++) {
+                if (index > 0) {
+                    json.append(',');
+                }
+                ConfigurationPacketRun packet = bot.configurationPackets.get(index);
+                json.append("{\"type\":").append(json(packet.type)).append(",\"count\":")
+                    .append(packet.count).append('}');
+            }
+            json.append("],\"configurationPacketsDropped\":").append(bot.configurationPacketsDropped)
+                .append(",\"protocolStateEvents\":[");
+            for (int index = 0; index < bot.protocolStateEvents.size(); index++) {
+                if (index > 0) {
+                    json.append(',');
+                }
+                ProtocolStateEvent state = bot.protocolStateEvents.get(index);
+                json.append("{\"timestamp\":").append(json(state.timestamp)).append(",\"inbound\":")
+                    .append(json(state.inbound)).append(",\"outbound\":").append(json(state.outbound)).append('}');
             }
             json.append("]}");
         }
