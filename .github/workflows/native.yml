@@ -137,9 +137,9 @@ jobs:
         shell: pwsh
         run: |
           $binPath = Join-Path $env:LLVM_MINGW_ROOT 'bin'
-          $cCompiler = (Join-Path $binPath "$($env:LLVM_MINGW_TARGET)-clang.exe").Replace('\\', '/')
-          $cxxCompiler = (Join-Path $binPath "$($env:LLVM_MINGW_TARGET)-clang++.exe").Replace('\\', '/')
-          $rcCompiler = (Join-Path $binPath "$($env:LLVM_MINGW_TARGET)-windres.exe").Replace('\\', '/')
+          $cCompiler = (Join-Path $binPath "$($env:LLVM_MINGW_TARGET)-clang.exe").Replace('\', '/')
+          $cxxCompiler = (Join-Path $binPath "$($env:LLVM_MINGW_TARGET)-clang++.exe").Replace('\', '/')
+          $rcCompiler = (Join-Path $binPath "$($env:LLVM_MINGW_TARGET)-windres.exe").Replace('\', '/')
           $configureArgs = @(
             '-S', 'lattice-native',
             '-B', 'lattice-native/build-windows',
