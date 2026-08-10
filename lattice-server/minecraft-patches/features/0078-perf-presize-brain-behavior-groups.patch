@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 9 Aug 2026 20:29:38 +0800
+Subject: [PATCH] perf: presize brain behavior groups
+
+
+diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
+index ed06691e8f25bc159fadaa2b79c796c990e17108..23c6c8a0272f760b142f0d1a1aa8ec9a84055128 100644
+--- a/net/minecraft/world/entity/ai/Brain.java
++++ b/net/minecraft/world/entity/ai/Brain.java
+@@ -398,16 +398,41 @@ public class Brain<E extends LivingEntity> {
+             this.activityMemoriesToEraseWhenStopped.put(activity, memoryTypes);
+         }
+
++        // Lattice start - Leaf: optimized Brain collections
+         for (Pair<Integer, ? extends BehaviorControl<? super E>> pair : tasks) {
+-            this.availableBehaviorsByPriority
+-                .computeIfAbsent(pair.getFirst(), integer -> new ActivityArrayMap<>()) // Lattice - Leaf: optimized Brain collections
+-                .computeIfAbsent(activity, activity1 -> new BehaviorControlArraySet<>()) // Lattice - Leaf: optimized Brain collections
+-                .add((BehaviorControl<? super E>)pair.getSecond());
++            Integer priority = pair.getFirst();
++            Map<Activity, Set<BehaviorControl<? super E>>> byActivity = this.availableBehaviorsByPriority
++                .computeIfAbsent(priority, integer -> new ActivityArrayMap<>());
++            Set<BehaviorControl<? super E>> group = byActivity.get(activity);
++            if (group == null) {
++                // Sizing from tasks.size() would over-allocate badly, because
++                // createPriorityPairs hands every behavior its own priority and
++                // leaves most groups holding a single entry. Counting the shared
++                // priority costs one pass per new group and lands on the exact
++                // size, so the 2 -> 4 -> 8 growth copies go away without trading
++                // them for dead slots.
++                group = new BehaviorControlArraySet<>(countAtPriority(tasks, priority));
++                byActivity.put(activity, group);
++            }
++            group.add((BehaviorControl<? super E>)pair.getSecond());
+         }
++        // Lattice end - Leaf: optimized Brain collections
+         this.activeBehaviorGroups = (BehaviorControlArraySet<? super E>[]) EMPTY_BEHAVIOR_GROUPS; // Lattice - Leaf: invalidate active behavior cache
+         this.latticeNativeEligibilityPlan = null;
+     }
+
++    // Lattice start - Leaf: optimized Brain collections
++    private static int countAtPriority(List<? extends Pair<Integer, ?>> tasks, Integer priority) {
++        int count = 0;
++        for (Pair<Integer, ?> pair : tasks) {
++            if (priority.equals(pair.getFirst())) {
++                count++;
++            }
++        }
++        return count;
++    }
++    // Lattice end - Leaf: optimized Brain collections
++
+     @VisibleForTesting
+     public void removeAllBehaviors() {
+         this.availableBehaviorsByPriority.clear();

@@ -69,11 +69,12 @@ public final class EntityActivationKdTree {
 
         final long currentTick = MinecraftServer.currentTick;
         final ServerPlayer[] players = world.players().toArray(EMPTY_PLAYERS);
-        final double[] playerX = new double[players.length];
-        final double[] playerZ = new double[players.length];
+        final double[] playerMinX = new double[players.length];
+        final double[] playerMaxX = new double[players.length];
+        final double[] playerMinZ = new double[players.length];
+        final double[] playerMaxZ = new double[players.length];
         final double[] playerMinY = new double[players.length];
         final double[] playerMaxY = new double[players.length];
-        final double[] playerHalfWidth = new double[players.length];
         int playerCount = 0;
         for (final ServerPlayer player : players) {
             player.activatedTick = currentTick;
@@ -83,17 +84,18 @@ public final class EntityActivationKdTree {
             if (!world.purpurConfig.idleTimeoutTickNearbyEntities && player.isAfk()) {
                 continue;
             }
-            playerX[playerCount] = player.getX();
-            playerZ[playerCount] = player.getZ();
             final AABB playerBox = player.getBoundingBox();
+            playerMinX[playerCount] = playerBox.minX;
+            playerMaxX[playerCount] = playerBox.maxX;
+            playerMinZ[playerCount] = playerBox.minZ;
+            playerMaxZ[playerCount] = playerBox.maxZ;
             playerMinY[playerCount] = playerBox.minY;
             playerMaxY[playerCount] = playerBox.maxY;
-            playerHalfWidth[playerCount] = Math.max(playerBox.getXsize(), playerBox.getZsize()) * 0.5;
             players[playerCount++] = player;
         }
 
         try {
-            this.players.build(playerX, playerZ, playerMinY, playerMaxY, playerHalfWidth, playerCount);
+            this.players.build(playerMinX, playerMaxX, playerMinY, playerMaxY, playerMinZ, playerMaxZ, playerCount);
             this.collectCandidates(world, players, playerCount, maxRange);
 
             final boolean tickMarkers = world.paperConfig().entities.markers.tick;
@@ -160,28 +162,25 @@ public final class EntityActivationKdTree {
         private double[] x = new double[0];
         private double[] z = new double[0];
         private int[] search = new int[0];
-        private double maxHalfWidth;
+        private double[] playerMinX = new double[0];
+        private double[] playerMaxX = new double[0];
+        private double[] playerMinZ = new double[0];
+        private double[] playerMaxZ = new double[0];
         private double[] playerMinY = new double[0];
         private double[] playerMaxY = new double[0];
-        private double[] playerHalfWidth = new double[0];
         private int nodeCount;
 
-        void build(double[] sourceX, double[] sourceZ, double[] sourceMinY, double[] sourceMaxY,
-                   double[] sourceHalfWidth, int count) {
+        void build(double[] sourceMinX, double[] sourceMaxX, double[] sourceMinY, double[] sourceMaxY,
+                   double[] sourceMinZ, double[] sourceMaxZ, int count) {
             this.nodeCount = 0;
             if (count == 0) {
-                this.maxHalfWidth = 0.0;
                 return;
-            }
-            this.maxHalfWidth = sourceHalfWidth[0];
-            for (int index = 1; index < count; index++) {
-                this.maxHalfWidth = Math.max(this.maxHalfWidth, sourceHalfWidth[index]);
             }
             this.ensureCapacity(count);
             for (int index = 0; index < count; index++) {
                 this.indices[index] = index;
             }
-            this.buildNode(sourceX, sourceZ, sourceMinY, sourceMaxY, sourceHalfWidth, 0, count, 0);
+            this.buildNode(sourceMinX, sourceMaxX, sourceMinY, sourceMaxY, sourceMinZ, sourceMaxZ, 0, count, 0);
         }
 
         boolean intersects(AABB target, double maximumDistance) {
@@ -191,81 +190,77 @@ public final class EntityActivationKdTree {
             if (this.search.length < this.nodeCount) {
                 this.search = new int[this.nodeCount];
             }
-            final double minX = target.minX - maximumDistance - this.maxHalfWidth;
-            final double maxX = target.maxX + maximumDistance + this.maxHalfWidth;
-            final double minZ = target.minZ - maximumDistance - this.maxHalfWidth;
-            final double maxZ = target.maxZ + maximumDistance + this.maxHalfWidth;
             final int[] stack = this.search;
             int stackSize = 0;
             stack[stackSize++] = 0;
             while (stackSize != 0) {
                 final int node = stack[--stackSize];
+                if (target.maxX <= this.playerMinX[node] - maximumDistance
+                        || target.minX >= this.playerMaxX[node] + maximumDistance
+                        || target.maxZ <= this.playerMinZ[node] - maximumDistance
+                        || target.minZ >= this.playerMaxZ[node] + maximumDistance) {
+                    continue;
+                }
                 final int child = this.right[node];
                 if (child == EMPTY) {
-                    final double halfWidth = this.playerHalfWidth[node];
-                    final double playerX = this.x[node];
-                    final double playerZ = this.z[node];
                     // Keep Paper's strict AABB intersection semantics at the matching player's leaf.
-                    if (target.maxX > playerX - halfWidth - maximumDistance
-                            && target.minX < playerX + halfWidth + maximumDistance
-                            && target.maxZ > playerZ - halfWidth - maximumDistance
-                            && target.minZ < playerZ + halfWidth + maximumDistance
-                            && target.maxY > this.playerMinY[node] - maximumDistance
+                    if (target.maxY > this.playerMinY[node] - maximumDistance
                             && target.minY < this.playerMaxY[node] + maximumDistance) {
                         return true;
                     }
                     continue;
                 }
 
-                final int splitAxis = this.axis[node];
                 final int left = node + 1;
-                final double min = splitAxis == 0 ? minX : minZ;
-                final double max = splitAxis == 0 ? maxX : maxZ;
-                if (min <= this.x[node]) {
-                    stack[stackSize++] = left;
-                }
-                if (max >= this.x[node]) {
-                    stack[stackSize++] = child;
-                }
+                stack[stackSize++] = left;
+                stack[stackSize++] = child;
             }
             return false;
         }
 
-        private int buildNode(double[] sourceX, double[] sourceZ, double[] sourceMinY, double[] sourceMaxY,
-                              double[] sourceHalfWidth, int start, int end, int depth) {
+        private int buildNode(double[] sourceMinX, double[] sourceMaxX, double[] sourceMinY, double[] sourceMaxY,
+                              double[] sourceMinZ, double[] sourceMaxZ, int start, int end, int depth) {
             final int node = this.nodeCount++;
             final int length = end - start;
             this.axis[node] = (byte) (depth & 1);
             if (length == 1) {
                 final int point = this.indices[start];
                 this.right[node] = EMPTY;
-                this.x[node] = sourceX[point];
-                this.z[node] = sourceZ[point];
+                this.x[node] = (sourceMinX[point] + sourceMaxX[point]) * 0.5;
+                this.z[node] = (sourceMinZ[point] + sourceMaxZ[point]) * 0.5;
+                this.playerMinX[node] = sourceMinX[point];
+                this.playerMaxX[node] = sourceMaxX[point];
+                this.playerMinZ[node] = sourceMinZ[point];
+                this.playerMaxZ[node] = sourceMaxZ[point];
                 this.playerMinY[node] = sourceMinY[point];
                 this.playerMaxY[node] = sourceMaxY[point];
-                this.playerHalfWidth[node] = sourceHalfWidth[point];
                 return node;
             }
 
             final int median = start + (length - 1) / 2;
-            this.select(sourceX, sourceZ, start, end - 1, median, depth & 1);
+            this.select(sourceMinX, sourceMaxX, sourceMinZ, sourceMaxZ, start, end - 1, median, depth & 1);
             final int point = this.indices[median];
-            this.x[node] = depth % 2 == 0 ? sourceX[point] : sourceZ[point];
-            this.buildNode(sourceX, sourceZ, sourceMinY, sourceMaxY, sourceHalfWidth, start, median + 1, depth + 1);
-            this.right[node] = this.buildNode(sourceX, sourceZ, sourceMinY, sourceMaxY, sourceHalfWidth, median + 1, end, depth + 1);
+            this.x[node] = depth % 2 == 0 ? (sourceMinX[point] + sourceMaxX[point]) * 0.5 : (sourceMinZ[point] + sourceMaxZ[point]) * 0.5;
+            final int left = this.buildNode(sourceMinX, sourceMaxX, sourceMinY, sourceMaxY, sourceMinZ, sourceMaxZ, start, median + 1, depth + 1);
+            this.right[node] = this.buildNode(sourceMinX, sourceMaxX, sourceMinY, sourceMaxY, sourceMinZ, sourceMaxZ, median + 1, end, depth + 1);
+            this.playerMinX[node] = Math.min(this.playerMinX[left], this.playerMinX[this.right[node]]);
+            this.playerMaxX[node] = Math.max(this.playerMaxX[left], this.playerMaxX[this.right[node]]);
+            this.playerMinZ[node] = Math.min(this.playerMinZ[left], this.playerMinZ[this.right[node]]);
+            this.playerMaxZ[node] = Math.max(this.playerMaxZ[left], this.playerMaxZ[this.right[node]]);
             return node;
         }
 
-        private void select(double[] sourceX, double[] sourceZ, int left, int right, int target, int axis) {
+        private void select(double[] sourceMinX, double[] sourceMaxX, double[] sourceMinZ, double[] sourceMaxZ,
+                            int left, int right, int target, int axis) {
             while (left < right) {
-                final double pivot = coordinate(sourceX, sourceZ, this.indices[(left + right) >>> 1], axis);
+                final double pivot = coordinate(sourceMinX, sourceMaxX, sourceMinZ, sourceMaxZ, this.indices[(left + right) >>> 1], axis);
                 int lower = left;
                 int upper = right;
                 while (lower <= upper) {
-                    while (coordinate(sourceX, sourceZ, this.indices[lower], axis) < pivot) {
+                    while (coordinate(sourceMinX, sourceMaxX, sourceMinZ, sourceMaxZ, this.indices[lower], axis) < pivot) {
                         lower++;
                     }
-                    while (coordinate(sourceX, sourceZ, this.indices[upper], axis) > pivot) {
+                    while (coordinate(sourceMinX, sourceMaxX, sourceMinZ, sourceMaxZ, this.indices[upper], axis) > pivot) {
                         upper--;
                     }
                     if (lower <= upper) {
@@ -284,8 +279,9 @@ public final class EntityActivationKdTree {
             }
         }
 
-        private static double coordinate(double[] sourceX, double[] sourceZ, int point, int axis) {
-            return axis == 0 ? sourceX[point] : sourceZ[point];
+        private static double coordinate(double[] sourceMinX, double[] sourceMaxX, double[] sourceMinZ, double[] sourceMaxZ,
+                                         int point, int axis) {
+            return axis == 0 ? (sourceMinX[point] + sourceMaxX[point]) * 0.5 : (sourceMinZ[point] + sourceMaxZ[point]) * 0.5;
         }
 
         private void ensureCapacity(int capacity) {
@@ -298,9 +294,12 @@ public final class EntityActivationKdTree {
             this.axis = new byte[nodeCapacity];
             this.x = new double[nodeCapacity];
             this.z = new double[nodeCapacity];
+            this.playerMinX = new double[nodeCapacity];
+            this.playerMaxX = new double[nodeCapacity];
+            this.playerMinZ = new double[nodeCapacity];
+            this.playerMaxZ = new double[nodeCapacity];
             this.playerMinY = new double[nodeCapacity];
             this.playerMaxY = new double[nodeCapacity];
-            this.playerHalfWidth = new double[nodeCapacity];
         }
     }
 }

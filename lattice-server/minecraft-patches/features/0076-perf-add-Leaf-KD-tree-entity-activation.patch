@@ -5,10 +5,10 @@ Subject: [PATCH] perf: add Leaf KD-tree entity activation
 
 
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
-index 2dfd412344a0e57f25a08d9c65656a13113baa4e..1ea2c18669d9463e1b8f0aed62b903db7d5e3516 100644
+index 090af282cb9200c13e560f4e30367223ebd4d782..7e1f0d636fe48741131f9f6b700ca3908fc53a95 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
 +++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
-@@ -213,6 +213,18 @@ public final class ChunkEntitySlices {
+@@ -238,6 +238,18 @@ public final class ChunkEntitySlices {
          return collectedEntities;
      }
  
@@ -28,10 +28,10 @@ index 2dfd412344a0e57f25a08d9c65656a13113baa4e..1ea2c18669d9463e1b8f0aed62b903db
          return this.entities.size() == 0;
      }
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
-index 2d24d03bbdb5ee0d862cbfff2219f58afffafe12..5035b93223e49ef0d5c9b9f225635aafa18cacb2 100644
+index 9ff9191dfafb43ace7a4a768120f322e95a2c93f..bcc88bab4075ad0e64ebc6a15f19ffa94ccd3c79 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
 +++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
-@@ -603,6 +603,49 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+@@ -617,6 +617,49 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
          }
      }
  
