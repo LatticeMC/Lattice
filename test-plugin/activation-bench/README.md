@@ -10,7 +10,7 @@ The target server must have `online-mode=false`. Authentication or online-mode f
 2. In-game, prepare the benchmark through the plugin command, for example:
 
    ```text
-   /activationbench prepare <count> <overlap|disjoint> <regions 1-16> [world] [x] [y] [z]
+   /activationbench prepare <count> <overlap|disjoint> <regions 1-100> [world] [x] [y] [z]
    ```
 
 3. Poll `/activationbench status` until the preparation phase is reported as ready.

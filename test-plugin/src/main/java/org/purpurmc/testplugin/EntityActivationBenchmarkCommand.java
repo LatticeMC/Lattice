@@ -29,7 +29,7 @@ import org.bukkit.scheduler.BukkitTask;
  */
 final class EntityActivationBenchmarkCommand extends Command {
     private static final int MAX_ENTITIES = 100_000;
-    private static final int MAX_REGIONS = 16;
+    private static final int MAX_REGIONS = 100;
     private static final int SPAWN_BATCH_SIZE = 512;
     private static final int REGION_STRIDE = 512;
     private static final String DEFAULT_BOT_PREFIX = "LatticeActBot";
@@ -88,7 +88,7 @@ final class EntityActivationBenchmarkCommand extends Command {
     private boolean prepare(final CommandSender sender, final String[] args) {
         if (args.length != 4 && args.length != 5 && args.length != 8) {
             sender.sendMessage(
-                "/activationbench prepare <count> <overlap|disjoint> <regions 1-16> [world] [x] [y] [z]"
+                "/activationbench prepare <count> <overlap|disjoint> <regions 1-100> [world] [x] [y] [z]"
             );
             return false;
         }
