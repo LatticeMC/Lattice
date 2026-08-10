@@ -49,6 +49,9 @@ import java.util.concurrent.TimeUnit;
 public final class ActivationBenchBotRunner {
     private static final String LIBRARY_VERSION = "1.21.11-1";
     private static final long LOGIN_TIMEOUT_SECONDS = 30L;
+    private static final long DEFAULT_GAME_READY_TIMEOUT_SECONDS = 30L;
+    private static final long MIN_GAME_READY_TIMEOUT_SECONDS = 5L;
+    private static final long MAX_GAME_READY_TIMEOUT_SECONDS = 120L;
     private static final long SETTLE_WINDOW_MILLIS = 2_000L;
     private static final long MOVE_INTERVAL_MILLIS = 1_000L;
     private static final long POLL_MILLIS = 100L;
@@ -114,7 +117,7 @@ public final class ActivationBenchBotRunner {
 
         boolean allLoggedIn = loginLatch.await(LOGIN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         boolean allConnectedAfterSettle = false;
-        boolean gameReady = allLoggedIn && awaitGameState(states);
+        boolean gameReady = allLoggedIn && awaitGameState(states, config.gameReadyTimeoutSeconds);
         if (gameReady) {
             // LoginFinished is still handled in LOGIN. Send movement only after
             // the default listener has advanced through CONFIGURATION to GAME.
@@ -181,8 +184,8 @@ public final class ActivationBenchBotRunner {
         return now + TimeUnit.MILLISECONDS.toNanos(MOVE_INTERVAL_MILLIS);
     }
 
-    private static boolean awaitGameState(List<BotState> states) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5L);
+    private static boolean awaitGameState(List<BotState> states, long timeoutSeconds) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
         while (System.nanoTime() < deadline) {
             boolean ready = true;
             for (BotState state : states) {
@@ -245,14 +248,17 @@ public final class ActivationBenchBotRunner {
         private final int bots;
         private final String prefix;
         private final long holdSeconds;
+        private final long gameReadyTimeoutSeconds;
         private final Path output;
 
-        private Config(String host, int port, int bots, String prefix, long holdSeconds, Path output) {
+        private Config(String host, int port, int bots, String prefix, long holdSeconds, long gameReadyTimeoutSeconds,
+                       Path output) {
             this.host = host;
             this.port = port;
             this.bots = bots;
             this.prefix = prefix;
             this.holdSeconds = holdSeconds;
+            this.gameReadyTimeoutSeconds = gameReadyTimeoutSeconds;
             this.output = output;
         }
 
@@ -262,6 +268,7 @@ public final class ActivationBenchBotRunner {
             int bots = 1;
             String prefix = "LatticeActBot";
             long holdSeconds = 10L;
+            long gameReadyTimeoutSeconds = DEFAULT_GAME_READY_TIMEOUT_SECONDS;
             Path output = null;
 
             for (int index = 0; index < args.length; index++) {
@@ -279,6 +286,8 @@ public final class ActivationBenchBotRunner {
                     case "--bots" -> bots = parseInt(value, option, 1, MAX_BOTS);
                     case "--prefix" -> prefix = value;
                     case "--hold-seconds" -> holdSeconds = parseLong(value, option, 0L, 86_400L);
+                    case "--game-ready-timeout-seconds" -> gameReadyTimeoutSeconds = parseLong(value, option,
+                        MIN_GAME_READY_TIMEOUT_SECONDS, MAX_GAME_READY_TIMEOUT_SECONDS);
                     case "--output" -> output = Path.of(value);
                     default -> throw new IllegalArgumentException("unknown option: " + option);
                 }
@@ -296,7 +305,7 @@ public final class ActivationBenchBotRunner {
             if ((prefix + bots).length() > 16) {
                 throw new IllegalArgumentException("bot names must be at most 16 characters");
             }
-            return new Config(host, port, bots, prefix, holdSeconds, output);
+            return new Config(host, port, bots, prefix, holdSeconds, gameReadyTimeoutSeconds, output);
         }
 
         private static boolean isSupportedBotCount(int value) {
@@ -572,6 +581,7 @@ public final class ActivationBenchBotRunner {
             field(json, "requestedBots", Integer.toString(config.bots)).append(',');
             field(json, "prefix", json(config.prefix)).append(',');
             field(json, "holdSeconds", Long.toString(config.holdSeconds)).append(',');
+            field(json, "gameReadyTimeoutSeconds", Long.toString(config.gameReadyTimeoutSeconds)).append(',');
             field(json, "settleWindowSeconds", "2").append(',');
             field(json, "startedAt", json(startedAt)).append(',');
             field(json, "finishedAt", json(finishedAt)).append(',');

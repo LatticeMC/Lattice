@@ -17,7 +17,7 @@ The target server must have `online-mode=false`. Authentication or online-mode f
 4. Start the bot runner from the repository root. The Gradle task is supplied by the isolated `activationBench` source set:
 
    ```text
-   ./gradlew :test-plugin:runActivationBench --args="--host 127.0.0.1 --port 25565 --bots 4 --prefix ab --hold-seconds 10 --output activation-bench/result.json"
+   ./gradlew :test-plugin:runActivationBench --args="--host 127.0.0.1 --port 25565 --bots 4 --prefix ab --hold-seconds 10 --game-ready-timeout-seconds 30 --output activation-bench/result.json"
    ```
 
    On Windows PowerShell, use the equivalent `gradlew.bat` command and quote the complete `--args` value as required by PowerShell.
@@ -54,7 +54,7 @@ If `-BotPrefix` differs from `LatticeActBot`, use the matching server JVM proper
 
 ## Options
 
-`--host`, `--port`, `--bots` (only `1, 2, 4, 8, 16, 32, 50, 64, 100`), `--prefix`, `--hold-seconds`, and `--output` are the supported options. Defaults are `127.0.0.1`, `25565`, `1`, `LatticeActBot`, `10`, and no output file. Bot names must remain within the Minecraft 16-character username limit. Teleport target/latest coordinates in the JSON are the server-assigned positions; the runner does not replace plugin overlap/disjoint anchors with a global coordinate.
+`--host`, `--port`, `--bots` (only `1, 2, 4, 8, 16, 32, 50, 64, 100`), `--prefix`, `--hold-seconds`, `--game-ready-timeout-seconds`, and `--output` are the supported options. Defaults are `127.0.0.1`, `25565`, `1`, `LatticeActBot`, `10`, `30`, and no output file. The GAME-ready timeout accepts `5..120` seconds. Heavy plugin stacks and first spawn/chunk preparation can legitimately take longer than five seconds after configuration starts; the timeout does not hide a disconnect or packet error, both still fail the run. Bot names must remain within the Minecraft 16-character username limit. Teleport target/latest coordinates in the JSON are the server-assigned positions; the runner does not replace plugin overlap/disjoint anchors with a global coordinate.
 
 Counts below 50 are control points, not an expected KD-tree win. Leaf's author places the likely break-even band around 50–100 simultaneously online players, so interpret the 50, 64, and 100 rows as the primary decision evidence.
 
