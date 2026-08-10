@@ -3,12 +3,18 @@ package com.latticemc.lattice.bootstrap;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.ByteArrayInputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,7 +26,9 @@ public final class LatticeNativeLoader {
     private static final String SYS_DOWNLOAD = "lattice.native.download";
     private static final String SYS_RELEASE = "lattice.native.release";
     private static final String SYS_RELEASE_BASE = "lattice.native.releaseBaseUrl";
-    private static final String DEFAULT_RELEASE_BASE = "https://github.com/LatticeMC/Lattice/releases/download/";
+    private static final String DEFAULT_RELEASE_BASE = "https://github.com/LatticeMC/Lattice/releases/download";
+    private static final String DEFAULT_RELEASE = "native-latest";
+    private static final Pattern CHECKSUM_PATTERN = Pattern.compile("^([0-9A-Fa-f]{64})  (.*?)(?:\\r?\\n)?$");
 
     private LatticeNativeLoader() {}
 
@@ -28,6 +36,7 @@ public final class LatticeNativeLoader {
         LINUX("linux", "so", "lib"),
         MAC("macos", "dylib", "lib"),
         WINDOWS("windows", "dll", ""),
+        FREEBSD("freebsd", "so", "lib"),
         UNKNOWN("unknown", "", "");
 
         public final String dirName;
@@ -59,13 +68,18 @@ public final class LatticeNativeLoader {
     }
 
     public static Platform detect() {
-        final String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        final String osArch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
+        return detect(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
+    }
+
+    static Platform detect(String osNameValue, String osArchValue) {
+        final String osName = osNameValue == null ? "" : osNameValue.toLowerCase(Locale.ROOT);
+        final String osArch = osArchValue == null ? "" : osArchValue.toLowerCase(Locale.ROOT);
 
         Os os;
         if (osName.contains("linux")) os = Os.LINUX;
         else if (osName.contains("mac") || osName.contains("darwin")) os = Os.MAC;
         else if (osName.contains("win")) os = Os.WINDOWS;
+        else if (osName.contains("freebsd")) os = Os.FREEBSD;
         else os = Os.UNKNOWN;
 
         Arch arch;
@@ -136,12 +150,66 @@ public final class LatticeNativeLoader {
                     + " (download disabled with -D" + SYS_DOWNLOAD + "=false)", null);
         }
         final Platform platform = detect();
-        final String asset = "lattice-native-" + platform.tag() + "." + platform.os.libExt;
-        final String release = System.getProperty(SYS_RELEASE, "latest").trim();
+        final String asset = assetName(platform);
+        final String release = normalizeRelease(System.getProperty(SYS_RELEASE, DEFAULT_RELEASE));
         final String base = System.getProperty(SYS_RELEASE_BASE, DEFAULT_RELEASE_BASE).trim();
-        final String separator = base.endsWith("/") ? "" : "/";
-        final String endpoint = base + separator + encodePath(release) + "/" + encodePath(asset);
-        final HttpURLConnection connection = (HttpURLConnection) URI.create(endpoint).toURL().openConnection();
+        final String endpoint = buildReleaseAssetUrl(base, release, asset);
+        final byte[] nativeBytes = downloadBytes(endpoint);
+        final byte[] checksumBytes = downloadBytes(endpoint + ".sha256");
+        verifyChecksum(nativeBytes, new String(checksumBytes, StandardCharsets.UTF_8), asset);
+        LOGGER.info("Downloading Lattice native release asset '{}'", asset);
+        return extractToCache(libFile, new ByteArrayInputStream(nativeBytes));
+    }
+
+    static String assetName(Platform platform) {
+        return "lattice-native-" + platform.tag() + "." + platform.os.libExt;
+    }
+
+    static String buildReleaseAssetUrl(String base, String release, String asset) {
+        String normalizedBase = base.trim();
+        while (normalizedBase.endsWith("/")) {
+            normalizedBase = normalizedBase.substring(0, normalizedBase.length() - 1);
+        }
+        return normalizedBase + "/" + encodePath(normalizeRelease(release)) + "/" + encodePath(asset);
+    }
+
+    static String normalizeRelease(String release) {
+        final String value = release == null ? "" : release.trim();
+        return value.isEmpty() || value.equalsIgnoreCase("latest") ? DEFAULT_RELEASE : value;
+    }
+
+    static String parseChecksum(String content, String asset) {
+        Matcher matcher = CHECKSUM_PATTERN.matcher(content);
+        if (!matcher.matches() || !matcher.group(2).equals(asset)) {
+            throw new IllegalArgumentException("invalid SHA-256 checksum record for " + asset);
+        }
+        return matcher.group(1).toLowerCase(Locale.ROOT);
+    }
+
+    static void verifyChecksum(byte[] nativeBytes, String checksumContent, String asset) throws IOException {
+        final String expectedHash;
+        try {
+            expectedHash = parseChecksum(checksumContent, asset);
+        } catch (IllegalArgumentException invalidChecksum) {
+            throw new IOException("invalid SHA-256 checksum for " + asset, invalidChecksum);
+        }
+        final String actualHash = sha256Hex(nativeBytes);
+        if (!actualHash.equalsIgnoreCase(expectedHash)) {
+            throw new IOException("SHA-256 mismatch for " + asset + ": expected " + expectedHash + ", got " + actualHash);
+        }
+    }
+
+    private static byte[] downloadBytes(String endpoint) throws IOException {
+        final HttpURLConnection connection;
+        try {
+            final Object rawConnection = URI.create(endpoint).toURL().openConnection();
+            if (!(rawConnection instanceof HttpURLConnection httpConnection)) {
+                throw new IOException("native release URL is not HTTP(S): " + endpoint);
+            }
+            connection = httpConnection;
+        } catch (IllegalArgumentException invalidEndpoint) {
+            throw new IOException("invalid native release URL: " + endpoint, invalidEndpoint);
+        }
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(60_000);
         connection.setInstanceFollowRedirects(true);
@@ -150,8 +218,9 @@ public final class LatticeNativeLoader {
             if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
                 throw new IOException("HTTP " + connection.getResponseCode() + " for " + endpoint);
             }
-            LOGGER.info("Downloading Lattice native release asset '{}'", asset);
-            return extractToCache(libFile, connection.getInputStream());
+            try (InputStream in = connection.getInputStream()) {
+                return in.readAllBytes();
+            }
         } finally {
             connection.disconnect();
         }
@@ -195,13 +264,26 @@ public final class LatticeNativeLoader {
 
     private static String shortHash(byte[] bytes) {
         try {
-            final byte[] full = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+            final byte[] full = MessageDigest.getInstance("SHA-256").digest(bytes);
             final StringBuilder sb = new StringBuilder(16);
             for (int i = 0; i < 8; ++i) {
                 sb.append(String.format("%02x", full[i] & 0xFF));
             }
             return sb.toString();
-        } catch (java.security.NoSuchAlgorithmException e) {
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            final byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+            final StringBuilder sb = new StringBuilder(64);
+            for (byte value : digest) {
+                sb.append(String.format("%02x", value & 0xFF));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
             throw new AssertionError(e);
         }
     }

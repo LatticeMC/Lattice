@@ -12,6 +12,7 @@ on:
       - 'purpur-server/**'
       - 'lattice-api/**'
       - 'lattice-server/**'
+      - 'lattice-native/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
@@ -25,10 +26,18 @@ on:
       - 'purpur-server/**'
       - 'lattice-api/**'
       - 'lattice-server/**'
+      - 'lattice-native/**'
       - '.github/workflows/build.yml'
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mc_version: ${{ steps.stage.outputs.mc_version }}
+      artifact_name: ${{ steps.stage.outputs.artifact_name }}
+      asset_name: ${{ steps.stage.outputs.asset_name }}
+      checksum_name: ${{ steps.stage.outputs.checksum_name }}
     env:
       GIT_AUTHOR_NAME: GitHub Actions
       GIT_AUTHOR_EMAIL: actions@github.com
@@ -36,12 +45,31 @@ jobs:
       GIT_COMMITTER_EMAIL: actions@github.com
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y git cmake ninja-build build-essential
+          cmake_version="$(cmake --version | awk 'NR == 1 { print $3 }')"
+          if ! printf '%s\n%s\n' '3.20' "$cmake_version" | sort -C -V; then
+            echo "CMake 3.20 or newer is required; found $cmake_version" >&2
+            exit 1
+          fi
+          git --version
+          java --version
+          cmake --version
+          ninja --version
+          g++ --version
+          printf '%s\n' 'int main() { return 0; }' | g++ -std=c++20 -x c++ -fsyntax-only -
       - name: Configure Git
         run: |
           git config --global user.email "actions@github.com"
@@ -50,15 +78,99 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
       - name: Apply patches
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
         run: ./gradlew applyAllPatches --no-parallel --stacktrace
       - name: Build
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
         run: ./gradlew build --stacktrace
       - name: Build reobf Paperclip jar
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
         run: ./gradlew :lattice-server:createMojmapPaperclipJar --stacktrace
+      - name: Stage release assets
+        id: stage
+        shell: bash
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+
+          if ! mc_version="$(./gradlew -q printMinecraftVersion)"; then
+            echo "Failed to determine Minecraft version" >&2
+            exit 1
+          fi
+          if [[ -z "$mc_version" || ! "$mc_version" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Unsafe or empty Minecraft version: $mc_version" >&2
+            exit 1
+          fi
+
+          if [[ ! -d lattice-server/build ]]; then
+            echo "Missing lattice-server/build directory" >&2
+            exit 1
+          fi
+          candidates_file="$(mktemp)"
+          trap 'rm -f "$candidates_file"' EXIT
+          if ! find lattice-server/build -type f -name '*paperclip*.jar' -print0 > "$candidates_file"; then
+            echo "Failed to search for Paperclip jar" >&2
+            exit 1
+          fi
+          mapfile -d '' -t candidates < "$candidates_file"
+          if (( ${#candidates[@]} != 1 )); then
+            echo "Expected exactly one Paperclip jar, found ${#candidates[@]}" >&2
+            printf '%s\n' "${candidates[@]}" >&2
+            exit 1
+          fi
+
+          staging_dir="$RUNNER_TEMP/lattice-release"
+          rm -rf "$staging_dir"
+          mkdir -p "$staging_dir"
+          asset_name="lattice-${mc_version}-b${BUILD_NUMBER}.jar"
+          asset_path="$staging_dir/$asset_name"
+          checksum_name="${asset_name}.sha256"
+          checksum_path="$staging_dir/$checksum_name"
+          artifact_name="lattice-${mc_version}-b${BUILD_NUMBER}"
+          cp -- "${candidates[0]}" "$asset_path"
+          (cd "$staging_dir" && sha256sum "$asset_name" > "$checksum_name")
+
+          {
+            echo "mc_version=$mc_version"
+            echo "artifact_name=$artifact_name"
+            echo "asset_name=$asset_name"
+            echo "checksum_name=$checksum_name"
+            echo "staging_dir=$staging_dir"
+          } >> "$GITHUB_OUTPUT"
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lattice-build
-          path: |
-            lattice-server/build/**/*paperclip*.jar
+          name: ${{ steps.stage.outputs.artifact_name }}
+          path: ${{ steps.stage.outputs.staging_dir }}
           if-no-files-found: error
+          overwrite: true
+  publish:
+    needs: build
+    if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: release-assets
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build.outputs.mc_version }}-b${{ github.run_number }}
+          name: 'Lattice ${{ needs.build.outputs.mc_version }} · Build #${{ github.run_number }}'
+          files: |
+            release-assets/${{ needs.build.outputs.asset_name }}
+            release-assets/${{ needs.build.outputs.checksum_name }}
+          draft: false
+          prerelease: true
+          make_latest: false
+          generate_release_notes: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
