@@ -97,11 +97,20 @@ jobs:
           cmake -S lattice-native -B lattice-native/build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DLATTICE_WARNINGS_AS_ERRORS=ON -DLATTICE_BUILD_TESTS=ON
           cmake --build lattice-native/build-windows --config Release --parallel
           ctest --test-dir lattice-native/build-windows --output-on-failure -C Release
-          $headers = & dumpbin /headers '${{ matrix.artifact_path }}'
+          $artifacts = @(Get-ChildItem -LiteralPath 'lattice-native/build-windows' -Recurse -File -Filter 'lattice.dll')
+          if ($artifacts.Count -ne 1) {
+            Get-ChildItem -LiteralPath 'lattice-native/build-windows' -Recurse -File -Filter '*.dll' | Select-Object -ExpandProperty FullName
+            throw "Expected exactly one lattice.dll, found $($artifacts.Count)"
+          }
+          $artifactPath = $artifacts[0].FullName
+          "WINDOWS_ARTIFACT_PATH=$artifactPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $headers = & dumpbin /headers $artifactPath 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for $artifactPath" }
           $headers
+          $headerText = $headers -join "`n"
           if ('${{ matrix.arch }}' -eq 'x86_64') {
-            if ($headers -notmatch 'machine \(x64\)') { throw 'Expected x64 PE library' }
-          } elseif ($headers -notmatch 'machine \(ARM64\)') {
+            if ($headerText -notmatch 'machine \(x64\)') { throw 'Expected x64 PE library' }
+          } elseif ($headerText -notmatch 'machine \(ARM64\)') {
             throw 'Expected ARM64 PE library'
           }
 
@@ -115,7 +124,7 @@ jobs:
           sync: rsync
           run: |
             set -eux
-            sudo pkg install -y cmake ninja git openjdk21 pkgconf libdeflate file
+            pkg install -y cmake ninja git openjdk21 pkgconf libdeflate file
             test "$(uname -m)" = '${{ matrix.arch == 'aarch64' && 'aarch64' || 'amd64' }}'
             export JAVA_HOME="$(dirname "$(dirname "$(realpath "$(command -v javac)")")")"
             cmake -S lattice-native -B lattice-native/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLATTICE_WARNINGS_AS_ERRORS=ON -DLATTICE_BUILD_TESTS=ON
@@ -148,7 +157,7 @@ jobs:
         shell: pwsh
         env:
           ASSET_NAME: ${{ matrix.asset_name }}
-          SOURCE_PATH: ${{ matrix.artifact_path }}
+          SOURCE_PATH: ${{ env.WINDOWS_ARTIFACT_PATH }}
         run: |
           $stagingDir = Join-Path $env:RUNNER_TEMP 'lattice-native-release'
           Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
