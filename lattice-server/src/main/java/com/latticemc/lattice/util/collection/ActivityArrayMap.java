@@ -1,8 +1,10 @@
 package com.latticemc.lattice.util.collection;
 
+import java.util.AbstractCollection;
 import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -26,6 +28,8 @@ public final class ActivityArrayMap<V> extends AbstractMap<Activity, V> {
     private int size;
     private int bits;
     private @Nullable Set<Entry<Activity, V>> entries;
+    private @Nullable Set<Activity> keyView;
+    private @Nullable Collection<V> valueView;
 
     public @Nullable V getValue(int activityId) {
         int index = this.find(activityId);
@@ -100,6 +104,34 @@ public final class ActivityArrayMap<V> extends AbstractMap<Activity, V> {
         return this.entries;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>{@link AbstractMap} would route this through {@link #entrySet()} and
+     * allocate an entry per element only to call {@code getKey()} on it.</p>
+     */
+    @Override
+    public Set<Activity> keySet() {
+        if (this.keyView == null) {
+            this.keyView = new KeySet();
+        }
+        return this.keyView;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>See {@link #keySet()}: the values are already dense, so iterating them
+     * needs no entry objects at all.</p>
+     */
+    @Override
+    public Collection<V> values() {
+        if (this.valueView == null) {
+            this.valueView = new Values();
+        }
+        return this.valueView;
+    }
+
     private int find(int activityId) {
         if ((this.bits & 1 << activityId) == 0) {
             return -1;
@@ -144,41 +176,108 @@ public final class ActivityArrayMap<V> extends AbstractMap<Activity, V> {
 
         @Override
         public Iterator<Entry<Activity, V>> iterator() {
-            return new Iterator<>() {
-                private int next;
-                private int current = -1;
-
+            return new ViewIterator<>() {
                 @Override
-                public boolean hasNext() {
-                    return this.next < ActivityArrayMap.this.size;
-                }
-
-                @Override
-                public Entry<Activity, V> next() {
-                    if (!this.hasNext()) {
-                        throw new NoSuchElementException();
-                    }
-                    this.current = this.next++;
-                    return new MapEntry(ActivityArrayMap.this.keys[this.current], (V) ActivityArrayMap.this.values[this.current]);
-                }
-
-                @Override
-                public void remove() {
-                    if (this.current < 0) {
-                        throw new IllegalStateException();
-                    }
-                    ActivityArrayMap.this.removeAt(this.current);
-                    this.next = this.current;
-                    this.current = -1;
+                Entry<Activity, V> valueAt(int index) {
+                    // Unlike the key and value views this one still has to hand out
+                    // an object per element: a shared instance would alias itself in
+                    // anything that collects the entries, such as AbstractSet#toArray.
+                    return new MapEntry(ActivityArrayMap.this.keys[index]);
                 }
             };
+        }
+    }
+
+    private final class KeySet extends AbstractSet<Activity> {
+        @Override
+        public int size() {
+            return ActivityArrayMap.this.size;
+        }
+
+        @Override
+        public boolean contains(Object key) {
+            return ActivityArrayMap.this.containsKey(key);
+        }
+
+        @Override
+        public boolean remove(Object key) {
+            return ActivityArrayMap.this.remove(key) != null;
+        }
+
+        @Override
+        public void clear() {
+            ActivityArrayMap.this.clear();
+        }
+
+        @Override
+        public Iterator<Activity> iterator() {
+            return new ViewIterator<>() {
+                @Override
+                Activity valueAt(int index) {
+                    return ActivityRegistryIndex.byId(ActivityArrayMap.this.keys[index]);
+                }
+            };
+        }
+    }
+
+    private final class Values extends AbstractCollection<V> {
+        @Override
+        public int size() {
+            return ActivityArrayMap.this.size;
+        }
+
+        @Override
+        public void clear() {
+            ActivityArrayMap.this.clear();
+        }
+
+        @Override
+        public Iterator<V> iterator() {
+            return new ViewIterator<>() {
+                @Override
+                V valueAt(int index) {
+                    return (V) ActivityArrayMap.this.values[index];
+                }
+            };
+        }
+    }
+
+    /** Shared cursor for the key and value views, neither of which needs entry objects. */
+    private abstract class ViewIterator<T> implements Iterator<T> {
+        private int next;
+        private int current = -1;
+
+        abstract T valueAt(int index);
+
+        @Override
+        public boolean hasNext() {
+            return this.next < ActivityArrayMap.this.size;
+        }
+
+        @Override
+        public T next() {
+            if (!this.hasNext()) {
+                throw new NoSuchElementException();
+            }
+            this.current = this.next++;
+            return this.valueAt(this.current);
+        }
+
+        @Override
+        public void remove() {
+            if (this.current < 0) {
+                throw new IllegalStateException();
+            }
+            ActivityArrayMap.this.removeAt(this.current);
+            this.next = this.current;
+            this.current = -1;
         }
     }
 
     private final class MapEntry implements Entry<Activity, V> {
         private final int activityId;
 
-        private MapEntry(int activityId, V value) {
+        private MapEntry(int activityId) {
             this.activityId = activityId;
         }
 

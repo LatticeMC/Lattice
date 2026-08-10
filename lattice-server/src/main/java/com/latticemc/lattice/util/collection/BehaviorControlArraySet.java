@@ -26,6 +26,25 @@ public final class BehaviorControlArraySet<E extends LivingEntity> extends Abstr
     private int size;
     private int running;
 
+    public BehaviorControlArraySet() {
+    }
+
+    /**
+     * Allocates the backing array once for a known behavior count.
+     *
+     * <p>The growth path doubles from two, so a group of nine behaviors otherwise
+     * leaves four dead arrays behind and ends up with seven unused slots. Brains
+     * are built once per mob and never shrink, so paying for the exact size up
+     * front is both less garbage and less retained memory.</p>
+     *
+     * @param expectedSize the number of behaviors this group will hold; ignored when not positive
+     */
+    public BehaviorControlArraySet(int expectedSize) {
+        if (expectedSize > 0) {
+            this.values = (BehaviorControl<? super E>[]) new BehaviorControl<?>[expectedSize];
+        }
+    }
+
     public BehaviorControl<? super E>[] raw() {
         return this.values;
     }
