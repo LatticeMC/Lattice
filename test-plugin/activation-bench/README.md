@@ -60,4 +60,4 @@ Counts below 50 are control points, not an expected KD-tree win. Leaf's author p
 
 Exit code `0` means every requested bot completed login and remained connected through the two-second settle window and requested hold period. Exit code `1` reports a connection/login/hold failure and still emits a JSON result when the runner reaches its normal result path. Exit code `2` indicates invalid arguments, including online-mode/authentication flags.
 
-The JSON includes the MCProtocolLib and Minecraft protocol versions, timestamps, requested bot names, per-bot connection events, disconnect errors, teleport IDs and server/target/latest coordinates, and the checks used to determine success.
+The JSON includes the MCProtocolLib and Minecraft protocol versions, timestamps, requested bot names, per-bot connection events, disconnect errors, teleport IDs and server/target/latest coordinates, and the checks used to determine success. A successful 1.21.11 configuration handshake records `known_packs_requested`, `known_packs_response_sent`, and `client_information_sent` before the runner enters GAME and accepts the server teleport.

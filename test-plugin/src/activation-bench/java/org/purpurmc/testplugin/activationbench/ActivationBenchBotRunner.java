@@ -8,6 +8,7 @@ import org.geysermc.mcprotocollib.network.event.session.PacketErrorEvent;
 import org.geysermc.mcprotocollib.network.event.session.SessionAdapter;
 import org.geysermc.mcprotocollib.network.factory.ClientNetworkSessionFactory;
 import org.geysermc.mcprotocollib.network.session.ClientNetworkSession;
+import org.geysermc.mcprotocollib.protocol.MinecraftConstants;
 import org.geysermc.mcprotocollib.protocol.MinecraftProtocol;
 import org.geysermc.mcprotocollib.protocol.codec.MinecraftCodec;
 import org.geysermc.mcprotocollib.protocol.data.ProtocolState;
@@ -20,6 +21,7 @@ import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.Serverbound
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundFinishConfigurationPacket;
 import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundSelectKnownPacks;
 import org.geysermc.mcprotocollib.protocol.packet.configuration.serverbound.ServerboundFinishConfigurationPacket;
+import org.geysermc.mcprotocollib.protocol.packet.configuration.serverbound.ServerboundSelectKnownPacks;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundMovePlayerPosPacket;
@@ -94,6 +96,9 @@ public final class ActivationBenchBotRunner {
                 .setAddress(config.host, config.port)
                 .setProtocol(new MinecraftProtocol(name))
                 .create();
+            // The runner owns this reply so it can prove the CONFIGURATION handshake
+            // completed. Disable the default listener's otherwise identical blank reply.
+            session.setFlag(MinecraftConstants.SEND_BLANK_KNOWN_PACKS_RESPONSE, false);
             state.session = session;
             session.addListener(state.listener());
             states.add(state);
@@ -351,6 +356,7 @@ public final class ActivationBenchBotRunner {
         private volatile boolean loginComplete;
         private volatile boolean intentionalClose;
         private volatile boolean clientInformationSent;
+        private volatile boolean knownPacksResponseSent;
         private volatile Coordinates latestCoordinates;
 
         private BotState(String name, CountDownLatch loginLatch) {
@@ -372,9 +378,7 @@ public final class ActivationBenchBotRunner {
                         connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "login_complete"));
                         loginLatch.countDown();
                     } else if (packet instanceof ClientboundSelectKnownPacks) {
-                        // MCProtocolLib's default ClientListener sends the required blank known-packs
-                        // response. Record the request here without sending a second response.
-                        connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "known_packs_requested"));
+                        respondToKnownPacks(ignored);
                     } else if (packet instanceof ClientboundFinishConfigurationPacket) {
                         finishConfiguration(ignored);
                     } else if (packet instanceof ClientboundPlayerPositionPacket teleport) {
@@ -419,6 +423,19 @@ public final class ActivationBenchBotRunner {
                 ));
                 clientInformationSent = true;
                 connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "client_information_sent"));
+            }
+        }
+
+        private void respondToKnownPacks(Session current) {
+            connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "known_packs_requested"));
+            synchronized (this) {
+                if (knownPacksResponseSent || !current.isConnected()
+                    || current.getPacketProtocol().getOutboundState() != ProtocolState.CONFIGURATION) {
+                    return;
+                }
+                current.send(new ServerboundSelectKnownPacks(Collections.emptyList()));
+                knownPacksResponseSent = true;
+                connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "known_packs_response_sent"));
             }
         }
 
