@@ -23,7 +23,7 @@ The target server must have `online-mode=false`. Authentication or online-mode f
    On Windows PowerShell, use the equivalent `gradlew.bat` command and quote the complete `--args` value as required by PowerShell.
 
 5. While the runner is holding its connections, use `/activationbench start` to begin the server-side activation workload. Use `/activationbench status` to observe the plugin state.
-6. When the workload is complete, run `/activationbench stop` and inspect the JSON printed by the runner and, when requested, written to `--output`.
+6. When the workload is complete, run `/activationbench stop` and inspect the JSON printed by the runner and, when requested, written to `--output`. The `runActivationBench` task runs with `test-plugin` as its working directory, so use `activation-bench/...` rather than `test-plugin/activation-bench/...`; missing parent directories are created automatically.
 
 The exact orchestration of server startup, command dispatch, process lifecycle, and ABBA (activation benchmark automation) is supplied by a later script. This runner does not claim to provide that lifecycle orchestration.
 

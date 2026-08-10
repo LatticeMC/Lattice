@@ -12,6 +12,14 @@ import org.geysermc.mcprotocollib.protocol.MinecraftProtocol;
 import org.geysermc.mcprotocollib.protocol.codec.MinecraftCodec;
 import org.geysermc.mcprotocollib.protocol.data.ProtocolState;
 import org.geysermc.mcprotocollib.protocol.data.game.entity.player.PositionElement;
+import org.geysermc.mcprotocollib.protocol.data.game.entity.player.HandPreference;
+import org.geysermc.mcprotocollib.protocol.data.game.setting.ChatVisibility;
+import org.geysermc.mcprotocollib.protocol.data.game.setting.ParticleStatus;
+import org.geysermc.mcprotocollib.protocol.data.game.setting.SkinPart;
+import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundClientInformationPacket;
+import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundFinishConfigurationPacket;
+import org.geysermc.mcprotocollib.protocol.packet.configuration.clientbound.ClientboundSelectKnownPacks;
+import org.geysermc.mcprotocollib.protocol.packet.configuration.serverbound.ServerboundFinishConfigurationPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.entity.player.ClientboundPlayerPositionPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.level.ServerboundAcceptTeleportationPacket;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.player.ServerboundMovePlayerPosPacket;
@@ -55,6 +63,10 @@ public final class ActivationBenchBotRunner {
             String json = result.toJson(config);
             System.out.println(json);
             if (config.output != null) {
+                Path parent = config.output.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
                 Files.writeString(config.output, json + System.lineSeparator(), StandardCharsets.UTF_8);
             }
             exitCode = result.success ? 0 : 1;
@@ -169,6 +181,7 @@ public final class ActivationBenchBotRunner {
         while (System.nanoTime() < deadline) {
             boolean ready = true;
             for (BotState state : states) {
+                state.sendClientInformationIfConfiguration();
                 if (!state.session.isConnected()
                     || state.session.getPacketProtocol().getOutboundState() != ProtocolState.GAME) {
                     ready = false;
@@ -337,6 +350,7 @@ public final class ActivationBenchBotRunner {
         private volatile ClientNetworkSession session;
         private volatile boolean loginComplete;
         private volatile boolean intentionalClose;
+        private volatile boolean clientInformationSent;
         private volatile Coordinates latestCoordinates;
 
         private BotState(String name, CountDownLatch loginLatch) {
@@ -357,6 +371,12 @@ public final class ActivationBenchBotRunner {
                         loginComplete = true;
                         connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "login_complete"));
                         loginLatch.countDown();
+                    } else if (packet instanceof ClientboundSelectKnownPacks) {
+                        // MCProtocolLib's default ClientListener sends the required blank known-packs
+                        // response. Record the request here without sending a second response.
+                        connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "known_packs_requested"));
+                    } else if (packet instanceof ClientboundFinishConfigurationPacket) {
+                        finishConfiguration(ignored);
                     } else if (packet instanceof ClientboundPlayerPositionPacket teleport) {
                         handleTeleport(teleport);
                     }
@@ -380,6 +400,38 @@ public final class ActivationBenchBotRunner {
                     }
                 }
             };
+        }
+
+        private void sendClientInformationIfConfiguration() {
+            ClientNetworkSession current = session;
+            if (clientInformationSent || current == null || !current.isConnected()
+                || current.getPacketProtocol().getOutboundState() != ProtocolState.CONFIGURATION) {
+                return;
+            }
+            synchronized (this) {
+                if (clientInformationSent || !current.isConnected()
+                    || current.getPacketProtocol().getOutboundState() != ProtocolState.CONFIGURATION) {
+                    return;
+                }
+                current.send(new ServerboundClientInformationPacket(
+                    "en_us", 10, ChatVisibility.FULL, true, List.of(SkinPart.VALUES),
+                    HandPreference.RIGHT_HAND, false, true, ParticleStatus.ALL
+                ));
+                clientInformationSent = true;
+                connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "client_information_sent"));
+            }
+        }
+
+        private void finishConfiguration(Session current) {
+            MinecraftProtocol protocol = current.getPacketProtocol();
+            if (protocol.getInboundState() != ProtocolState.CONFIGURATION
+                || protocol.getOutboundState() != ProtocolState.CONFIGURATION) {
+                return;
+            }
+            current.switchInboundState(() -> protocol.setInboundState(ProtocolState.GAME));
+            current.send(ServerboundFinishConfigurationPacket.INSTANCE);
+            current.switchOutboundState(() -> protocol.setOutboundState(ProtocolState.GAME));
+            connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "configuration_finished"));
         }
 
         private void handleTeleport(ClientboundPlayerPositionPacket packet) {
