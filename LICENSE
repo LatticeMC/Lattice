@@ -14,17 +14,14 @@ server distribution are licensed under the GNU General Public License version
 Minecraft。构成该派生服务端发行物的源码与二进制遵循 GNU 通用公共许可证
 第 3 版，许可证正文见 [licenses/GPL.md](licenses/GPL.md)。
 
-Standalone code authored for Lattice that does not derive from GPL-covered
-upstream code is released under the MIT License unless its file or patch header
-states otherwise. This includes the Lattice native library and Lattice-owned
-support code. See [licenses/MIT.md](licenses/MIT.md). Combining that code into
-the server binary does not remove the obligations inherited by the complete
-server distribution.
+Lattice-original code, including the Lattice native library and Lattice-owned
+support code, is released under the GNU General Public License version 3,
+GPL-3.0-only, unless its file header explicitly states a different upstream
+license. The complete license text is [licenses/GPL.md](licenses/GPL.md).
 
-由 Lattice 原创、且不派生自 GPL 上游代码的独立代码，在文件或 patch 头未另行
-声明时采用 MIT 许可证；这包括 Lattice native 库与 Lattice 自有支持代码。
-许可证正文见 [licenses/MIT.md](licenses/MIT.md)。这些代码被组合进服务端二进制
-后，不会消除完整服务端发行物从上游继承的许可证义务。
+由 Lattice 原创的代码，包括 Lattice native 库与 Lattice 自有支持代码，在文件头
+明确声明其他上游许可证的情况之外，统一采用 GNU GPL v3（GPL-3.0-only）。完整
+正文见 [licenses/GPL.md](licenses/GPL.md)。
 
 Imported or adapted patches retain the original author, source, and license
 stated in their patch headers. Some such patches use LGPL-3.0-only; see
