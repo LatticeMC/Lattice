@@ -348,7 +348,7 @@ final class EntityActivationBenchmarkCommand extends Command {
             return 0;
         }
         int result = 0;
-        for (final Player player : this.origin.getWorld().getPlayers()) {
+        for (final Player player : this.plugin.getServer().getOnlinePlayers()) {
             if (this.botIndex(player.getName()) >= 0) {
                 result++;
             }
@@ -392,7 +392,7 @@ final class EntityActivationBenchmarkCommand extends Command {
         }
         final boolean[] slots = new boolean[this.regions];
         int result = 0;
-        for (final Player player : this.origin.getWorld().getPlayers()) {
+        for (final Player player : this.plugin.getServer().getOnlinePlayers()) {
             final int index = this.botIndex(player.getName());
             if (index >= 0 && !slots[index]) {
                 slots[index] = true;
