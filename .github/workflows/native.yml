@@ -292,6 +292,19 @@ jobs:
             esac
           done < <(find release-assets -maxdepth 1 -type f)
 
+      - name: Publish immutable native release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: native-${{ github.sha }}
+          target_commitish: ${{ github.sha }}
+          name: Lattice Native (${{ github.sha }})
+          files: release-assets/*
+          draft: false
+          prerelease: false
+          make_latest: false
+          overwrite_files: true
+          fail_on_unmatched_files: true
+
       - name: Publish native-latest release
         uses: softprops/action-gh-release@v2
         with:
