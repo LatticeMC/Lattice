@@ -227,6 +227,7 @@ final class EntityActivationBenchmarkCommand extends Command {
         if (this.layout.equals("overlap")) {
             anchor.add((index & 3) * 0.35D, 0.0D, (index >>> 2) * 0.35D);
         }
+        player.setAllowFlight(true);
         player.teleport(anchor);
         player.sendMessage(
             "Activationbench assigned slot=" + (index + 1) + "/" + this.regions
