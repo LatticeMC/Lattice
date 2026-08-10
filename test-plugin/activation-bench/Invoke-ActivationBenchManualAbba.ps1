@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
-    [ValidateSet(1, 2, 4, 8, 16)]
+    [ValidateSet(1, 2, 4, 8, 16, 32, 50, 64, 100)]
     [int]$Bots = 4,
+
+    [ValidateSet(1, 2, 4, 8, 16, 32, 50, 64, 100)]
+    [int[]]$BotMatrix = @(1, 2, 4, 8, 16, 32, 50, 64, 100),
 
     [ValidateSet('overlap', 'disjoint')]
     [string]$Layout = 'overlap',
@@ -38,8 +41,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if ($BotPrefix -notmatch '^[A-Za-z0-9_]+$' -or ($BotPrefix + $Bots).Length -gt 16) {
-    throw 'BotPrefix must use ASCII letters, digits, underscores, and leave room for the bot suffix.'
+$botCounts = if ($PSBoundParameters.ContainsKey('Bots')) { @($Bots) } else { @($BotMatrix | Select-Object -Unique) }
+foreach ($botCount in $botCounts) {
+    if ($BotPrefix -notmatch '^[A-Za-z0-9_]+$' -or ($BotPrefix + $botCount).Length -gt 16) {
+        throw 'BotPrefix must use ASCII letters, digits, underscores, and leave room for every bot suffix.'
+    }
 }
 
 $repo = Resolve-Path -LiteralPath $RepoRoot
@@ -69,7 +75,7 @@ $metadata = [ordered]@{
     host = $HostName
     port = $Port
     world = $World
-    bots = $Bots
+    botMatrix = $botCounts
     botPrefix = $BotPrefix
     layout = $Layout
     entityCount = $EntityCount
@@ -95,25 +101,28 @@ for ($pair = 1; $pair -le $Pairs; $pair++) {
 }
 
 $samples = [System.Collections.Generic.List[object]]::new()
+$sampleNumber = 0
+foreach ($botCount in $botCounts) {
 for ($index = 0; $index -lt $trials.Count; $index++) {
     $trial = $trials[$index]
     $enabled = $trial.Side -eq 'B'
     $flag = "-Dlattice.entityActivationKdTree=$($enabled.ToString().ToLowerInvariant())"
     $prefixFlag = if ($BotPrefix -eq 'LatticeActBot') { '' } else { " -Dlattice.activationBenchBotPrefix=$BotPrefix" }
-    $trialName = '{0:D3}-{1}-pair{2:D2}-{3}' -f ($index + 1), $trial.Phase, $trial.Pair, $trial.Side
+    $sampleNumber++
+    $trialName = '{0:D3}-bots{1:D3}-{2}-pair{3:D2}-{4}' -f $sampleNumber, $botCount, $trial.Phase, $trial.Pair, $trial.Side
     $botResult = Join-Path $OutputDirectory "$trialName-bots.json"
     $holdSeconds = $MeasureSeconds + 30
-    $botArgs = "--host $HostName --port $Port --bots $Bots --prefix $BotPrefix --hold-seconds $holdSeconds --output $botResult"
+    $botArgs = "--host $HostName --port $Port --bots $botCount --prefix $BotPrefix --hold-seconds $holdSeconds --output $botResult"
     $gradleCommand = ".\gradlew.bat :test-plugin:runActivationBench --no-daemon --args=`"$botArgs`""
-    $prepareCommand = "/activationbench prepare $EntityCount $Layout $Bots $World"
+    $prepareCommand = "/activationbench prepare $EntityCount $Layout $botCount $World"
 
     Write-Host ''
-    Write-Host "=== $trialName ($($index + 1)/$($trials.Count)) ===" -ForegroundColor Cyan
+    Write-Host "=== $trialName ($sampleNumber/$($trials.Count * $botCounts.Count)) ===" -ForegroundColor Cyan
     Write-Host "1. Cold-start the server with $flag$prefixFlag and online-mode=false."
     Write-Host "2. Run from the repository root: $prepareCommand"
     Write-Host '3. Wait for `/activationbench status` to report phase=prepared.'
     Write-Host "4. In a separate terminal run: $gradleCommand"
-    Write-Host "5. Verify `/activationbench status` reports botsOnline=$Bots, then run `/activationbench start`."
+    Write-Host "5. Verify `/activationbench status` reports botsOnline=$botCount, then run `/activationbench start`."
     Write-Host "6. Measure exactly $MeasureSeconds seconds, capture TPS/MSPT, then run `/activationbench stop`."
     Write-Host '7. Wait for the bot runner to exit and write its JSON result.'
     Read-Host 'Press Enter only after all seven steps have completed' | Out-Null
@@ -137,7 +146,8 @@ for ($index = 0; $index -lt $trials.Count; $index++) {
     $tps = [double](Read-Host 'Observed TPS mean (numeric)')
     $mspt = [double](Read-Host 'Observed MSPT mean (numeric)')
     $samples.Add([pscustomobject]@{
-        trial = $index + 1
+        trial = $sampleNumber
+        bots = $botCount
         phase = $trial.Phase
         pair = $trial.Pair
         side = $trial.Side
@@ -151,10 +161,9 @@ for ($index = 0; $index -lt $trials.Count; $index++) {
     })
     $samples | Export-Csv -LiteralPath (Join-Path $OutputDirectory 'samples.csv') -NoTypeInformation -Encoding utf8
 }
+}
 
 $measured = @($samples | Where-Object { $_.phase -eq 'measure' -and $_.botSuccess })
-$sideA = @($measured | Where-Object { -not $_.kdTreeEnabled })
-$sideB = @($measured | Where-Object { $_.kdTreeEnabled })
 $mean = {
     param([object[]]$Values, [string]$Property)
     if ($Values.Count -eq 0) {
@@ -164,16 +173,15 @@ $mean = {
 }
 $summary = [ordered]@{
     measuredTrials = $measured.Count
-    sideA = [ordered]@{
-        count = $sideA.Count
-        tpsMean = & $mean $sideA 'tpsMean'
-        msptMean = & $mean $sideA 'msptMean'
-    }
-    sideB = [ordered]@{
-        count = $sideB.Count
-        tpsMean = & $mean $sideB 'tpsMean'
-        msptMean = & $mean $sideB 'msptMean'
-    }
+    byBots = @($botCounts | ForEach-Object {
+        $count = $_
+        $group = @($measured | Where-Object { $_.bots -eq $count })
+        [ordered]@{
+            bots = $count
+            sideA = [ordered]@{ count = @($group | Where-Object { -not $_.kdTreeEnabled }).Count; tpsMean = & $mean -Values ([object[]]@($group | Where-Object { -not $_.kdTreeEnabled })) -Property 'tpsMean'; msptMean = & $mean -Values ([object[]]@($group | Where-Object { -not $_.kdTreeEnabled })) -Property 'msptMean' }
+            sideB = [ordered]@{ count = @($group | Where-Object { $_.kdTreeEnabled }).Count; tpsMean = & $mean -Values ([object[]]@($group | Where-Object { $_.kdTreeEnabled })) -Property 'tpsMean'; msptMean = & $mean -Values ([object[]]@($group | Where-Object { $_.kdTreeEnabled })) -Property 'msptMean' }
+        }
+    })
 }
 $summary | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'summary.json') -Encoding utf8
 Write-Host "Raw samples and metadata written to $OutputDirectory" -ForegroundColor Green

@@ -42,6 +42,7 @@ public final class ActivationBenchBotRunner {
     private static final long SETTLE_WINDOW_MILLIS = 2_000L;
     private static final long MOVE_INTERVAL_MILLIS = 1_000L;
     private static final long POLL_MILLIS = 100L;
+    private static final int MAX_BOTS = 100;
 
     private ActivationBenchBotRunner() {
     }
@@ -257,7 +258,7 @@ public final class ActivationBenchBotRunner {
                 switch (option) {
                     case "--host" -> host = value;
                     case "--port" -> port = parseInt(value, option, 1, 65535);
-                    case "--bots" -> bots = parseInt(value, option, 1, 16);
+                    case "--bots" -> bots = parseInt(value, option, 1, MAX_BOTS);
                     case "--prefix" -> prefix = value;
                     case "--hold-seconds" -> holdSeconds = parseLong(value, option, 0L, 86_400L);
                     case "--output" -> output = Path.of(value);
@@ -268,8 +269,8 @@ public final class ActivationBenchBotRunner {
             if (host.isBlank()) {
                 throw new IllegalArgumentException("--host must not be blank");
             }
-            if (bots != 1 && bots != 2 && bots != 4 && bots != 8 && bots != 16) {
-                throw new IllegalArgumentException("--bots must be one of 1, 2, 4, 8, 16");
+            if (!isSupportedBotCount(bots)) {
+                throw new IllegalArgumentException("--bots must be one of 1, 2, 4, 8, 16, 32, 50, 64, 100");
             }
             if (!prefix.matches("[A-Za-z0-9_]+")) {
                 throw new IllegalArgumentException("--prefix must contain only ASCII letters, digits, and underscores");
@@ -278,6 +279,11 @@ public final class ActivationBenchBotRunner {
                 throw new IllegalArgumentException("bot names must be at most 16 characters");
             }
             return new Config(host, port, bots, prefix, holdSeconds, output);
+        }
+
+        private static boolean isSupportedBotCount(int value) {
+            return value == 1 || value == 2 || value == 4 || value == 8 || value == 16
+                || value == 32 || value == 50 || value == 64 || value == 100;
         }
 
         private static boolean isAuthenticationFlag(String option) {

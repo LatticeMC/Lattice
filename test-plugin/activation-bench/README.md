@@ -34,11 +34,11 @@ The exact orchestration of server startup, command dispatch, process lifecycle, 
 does not start or stop a server or inject console commands: the repository has no stable test-server
 launcher/RCON contract, and pretending otherwise would invalidate a cold-JVM comparison.
 
-For five measured pairs with one warmup pair:
+By default the script runs the full player-count matrix `1, 2, 4, 8, 16, 32, 50, 64, 100`; each count gets one warmup pair and five measured ABBA pairs. This is intentionally large. Pass `-Bots 50` (or another supported count) to run a focused slice:
 
 ```powershell
 pwsh -File .\test-plugin\activation-bench\Invoke-ActivationBenchManualAbba.ps1 `
-  -Bots 4 -Layout overlap -EntityCount 100000 -WarmupPairs 1 -Pairs 5 -MeasureSeconds 60
+  -Bots 50 -Layout overlap -EntityCount 100000 -WarmupPairs 1 -Pairs 5 -MeasureSeconds 60
 ```
 
 For every prompted trial, cold-start the server with the displayed JVM flag:
@@ -54,7 +54,9 @@ If `-BotPrefix` differs from `LatticeActBot`, use the matching server JVM proper
 
 ## Options
 
-`--host`, `--port`, `--bots` (only 1, 2, 4, 8, or 16), `--prefix`, `--hold-seconds`, and `--output` are the supported options. Defaults are `127.0.0.1`, `25565`, `1`, `LatticeActBot`, `10`, and no output file. Bot names must remain within the Minecraft 16-character username limit. Teleport target/latest coordinates in the JSON are the server-assigned positions; the runner does not replace plugin overlap/disjoint anchors with a global coordinate.
+`--host`, `--port`, `--bots` (only `1, 2, 4, 8, 16, 32, 50, 64, 100`), `--prefix`, `--hold-seconds`, and `--output` are the supported options. Defaults are `127.0.0.1`, `25565`, `1`, `LatticeActBot`, `10`, and no output file. Bot names must remain within the Minecraft 16-character username limit. Teleport target/latest coordinates in the JSON are the server-assigned positions; the runner does not replace plugin overlap/disjoint anchors with a global coordinate.
+
+Counts below 50 are control points, not an expected KD-tree win. Leaf's author places the likely break-even band around 50–100 simultaneously online players, so interpret the 50, 64, and 100 rows as the primary decision evidence.
 
 Exit code `0` means every requested bot completed login and remained connected through the two-second settle window and requested hold period. Exit code `1` reports a connection/login/hold failure and still emits a JSON result when the runner reaches its normal result path. Exit code `2` indicates invalid arguments, including online-mode/authentication flags.
 
