@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <new>
 #include <mutex>
 #include <unordered_map>
@@ -92,9 +93,20 @@ struct BoundInterpolatorColumns {
     std::vector<jdoubleArray> ends;
 };
 
+struct BoundSliceOutputSlot {
+    std::vector<jdoubleArray> arrays;
+    std::vector<std::size_t> lengths;
+};
+
+struct BoundSliceOutputs {
+    std::mutex mutex;
+    std::array<BoundSliceOutputSlot, 2> slots;
+};
+
 std::mutex g_bindings_mutex;
 std::unordered_map<df::CacheState*, BoundCacheArrays> g_cache_array_bindings;
 std::unordered_map<df::CacheState*, BoundInterpolatorColumns> g_interpolator_bindings;
+std::unordered_map<df::CacheState*, std::unique_ptr<BoundSliceOutputs>> g_slice_output_bindings;
 
 void delete_global_refs(JNIEnv* env, BoundCacheArrays& binding) {
     for (jdoubleArray array : binding.arrays) {
@@ -115,16 +127,39 @@ void delete_global_refs(JNIEnv* env, BoundInterpolatorColumns& binding) {
     binding.ends.clear();
 }
 
+void delete_global_refs(JNIEnv* env, BoundSliceOutputSlot& binding) {
+    for (jdoubleArray array : binding.arrays) {
+        if (array) env->DeleteGlobalRef(array);
+    }
+    binding.arrays.clear();
+    binding.lengths.clear();
+}
+
+void delete_global_refs(JNIEnv* env, BoundSliceOutputs& binding) {
+    for (auto& slot : binding.slots) delete_global_refs(env, slot);
+}
+
 void clear_bindings(JNIEnv* env, df::CacheState* cache) {
     if (!env || !cache) return;
-    std::lock_guard<std::mutex> lock(g_bindings_mutex);
-    if (auto it = g_cache_array_bindings.find(cache); it != g_cache_array_bindings.end()) {
-        delete_global_refs(env, it->second);
-        g_cache_array_bindings.erase(it);
-    }
-    if (auto it = g_interpolator_bindings.find(cache); it != g_interpolator_bindings.end()) {
-        delete_global_refs(env, it->second);
-        g_interpolator_bindings.erase(it);
+    std::unique_ptr<BoundSliceOutputs> removed_slice_outputs;
+    {
+        std::lock_guard<std::mutex> lock(g_bindings_mutex);
+        if (auto it = g_cache_array_bindings.find(cache); it != g_cache_array_bindings.end()) {
+            delete_global_refs(env, it->second);
+            g_cache_array_bindings.erase(it);
+        }
+        if (auto it = g_interpolator_bindings.find(cache); it != g_interpolator_bindings.end()) {
+            delete_global_refs(env, it->second);
+            g_interpolator_bindings.erase(it);
+        }
+        if (auto it = g_slice_output_bindings.find(cache); it != g_slice_output_bindings.end()) {
+            // Lock order is always global map -> per-cache entry. Keep the
+            // entry alive until its lock is released, then destroy it.
+            std::lock_guard<std::mutex> entry_lock(it->second->mutex);
+            delete_global_refs(env, *it->second);
+            removed_slice_outputs = std::move(it->second);
+            g_slice_output_bindings.erase(it);
+        }
     }
 }
 
@@ -206,6 +241,7 @@ JNIEXPORT long long lattice_density_create_cache(long long arenaHandle) {
     auto* c = new (std::nothrow) df::CacheState{};
     if (!c) return 0;
     c->resize_for(*a);
+    c->batch_roots = a->batch_roots;
     return reinterpret_cast<long long>(c);
 }
 
@@ -583,7 +619,7 @@ JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeConfigureSharedLeafMemo(
         JNIEnv* env, jclass /*cls*/, jlong handle, jintArray roots, jint count) {
     auto* arena = arena_from(handle);
-    if (!arena || !roots || count <= 1) return 0;
+    if (!arena || !roots || count <= 0) return 0;
     if (env->GetArrayLength(roots) < count) {
         lattice::jni::throw_illegal_arg(env, "lattice density: shared leaf root array too small");
         return 0;
@@ -592,6 +628,22 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeConfigureShared
     if (!root_data) return 0;
 
     const std::size_t node_count = arena->nodes.size();
+    arena->batch_roots.clear();
+    arena->batch_roots.reserve(static_cast<std::size_t>(count));
+    for (jint i = 0; i < count; ++i) {
+        const df::NodeRef root = static_cast<df::NodeRef>(root_data.data()[i]);
+        if (root < 0 || static_cast<std::size_t>(root) >= node_count) {
+            arena->batch_roots.clear();
+            root_data.release_ro();
+            lattice::jni::throw_illegal_arg(env, "lattice density: invalid shared root batch node");
+            return 0;
+        }
+        arena->batch_roots.push_back(root);
+    }
+    if (count <= 1) {
+        root_data.release_ro();
+        return 0;
+    }
     std::vector<std::uint8_t> reach_count(node_count, 0);
     std::vector<std::uint32_t> seen(node_count, 0);
     std::vector<df::NodeRef> stack;
@@ -679,6 +731,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeCreateCache(
         return 0;
     }
     c->resize_for(*a);
+    c->batch_roots = a->batch_roots;
     return reinterpret_cast<jlong>(c);
 }
 
@@ -720,6 +773,53 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeBindCacheAllInC
 
     std::lock_guard<std::mutex> lock(g_bindings_mutex);
     auto& current = g_cache_array_bindings[cache];
+    delete_global_refs(env, current);
+    current = std::move(next);
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeBindSliceOutputs(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle, jint bindingSlot,
+        jint count, jobjectArray arrays) {
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!cache || !arrays || bindingSlot < 0 || bindingSlot >= 2 || count <= 0) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: invalid slice output binding");
+        return;
+    }
+    if (env->GetArrayLength(arrays) < count) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: slice output binding arrays too small");
+        return;
+    }
+
+    // Build the complete replacement before acquiring the binding lock. If a
+    // local/global reference allocation fails, the usable old binding remains.
+    BoundSliceOutputSlot next;
+    next.arrays.reserve(static_cast<std::size_t>(count));
+    next.lengths.reserve(static_cast<std::size_t>(count));
+    for (jint i = 0; i < count; ++i) {
+        auto* array = static_cast<jdoubleArray>(env->GetObjectArrayElement(arrays, i));
+        if (!array) {
+            delete_global_refs(env, next);
+            lattice::jni::throw_illegal_arg(env, "lattice density: null slice output binding");
+            return;
+        }
+        const jsize length = env->GetArrayLength(array);
+        auto* global = static_cast<jdoubleArray>(env->NewGlobalRef(array));
+        env->DeleteLocalRef(array);
+        if (!global) {
+            delete_global_refs(env, next);
+            lattice::jni::throw_oom(env, "lattice density: slice output global ref");
+            return;
+        }
+        next.arrays.push_back(global);
+        next.lengths.push_back(static_cast<std::size_t>(length));
+    }
+
+    std::lock_guard<std::mutex> lock(g_bindings_mutex);
+    auto& entry = g_slice_output_bindings[cache];
+    if (!entry) entry = std::make_unique<BoundSliceOutputs>();
+    std::lock_guard<std::mutex> entry_lock(entry->mutex);
+    auto& current = entry->slots[static_cast<std::size_t>(bindingSlot)];
     delete_global_refs(env, current);
     current = std::move(next);
 }
@@ -1250,31 +1350,37 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
             lattice::jni::throw_illegal_arg(env, "lattice density: null batch output row");
             return;
         }
-        lattice::jni::CriticalDoubleArray buf{env, out_row};
-        env->DeleteLocalRef(out_row);
-        if (!buf) {
-            env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
-            env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
-            lattice::jni::throw_illegal_state(env, "lattice density: batch output lock failed");
-            return;
+        bool row_too_small = false;
+        {
+            lattice::jni::CriticalDoubleArray buf{env, out_row};
+            if (!buf) {
+                env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
+                env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
+                lattice::jni::throw_illegal_state(env, "lattice density: batch output lock failed");
+                return;
+            }
+            row_too_small = buf.size() < static_cast<std::size_t>(ny);
+            if (!row_too_small) {
+                if (cache) cache->clear();
+                df::evaluate_y_column(*a, a->root,
+                                      static_cast<double>(x),
+                                      static_cast<double>(y0),
+                                      static_cast<double>(z),
+                                      static_cast<double>(dy),
+                                      static_cast<int>(cellX),
+                                      static_cast<int>(cellZ),
+                                      static_cast<int>(ny),
+                                      cache,
+                                      reinterpret_cast<double*>(buf.data()));
+            }
         }
-        if (static_cast<long long>(buf.size()) < static_cast<long long>(ny)) {
+        env->DeleteLocalRef(out_row);
+        if (row_too_small) {
             env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
             env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
             lattice::jni::throw_illegal_arg(env, "lattice density: batch output row too small");
             return;
         }
-        if (cache) cache->clear();
-        df::evaluate_y_column(*a, a->root,
-                              static_cast<double>(x),
-                              static_cast<double>(y0),
-                              static_cast<double>(z),
-                              static_cast<double>(dy),
-                              static_cast<int>(cellX),
-                              static_cast<int>(cellZ),
-                              static_cast<int>(ny),
-                              cache,
-                              reinterpret_cast<double*>(buf.data()));
     }
 
     env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
@@ -1442,6 +1548,170 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
     }
     env->ReleaseIntArrayElements(roots, root_data, JNI_ABORT);
     for (auto* output : output_arrays) env->DeleteLocalRef(output);
+}
+
+// Fast slice-batch ABI. The roots are copied into CacheState when the batch
+// arena is configured/created, so this hot path only resolves output arrays
+// and performs the native row evaluation.
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumnRootsFlatRowsFast(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle, jlong cacheHandle, jint count,
+        jdouble x, jdouble y0, jdouble z0, jdouble dy,
+        jint cellX, jint firstCellZ, jint cellWidth,
+        jint yRows, jint zRows,
+        jobjectArray out) {
+    auto* arena = arena_from(handle);
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!arena || !cache || !out) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null shared root batch fast input");
+        return;
+    }
+    if (count <= 0 || yRows <= 0 || zRows <= 0 || cellWidth <= 0) return;
+    if (env->GetArrayLength(out) < count
+            || cache->batch_roots.size() < static_cast<std::size_t>(count)) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: shared root batch fast arrays too small");
+        return;
+    }
+
+    const jlong required = static_cast<jlong>(yRows) * static_cast<jlong>(zRows);
+    std::vector<jdoubleArray> output_arrays(static_cast<std::size_t>(count), nullptr);
+    for (jint i = 0; i < count; ++i) {
+        auto* output = static_cast<jdoubleArray>(env->GetObjectArrayElement(out, i));
+        if (!output || static_cast<jlong>(env->GetArrayLength(output)) < required) {
+            if (output) env->DeleteLocalRef(output);
+            for (jint j = 0; j < i; ++j) {
+                env->DeleteLocalRef(output_arrays[static_cast<std::size_t>(j)]);
+            }
+            lattice::jni::throw_illegal_arg(env, "lattice density: shared root batch fast output too small");
+            return;
+        }
+        output_arrays[static_cast<std::size_t>(i)] = output;
+    }
+
+    // All Java object/length queries are complete before entering the
+    // critical sections. The native evaluator performs no JNI calls.
+    std::vector<jdouble*> output_data(static_cast<std::size_t>(count), nullptr);
+    for (jint i = 0; i < count; ++i) {
+        auto* data = static_cast<jdouble*>(env->GetPrimitiveArrayCritical(
+                output_arrays[static_cast<std::size_t>(i)], nullptr));
+        if (!data) {
+            for (jint j = 0; j < i; ++j) {
+                env->ReleasePrimitiveArrayCritical(
+                        output_arrays[static_cast<std::size_t>(j)],
+                        output_data[static_cast<std::size_t>(j)], JNI_ABORT);
+            }
+            for (auto* output : output_arrays) env->DeleteLocalRef(output);
+            return;
+        }
+        output_data[static_cast<std::size_t>(i)] = data;
+    }
+
+    for (jint z_row = 0; z_row < zRows; ++z_row) {
+        cache->clear();
+        const double z = static_cast<double>(z0) + static_cast<double>(z_row * cellWidth);
+        const int cell_z = static_cast<int>(firstCellZ + z_row);
+        const std::size_t offset = static_cast<std::size_t>(z_row) * static_cast<std::size_t>(yRows);
+        for (jint i = 0; i < count; ++i) {
+            df::evaluate_y_column(*arena, cache->batch_roots[static_cast<std::size_t>(i)],
+                                  static_cast<double>(x), static_cast<double>(y0), z,
+                                  static_cast<double>(dy), static_cast<int>(cellX), cell_z,
+                                  static_cast<int>(yRows), cache,
+                                  reinterpret_cast<double*>(output_data[static_cast<std::size_t>(i)]) + offset);
+        }
+    }
+
+    for (jint i = 0; i < count; ++i) {
+        env->ReleasePrimitiveArrayCritical(
+                output_arrays[static_cast<std::size_t>(i)],
+                output_data[static_cast<std::size_t>(i)], 0);
+    }
+    for (auto* output : output_arrays) env->DeleteLocalRef(output);
+}
+
+// Bound slice-batch ABI. The binding side table retains only global array
+// references and their lengths; primitive critical pointers are strictly
+// acquired and released within this call.
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumnRootsFlatRowsBound(
+        JNIEnv* env, jclass /*cls*/,
+        jlong handle, jlong cacheHandle, jint bindingSlot, jint count,
+        jdouble x, jdouble y0, jdouble z0, jdouble dy,
+        jint cellX, jint firstCellZ, jint cellWidth,
+        jint yRows, jint zRows) {
+    auto* arena = arena_from(handle);
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!arena || !cache || bindingSlot < 0 || bindingSlot >= 2) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: invalid bound slice batch input");
+        return;
+    }
+    if (count <= 0 || yRows <= 0 || zRows <= 0 || cellWidth <= 0) return;
+    const jlong required = static_cast<jlong>(yRows) * static_cast<jlong>(zRows);
+
+    // Acquire the entry under the global map lock, then release the global
+    // lock before pinning/evaluating. The per-cache lock keeps refs alive.
+    std::unique_lock<std::mutex> map_lock(g_bindings_mutex);
+    const auto bindings = g_slice_output_bindings.find(cache);
+    if (bindings == g_slice_output_bindings.end() || !bindings->second) {
+        lattice::jni::throw_illegal_state(env, "lattice density: missing bound slice outputs");
+        return;
+    }
+    BoundSliceOutputs* entry = bindings->second.get();
+    std::unique_lock<std::mutex> entry_lock(entry->mutex);
+    map_lock.unlock();
+    const auto& binding = entry->slots[static_cast<std::size_t>(bindingSlot)];
+    if (binding.arrays.size() != static_cast<std::size_t>(count)
+            || binding.lengths.size() != binding.arrays.size()
+            || cache->batch_roots.size() < static_cast<std::size_t>(count)) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: bound slice batch arrays too small");
+        return;
+    }
+    for (jint i = 0; i < count; ++i) {
+        if (static_cast<jlong>(binding.lengths[static_cast<std::size_t>(i)]) < required) {
+            lattice::jni::throw_illegal_arg(env, "lattice density: bound slice batch output too small");
+            return;
+        }
+    }
+
+    // Scratch capacity is reused per JNI thread. It is scrubbed before every
+    // return, so no GetPrimitiveArrayCritical pointer persists across calls.
+    thread_local std::vector<jdouble*> output_data;
+    output_data.assign(static_cast<std::size_t>(count), nullptr);
+    for (jint i = 0; i < count; ++i) {
+        auto* data = static_cast<jdouble*>(env->GetPrimitiveArrayCritical(
+                binding.arrays[static_cast<std::size_t>(i)], nullptr));
+        if (!data) {
+            for (jint j = 0; j < i; ++j) {
+                env->ReleasePrimitiveArrayCritical(
+                        binding.arrays[static_cast<std::size_t>(j)],
+                        output_data[static_cast<std::size_t>(j)], JNI_ABORT);
+            }
+            std::fill(output_data.begin(), output_data.end(), nullptr);
+            return;
+        }
+        output_data[static_cast<std::size_t>(i)] = data;
+    }
+
+    for (jint z_row = 0; z_row < zRows; ++z_row) {
+        cache->clear();
+        const double z = static_cast<double>(z0) + static_cast<double>(z_row * cellWidth);
+        const int cell_z = static_cast<int>(firstCellZ + z_row);
+        const std::size_t offset = static_cast<std::size_t>(z_row) * static_cast<std::size_t>(yRows);
+        for (jint i = 0; i < count; ++i) {
+            df::evaluate_y_column(*arena, cache->batch_roots[static_cast<std::size_t>(i)],
+                                  static_cast<double>(x), static_cast<double>(y0), z,
+                                  static_cast<double>(dy), static_cast<int>(cellX), cell_z,
+                                  static_cast<int>(yRows), cache,
+                                  reinterpret_cast<double*>(output_data[static_cast<std::size_t>(i)]) + offset);
+        }
+    }
+
+    for (jint i = 0; i < count; ++i) {
+        env->ReleasePrimitiveArrayCritical(
+                binding.arrays[static_cast<std::size_t>(i)],
+                output_data[static_cast<std::size_t>(i)], 0);
+    }
+    std::fill(output_data.begin(), output_data.end(), nullptr);
 }
 
 struct CellColumnCoordinates {
@@ -1989,71 +2259,77 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
             env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
             return;
         }
-        lattice::jni::CriticalDoubleArray buf{env, out_row};
-        env->DeleteLocalRef(out_row);
-        if (!buf) {
-            unbind_cache_all_in_cell_arrays(*cache);
-            env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
-            env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
-            lattice::jni::throw_illegal_state(env, "lattice density: column batch output pin failed");
-            return;
+        bool completed = false;
+        bool row_too_small = false;
+        {
+            lattice::jni::CriticalDoubleArray buf{env, out_row};
+            if (!buf) {
+                unbind_cache_all_in_cell_arrays(*cache);
+                env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
+                env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
+                lattice::jni::throw_illegal_state(env, "lattice density: column batch output pin failed");
+                return;
+            }
+            row_too_small = static_cast<long long>(buf.size()) < required;
+            if (!row_too_small) {
+                df::Context ctx{};
+                ctx.cache = cache;
+                ctx.cellX = static_cast<int>(cellX);
+                ctx.cellWidth = static_cast<int>(cellWidth);
+                ctx.cellHeight = static_cast<int>(cellHeight);
+
+                double* dst = reinterpret_cast<double*>(buf.data());
+                if (fill_interpolated_root_column(*a, *cache,
+                                                  static_cast<int>(cellWidth),
+                                                  static_cast<int>(cellHeight),
+                                                  static_cast<int>(cellCountXZ),
+                                                  static_cast<int>(cellCountY),
+                                                  coordinates, dst)) {
+                    completed = true;
+                }
+                if (!completed) {
+                    for (int lz = 0; lz < cellCountXZ; ++lz) {
+                        ctx.cellZ = static_cast<int>(firstCellZ + lz);
+                        const double cell_z0 = z0 + static_cast<double>(lz * cellWidth);
+                        for (int ly = 0; ly < cellCountY; ++ly) {
+                            df::start_interpolation(*cache);
+                            df::on_sampled_cell_corners(*cache, ly, lz);
+                            const double y_top = yMin + static_cast<double>(ly * cellHeight + cellHeight - 1);
+                            const std::size_t base = (static_cast<std::size_t>(lz) * static_cast<std::size_t>(cellCountY)
+                                                   + static_cast<std::size_t>(ly))
+                                                  * static_cast<std::size_t>(cell_value_count);
+                            std::size_t index = base;
+                            for (int iy = 0; iy < cellHeight; ++iy) {
+                                const int in_cell_y = cellHeight - 1 - iy;
+                                ctx.inCellY = in_cell_y;
+                                ctx.y = y_top - coordinates.offset[static_cast<std::size_t>(iy)];
+                                df::interpolate_y(*cache, coordinates.vertical_fraction[static_cast<std::size_t>(iy)]);
+                                for (int ix = 0; ix < cellWidth; ++ix) {
+                                    ctx.inCellX = ix;
+                                    ctx.x = coordinates.x[static_cast<std::size_t>(ix)];
+                                    df::interpolate_x(*cache, coordinates.horizontal_fraction[static_cast<std::size_t>(ix)]);
+                                    for (int iz = 0; iz < cellWidth; ++iz) {
+                                        ctx.inCellZ = iz;
+                                        ctx.z = cell_z0 + coordinates.offset[static_cast<std::size_t>(iz)];
+                                        df::interpolate_z(*cache, coordinates.horizontal_fraction[static_cast<std::size_t>(iz)]);
+                                        dst[index++] = df::evaluate(*a, a->root, ctx);
+                                    }
+                                }
+                            }
+                            df::stop_interpolation(*cache);
+                        }
+                    }
+                }
+            }
         }
-        if (static_cast<long long>(buf.size()) < required) {
-            unbind_cache_all_in_cell_arrays(*cache);
+        env->DeleteLocalRef(out_row);
+        unbind_cache_all_in_cell_arrays(*cache);
+        if (row_too_small) {
             env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);
             env->ReleaseLongArrayElements(handles, handle_data, JNI_ABORT);
             lattice::jni::throw_illegal_arg(env, "lattice density: column batch output row too small");
             return;
         }
-
-        df::Context ctx{};
-        ctx.cache = cache;
-        ctx.cellX = static_cast<int>(cellX);
-        ctx.cellWidth = static_cast<int>(cellWidth);
-        ctx.cellHeight = static_cast<int>(cellHeight);
-
-        double* dst = reinterpret_cast<double*>(buf.data());
-        if (fill_interpolated_root_column(*a, *cache,
-                                          static_cast<int>(cellWidth),
-                                          static_cast<int>(cellHeight),
-                                          static_cast<int>(cellCountXZ),
-                                          static_cast<int>(cellCountY),
-                                          coordinates, dst)) {
-            unbind_cache_all_in_cell_arrays(*cache);
-            continue;
-        }
-        for (int lz = 0; lz < cellCountXZ; ++lz) {
-            ctx.cellZ = static_cast<int>(firstCellZ + lz);
-            const double cell_z0 = z0 + static_cast<double>(lz * cellWidth);
-            for (int ly = 0; ly < cellCountY; ++ly) {
-                df::start_interpolation(*cache);
-                df::on_sampled_cell_corners(*cache, ly, lz);
-                const double y_top = yMin + static_cast<double>(ly * cellHeight + cellHeight - 1);
-                const std::size_t base = (static_cast<std::size_t>(lz) * static_cast<std::size_t>(cellCountY)
-                                       + static_cast<std::size_t>(ly))
-                                      * static_cast<std::size_t>(cell_value_count);
-                std::size_t index = base;
-                for (int iy = 0; iy < cellHeight; ++iy) {
-                    const int in_cell_y = cellHeight - 1 - iy;
-                    ctx.inCellY = in_cell_y;
-                    ctx.y = y_top - coordinates.offset[static_cast<std::size_t>(iy)];
-                    df::interpolate_y(*cache, coordinates.vertical_fraction[static_cast<std::size_t>(iy)]);
-                    for (int ix = 0; ix < cellWidth; ++ix) {
-                        ctx.inCellX = ix;
-                        ctx.x = coordinates.x[static_cast<std::size_t>(ix)];
-                        df::interpolate_x(*cache, coordinates.horizontal_fraction[static_cast<std::size_t>(ix)]);
-                        for (int iz = 0; iz < cellWidth; ++iz) {
-                            ctx.inCellZ = iz;
-                            ctx.z = cell_z0 + coordinates.offset[static_cast<std::size_t>(iz)];
-                            df::interpolate_z(*cache, coordinates.horizontal_fraction[static_cast<std::size_t>(iz)]);
-                            dst[index++] = df::evaluate(*a, a->root, ctx);
-                        }
-                    }
-                }
-                df::stop_interpolation(*cache);
-            }
-        }
-        unbind_cache_all_in_cell_arrays(*cache);
     }
 
     env->ReleaseLongArrayElements(cacheHandles, cache_data, JNI_ABORT);

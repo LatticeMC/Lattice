@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <bit>
 #include <cstdint>
 
 #include "world/gen/rng/xoroshiro128pp.hpp"
@@ -97,8 +98,8 @@ TEST_CASE("xoroshiro: Splitter.split(seed) follows vanilla word selection") {
     CHECK(r.impl.seed_hi == expected.seed_hi);
 }
 
-TEST_CASE("xoroshiro: hash code matches MathHelper.hashCode on small inputs") {
-    // MathHelper.hashCode reference values, computed by hand from the
+TEST_CASE("xoroshiro: hash code matches Mth.getSeed on signed coordinates") {
+    // Mth.getSeed reference values, computed by hand from the
     // formula in the source: (x*3129871) ^ (z*116129781L) ^ y, then
     // l*l*42317861 + l*11, then >> 16.
     //
@@ -117,4 +118,24 @@ TEST_CASE("xoroshiro: hash code matches MathHelper.hashCode on small inputs") {
     CHECK(h010 != h001);
     CHECK(h100 != h001);
     CHECK(math_helper_hash_code(1, 0, 0) == h100);
+
+    // Java first multiplies x as an int, so this large coordinate must
+    // overflow at 32 bits before sign extension to long.
+    CHECK(math_helper_hash_code(30000000, 25, 0) == -81202064056137LL);
+
+    // Sign-extension coverage for negative coordinates and the int-32
+    // product boundary. These values are the Java formula evaluated with
+    // two's-complement modulo arithmetic.
+    CHECK(math_helper_hash_code(-1, 0, 0) == 133076631896896LL);
+    CHECK(math_helper_hash_code(0, -1, 0) == 645LL);
+    CHECK(math_helper_hash_code(0, 0, -1) == -20769809685848LL);
+    CHECK(math_helper_hash_code(-2147483648, -1, -1) == -93313039780677LL);
+}
+
+TEST_CASE("xoroshiro: Splitter large-coordinate stream matches Java") {
+    Splitter s(0xDEADBEEFCAFEBABEULL, 0x0123456789ABCDEFULL);
+    auto r = s.split(30000000, 25, 0);
+    // Java's first nextFloat() is exactly the float represented by these
+    // bits; locking the bits avoids tolerance-dependent regressions.
+    CHECK(std::bit_cast<std::uint32_t>(r.next_float()) == 0x3F3DB5DEu);
 }

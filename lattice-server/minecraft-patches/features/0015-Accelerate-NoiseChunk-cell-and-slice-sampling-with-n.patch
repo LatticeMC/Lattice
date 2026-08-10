@@ -6,7 +6,7 @@ Subject: [PATCH] Accelerate NoiseChunk cell and slice sampling with native
 
 
 diff --git a/net/minecraft/world/level/levelgen/NoiseChunk.java b/net/minecraft/world/level/levelgen/NoiseChunk.java
-index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2fc8bda1af 100644
+index 6a927d00a5b2d081642f3fc84406ac9115401bde..368df26ef9620c2fa0198d1ee59c6a86dd93caf9 100644
 --- a/net/minecraft/world/level/levelgen/NoiseChunk.java
 +++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
 @@ -1,11 +1,17 @@
@@ -75,7 +75,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
              for (int i = 0; i < NoiseChunk.this.cellCountY + 1; i++) {
                  NoiseChunk.this.cellStartBlockY = (i + NoiseChunk.this.cellNoiseMinY) * NoiseChunk.this.cellHeight;
                  NoiseChunk.this.interpolationCounter++;
-@@ -167,6 +198,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -168,6 +199,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
          }
  
          this.interpolatorArray = this.interpolators.toArray(new NoiseChunk.NoiseInterpolator[0]);
@@ -83,7 +83,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
      }
  
      protected Climate.Sampler cachedClimateSampler(NoiseRouter noiseRouter, List<Climate.ParameterPoint> points) {
-@@ -302,25 +334,89 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -303,25 +335,89 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
      }
  
      private void fillSlice(boolean isSlice0, int start) {
@@ -179,7 +179,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
          if (this.interpolating) {
              throw new IllegalStateException("Staring interpolation twice");
          } else {
-@@ -328,11 +424,20 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -329,11 +425,20 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
              this.interpolationCounter = 0L;
              this.fillSlice(true, this.firstCellX);
          }
@@ -200,7 +200,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
      }
  
      @Override
-@@ -350,6 +455,12 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -351,6 +456,12 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
  
      @Override
      public void fillAllDirectly(double[] values, DensityFunction function) {
@@ -213,7 +213,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
          this.arrayIndex = 0;
  
          for (int i = this.cellHeight - 1; i >= 0; i--) {
-@@ -364,24 +475,197 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -365,24 +476,197 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
                  }
              }
          }
@@ -423,7 +423,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
      }
  
      public void updateForY(int cellEndBlockY, double y) {
-@@ -419,6 +703,21 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -420,6 +704,21 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
          } else {
              this.interpolating = false;
          }
@@ -445,7 +445,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
      }
  
      public void swapSlices() {
-@@ -622,9 +921,11 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -623,9 +922,11 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
          }
      }
  
@@ -458,7 +458,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
  
          CacheAllInCell(final DensityFunction noiseFiller) {
              this.noiseFiller = noiseFiller;
-@@ -632,6 +933,36 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -633,6 +934,36 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
              NoiseChunk.this.cellCaches.add(this);
          }
  
@@ -495,7 +495,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
          @Override
          public double compute(DensityFunction.FunctionContext context) {
              if (context != NoiseChunk.this) {
-@@ -827,7 +1158,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -828,7 +1159,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
          }
      }
  
@@ -504,7 +504,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
          double[][] slice0;
          double[][] slice1;
          private final DensityFunction noiseFiller;
-@@ -846,6 +1177,10 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -847,6 +1178,10 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
          private double valueZ0;
          private double valueZ1;
          private double value;
@@ -515,7 +515,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
  
          NoiseInterpolator(final DensityFunction noiseFiller) {
              this.noiseFiller = noiseFiller;
-@@ -867,6 +1202,30 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -868,6 +1203,30 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
          }
  
          void selectCellYZ(int y, int z) {
@@ -546,7 +546,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
              this.noise000 = this.slice0[z][y];
              this.noise001 = this.slice0[z + 1][y];
              this.noise100 = this.slice1[z][y];
-@@ -988,6 +1347,79 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -989,6 +1348,79 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
              double[][] doubles = this.slice0;
              this.slice0 = this.slice1;
              this.slice1 = doubles;
@@ -626,7 +626,7 @@ index c0af6b3422a2997797950c2bd8a46af6fe0dc3d0..094de1c0993d1a61be0bf8e00ecdea2f
          }
  
          @Override
-@@ -995,4 +1427,74 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -996,4 +1428,74 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
              return DensityFunctions.Marker.Type.Interpolated;
          }
      }

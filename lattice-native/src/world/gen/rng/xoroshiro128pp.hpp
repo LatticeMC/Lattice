@@ -17,7 +17,7 @@
  * The Splitter variant (Xoroshiro128PlusPlusRandom.Splitter) is also
  * bundled, since it's the only Splitter form chunk-gen actually uses
  * (`Xoroshiro128PlusPlusRandom.nextSplitter`). Mojang's
- * `MathHelper.hashCode(int, int, int)` is replicated for `split(x,y,z)`.
+ * `Mth.getSeed(int, int, int)` is replicated for `split(x,y,z)`.
  *
  * No state is shared globally; every instance is owned by its caller
  * and is single-threaded.
@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <bit>
 #include <cstdint>
 
 namespace lattice::world::gen::rng {
@@ -37,19 +38,35 @@ constexpr std::uint64_t java_rotate_left(std::uint64_t value, int distance) noex
     return (value << d) | (value >> (64u - d));
 }
 
-/// `MathHelper.hashCode(int, int, int)` — a deterministic 64-bit
-/// scramble of three signed 32-bit coordinates. Used by the splitter
-/// to derive a per-(x, y, z) seed.
+/// `Mth.getSeed(int, int, int)` — a deterministic 64-bit scramble of
+/// three signed 32-bit coordinates. Used by the splitter to derive a
+/// per-(x, y, z) seed.
 constexpr std::int64_t math_helper_hash_code(int x, int y, int z) noexcept {
-    // Java promotes ints to longs, so do all the arithmetic as
-    // signed 64-bit to match overflow semantics exactly. The shift
-    // at the end is an arithmetic shift (Java `>>`).
-    const std::int64_t l_init =
-          (static_cast<std::int64_t>(x) * 3129871LL)
-        ^ (static_cast<std::int64_t>(z) * 116129781LL)
-        ^  static_cast<std::int64_t>(y);
-    const std::int64_t l = l_init * l_init * 42317861LL + l_init * 11LL;
-    return l >> 16; // arithmetic shift
+    // Java evaluates x * 3129871 as a 32-bit int before promoting it to
+    // long for the XOR. Keep every intermediate in unsigned arithmetic so
+    // the required two's-complement modulo-2^N overflow is well-defined.
+    const std::uint32_t x_product =
+        static_cast<std::uint32_t>(x) * static_cast<std::uint32_t>(3129871);
+    const std::uint64_t x_long =
+        (x_product & 0x80000000u) != 0
+            ? (0xFFFFFFFF00000000ULL | static_cast<std::uint64_t>(x_product))
+            : static_cast<std::uint64_t>(x_product);
+    const std::uint64_t z_long =
+        static_cast<std::uint64_t>(static_cast<std::int64_t>(z));
+    const std::uint64_t y_long =
+        static_cast<std::uint64_t>(static_cast<std::int64_t>(y));
+    const std::uint64_t l_init =
+        (x_long ^ (z_long * 116129781ULL) ^ y_long);
+    const std::uint64_t l =
+        l_init * l_init * 42317861ULL + l_init * 11ULL;
+
+    // Java's `>> 16` is arithmetic. Reconstruct the sign extension in
+    // unsigned space, then copy the resulting bits into int64_t.
+    std::uint64_t shifted = l >> 16;
+    if ((l & 0x8000000000000000ULL) != 0) {
+        shifted |= 0xFFFF000000000000ULL;
+    }
+    return std::bit_cast<std::int64_t>(shifted);
 }
 
 /// The plain Xoroshiro128++ generator state. `next()` is identical

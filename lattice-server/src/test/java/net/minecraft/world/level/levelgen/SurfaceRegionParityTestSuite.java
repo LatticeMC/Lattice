@@ -5,5 +5,4 @@ import org.junit.platform.suite.api.Suite;
 
 @Suite
 @SelectClasses(SurfaceRegionParityTest.class)
-class SurfaceRegionParityTestSuite {
-}
+class SurfaceRegionParityTestSuite {}

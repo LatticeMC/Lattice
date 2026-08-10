@@ -34,10 +34,10 @@ index a404230d43c9e411986165773abbe9b91333758f..ab6baa865f73904c16d88422a88bb514
                                              mutableBlockPos.set(i10, i7, i13);
                                              chunk.markPosForPostprocessing(mutableBlockPos);
 diff --git a/net/minecraft/world/level/levelgen/NoiseChunk.java b/net/minecraft/world/level/levelgen/NoiseChunk.java
-index 094de1c0993d1a61be0bf8e00ecdea2fc8bda1af..e58829e521d37fc6988a419022e2f8dc858eb545 100644
+index 368df26ef9620c2fa0198d1ee59c6a86dd93caf9..fef36e02bb684968f3887ed2aab9074b830f56d1 100644
 --- a/net/minecraft/world/level/levelgen/NoiseChunk.java
 +++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
-@@ -1212,7 +1212,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -1213,7 +1213,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
                  int i01 = z * yRows + y + 1;
                  int i11 = (z + 1) * yRows + y + 1;
                  if (i11 < start.length && i11 < end.length) {
@@ -46,7 +46,7 @@ index 094de1c0993d1a61be0bf8e00ecdea2fc8bda1af..e58829e521d37fc6988a419022e2f8dc
                      this.noise000 = start[i00];
                      this.noise001 = start[i10];
                      this.noise100 = end[i00];
-@@ -1319,6 +1319,13 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -1320,6 +1320,13 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
              double noise011,
              double noise111
          ) {
@@ -60,7 +60,7 @@ index 094de1c0993d1a61be0bf8e00ecdea2fc8bda1af..e58829e521d37fc6988a419022e2f8dc
              int arrayIndex = 0;
              for (int y = cellHeight - 1; y >= 0; y--) {
                  double yFraction = (double)y / cellHeight;
-@@ -1338,6 +1345,37 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+@@ -1339,6 +1346,37 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
              }
          }
  
