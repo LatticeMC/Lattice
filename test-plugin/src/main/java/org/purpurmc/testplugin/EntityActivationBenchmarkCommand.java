@@ -184,6 +184,12 @@ final class EntityActivationBenchmarkCommand extends Command {
                     + " (online=" + this.onlineBots() + ", uniqueSlots=" + this.uniqueOnlineBotSlots() + ')'
             );
         }
+        for (final Player player : this.plugin.getServer().getOnlinePlayers()) {
+            final int index = this.botIndex(player.getName());
+            if (index >= 0 && index < this.regions) {
+                this.assignBot(player, index);
+            }
+        }
         this.running = true;
         this.startedAtNanos = System.nanoTime();
         sender.sendMessage("Activationbench started: " + this.describe());
@@ -213,12 +219,16 @@ final class EntityActivationBenchmarkCommand extends Command {
         if (index < 0 || index >= this.regions) {
             return;
         }
+        this.assignBot(event.getPlayer(), index);
+    }
+
+    private void assignBot(final Player player, final int index) {
         final Location anchor = this.regionAnchors[this.layout.equals("overlap") ? 0 : index].clone();
         if (this.layout.equals("overlap")) {
             anchor.add((index & 3) * 0.35D, 0.0D, (index >>> 2) * 0.35D);
         }
-        event.getPlayer().teleport(anchor);
-        event.getPlayer().sendMessage(
+        player.teleport(anchor);
+        player.sendMessage(
             "Activationbench assigned slot=" + (index + 1) + "/" + this.regions
                 + " layout=" + this.layout
                 + " x=" + format(anchor.getX())
