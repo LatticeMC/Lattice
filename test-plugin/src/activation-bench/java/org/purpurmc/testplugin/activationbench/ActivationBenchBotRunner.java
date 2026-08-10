@@ -52,6 +52,9 @@ public final class ActivationBenchBotRunner {
     private static final long DEFAULT_GAME_READY_TIMEOUT_SECONDS = 30L;
     private static final long MIN_GAME_READY_TIMEOUT_SECONDS = 5L;
     private static final long MAX_GAME_READY_TIMEOUT_SECONDS = 120L;
+    private static final long DEFAULT_POSITION_READY_TIMEOUT_SECONDS = 10L;
+    private static final long MIN_POSITION_READY_TIMEOUT_SECONDS = 1L;
+    private static final long MAX_POSITION_READY_TIMEOUT_SECONDS = 60L;
     private static final long SETTLE_WINDOW_MILLIS = 2_000L;
     private static final long MOVE_INTERVAL_MILLIS = 1_000L;
     private static final long POLL_MILLIS = 100L;
@@ -120,9 +123,10 @@ public final class ActivationBenchBotRunner {
         boolean allLoggedIn = loginLatch.await(LOGIN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         boolean allConnectedAfterSettle = false;
         boolean gameReady = allLoggedIn && awaitGameState(states, config.gameReadyTimeoutSeconds);
-        if (gameReady) {
-            // LoginFinished is still handled in LOGIN. Send movement only after
-            // the default listener has advanced through CONFIGURATION to GAME.
+        boolean initialPositionReady = gameReady && awaitInitialPositions(states, config.positionReadyTimeoutSeconds);
+        if (initialPositionReady) {
+            // The server-assigned initial position may arrive after GAME. Do not
+            // emit movement until that position has been acknowledged and stored.
             for (BotState state : states) {
                 state.sendMoveAtLatest();
             }
@@ -153,7 +157,7 @@ public final class ActivationBenchBotRunner {
             held = held && allHealthyAndPositioned(states);
         }
 
-        boolean success = allLoggedIn && gameReady && allConnectedAfterSettle && held;
+        boolean success = allLoggedIn && gameReady && initialPositionReady && allConnectedAfterSettle && held;
         String finishedAt = Instant.now().toString();
         List<BotSnapshot> snapshots = new ArrayList<>(states.size());
         for (BotState state : states) {
@@ -163,7 +167,7 @@ public final class ActivationBenchBotRunner {
             state.close();
         }
         return new Result(success, startedAt, finishedAt, states, snapshots,
-            allLoggedIn, gameReady, allConnectedAfterSettle, held);
+            allLoggedIn, gameReady, initialPositionReady, allConnectedAfterSettle, held);
     }
 
     private static boolean allHealthyAndPositioned(List<BotState> states) {
@@ -198,6 +202,27 @@ public final class ActivationBenchBotRunner {
                     || state.session.getPacketProtocol().getOutboundState() != ProtocolState.GAME) {
                     ready = false;
                     break;
+                }
+            }
+            if (ready) {
+                return true;
+            }
+            Thread.sleep(POLL_MILLIS);
+        }
+        return false;
+    }
+
+    private static boolean awaitInitialPositions(List<BotState> states, long timeoutSeconds) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        while (System.nanoTime() < deadline) {
+            boolean ready = true;
+            for (BotState state : states) {
+                state.recordProtocolStateIfChanged();
+                if (!state.session.isConnected() || state.hasErrors()) {
+                    return false;
+                }
+                if (!state.hasPosition()) {
+                    ready = false;
                 }
             }
             if (ready) {
@@ -253,16 +278,18 @@ public final class ActivationBenchBotRunner {
         private final String prefix;
         private final long holdSeconds;
         private final long gameReadyTimeoutSeconds;
+        private final long positionReadyTimeoutSeconds;
         private final Path output;
 
         private Config(String host, int port, int bots, String prefix, long holdSeconds, long gameReadyTimeoutSeconds,
-                       Path output) {
+                       long positionReadyTimeoutSeconds, Path output) {
             this.host = host;
             this.port = port;
             this.bots = bots;
             this.prefix = prefix;
             this.holdSeconds = holdSeconds;
             this.gameReadyTimeoutSeconds = gameReadyTimeoutSeconds;
+            this.positionReadyTimeoutSeconds = positionReadyTimeoutSeconds;
             this.output = output;
         }
 
@@ -273,6 +300,7 @@ public final class ActivationBenchBotRunner {
             String prefix = "LatticeActBot";
             long holdSeconds = 10L;
             long gameReadyTimeoutSeconds = DEFAULT_GAME_READY_TIMEOUT_SECONDS;
+            long positionReadyTimeoutSeconds = DEFAULT_POSITION_READY_TIMEOUT_SECONDS;
             Path output = null;
 
             for (int index = 0; index < args.length; index++) {
@@ -292,6 +320,8 @@ public final class ActivationBenchBotRunner {
                     case "--hold-seconds" -> holdSeconds = parseLong(value, option, 0L, 86_400L);
                     case "--game-ready-timeout-seconds" -> gameReadyTimeoutSeconds = parseLong(value, option,
                         MIN_GAME_READY_TIMEOUT_SECONDS, MAX_GAME_READY_TIMEOUT_SECONDS);
+                    case "--position-ready-timeout-seconds" -> positionReadyTimeoutSeconds = parseLong(value, option,
+                        MIN_POSITION_READY_TIMEOUT_SECONDS, MAX_POSITION_READY_TIMEOUT_SECONDS);
                     case "--output" -> output = Path.of(value);
                     default -> throw new IllegalArgumentException("unknown option: " + option);
                 }
@@ -309,7 +339,8 @@ public final class ActivationBenchBotRunner {
             if ((prefix + bots).length() > 16) {
                 throw new IllegalArgumentException("bot names must be at most 16 characters");
             }
-            return new Config(host, port, bots, prefix, holdSeconds, gameReadyTimeoutSeconds, output);
+            return new Config(host, port, bots, prefix, holdSeconds, gameReadyTimeoutSeconds,
+                positionReadyTimeoutSeconds, output);
         }
 
         private static boolean isSupportedBotCount(int value) {
@@ -617,12 +648,13 @@ public final class ActivationBenchBotRunner {
         private final List<BotSnapshot> snapshots;
         private final boolean allLoggedIn;
         private final boolean gameReady;
+        private final boolean initialPositionReady;
         private final boolean allConnectedAfterSettle;
         private final boolean held;
 
         private Result(boolean success, String startedAt, String finishedAt, List<BotState> states,
                        List<BotSnapshot> snapshots, boolean allLoggedIn, boolean gameReady,
-                       boolean allConnectedAfterSettle,
+                       boolean initialPositionReady, boolean allConnectedAfterSettle,
                        boolean held) {
             this.success = success;
             this.startedAt = startedAt;
@@ -631,6 +663,7 @@ public final class ActivationBenchBotRunner {
             this.snapshots = snapshots;
             this.allLoggedIn = allLoggedIn;
             this.gameReady = gameReady;
+            this.initialPositionReady = initialPositionReady;
             this.allConnectedAfterSettle = allConnectedAfterSettle;
             this.held = held;
         }
@@ -648,10 +681,12 @@ public final class ActivationBenchBotRunner {
             field(json, "prefix", json(config.prefix)).append(',');
             field(json, "holdSeconds", Long.toString(config.holdSeconds)).append(',');
             field(json, "gameReadyTimeoutSeconds", Long.toString(config.gameReadyTimeoutSeconds)).append(',');
+            field(json, "positionReadyTimeoutSeconds", Long.toString(config.positionReadyTimeoutSeconds)).append(',');
             field(json, "settleWindowSeconds", "2").append(',');
             field(json, "startedAt", json(startedAt)).append(',');
             field(json, "finishedAt", json(finishedAt)).append(',');
             field(json, "checks", "{\"allLoggedIn\":" + allLoggedIn + ",\"gameStateReady\":" + gameReady
+                + ",\"initialPositionReady\":" + initialPositionReady
                 + ",\"allConnectedAfterSettle\":" + allConnectedAfterSettle
                 + ",\"heldForRequestedSeconds\":" + held + "}").append(',');
             json.append("\"botNames\":[");
