@@ -97,10 +97,10 @@ jobs:
           cmake -S lattice-native -B lattice-native/build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DLATTICE_WARNINGS_AS_ERRORS=ON -DLATTICE_BUILD_TESTS=ON
           cmake --build lattice-native/build-windows --config Release --parallel
           ctest --test-dir lattice-native/build-windows --output-on-failure -C Release
-          $artifacts = @(Get-ChildItem -LiteralPath 'lattice-native/build-windows' -Recurse -File -Filter 'lattice.dll')
+          $artifacts = @(Get-ChildItem -LiteralPath 'lattice-native/build-windows' -Recurse -File -Filter '*lattice*.dll')
           if ($artifacts.Count -ne 1) {
             Get-ChildItem -LiteralPath 'lattice-native/build-windows' -Recurse -File -Filter '*.dll' | Select-Object -ExpandProperty FullName
-            throw "Expected exactly one lattice.dll, found $($artifacts.Count)"
+            throw "Expected exactly one Lattice DLL, found $($artifacts.Count)"
           }
           $artifactPath = $artifacts[0].FullName
           "WINDOWS_ARTIFACT_PATH=$artifactPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -126,7 +126,9 @@ jobs:
             set -eux
             pkg install -y cmake ninja git openjdk21 pkgconf libdeflate file
             test "$(uname -m)" = '${{ matrix.arch == 'aarch64' && 'aarch64' || 'amd64' }}'
-            export JAVA_HOME="$(dirname "$(dirname "$(realpath "$(command -v javac)")")")"
+            export JAVA_HOME=/usr/local/openjdk21
+            test -f "$JAVA_HOME/include/jni.h"
+            test -f "$JAVA_HOME/include/freebsd/jni_md.h"
             cmake -S lattice-native -B lattice-native/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLATTICE_WARNINGS_AS_ERRORS=ON -DLATTICE_BUILD_TESTS=ON
             cmake --build lattice-native/build --parallel
             ctest --test-dir lattice-native/build --output-on-failure
