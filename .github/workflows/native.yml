@@ -184,23 +184,31 @@ jobs:
           arch: ${{ matrix.arch == 'aarch64' && 'aarch64' || 'amd64' }}
           usesh: true
           sync: rsync
+          # Cache FreeBSD packages after provisioning; cache invalidates when this setup changes.
+          prepare: |
+            pkg install -y cmake ninja git openjdk21 pkgconf libdeflate file
+          cache-after-prepare: true
           run: |
             set -eux
-            pkg install -y cmake ninja git openjdk21 pkgconf libdeflate file
             if [ '${{ matrix.arch }}' = 'x86_64' ]; then
               test "$(uname -m)" = 'amd64'
+              build_tests=ON
             else
               case "$(uname -m)" in
                 aarch64|arm64) ;;
                 *) echo "Expected FreeBSD ARM64, got $(uname -m)" >&2; exit 1 ;;
               esac
+              # Linux ARM covers native/NEON tests; this VM verifies FreeBSD ARM ABI and build output.
+              build_tests=OFF
             fi
             export JAVA_HOME=/usr/local/openjdk21
             test -f "$JAVA_HOME/include/jni.h"
             test -f "$JAVA_HOME/include/freebsd/jni_md.h"
-            cmake -S lattice-native -B lattice-native/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLATTICE_WARNINGS_AS_ERRORS=ON -DLATTICE_BUILD_TESTS=ON
+            cmake -S lattice-native -B lattice-native/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLATTICE_WARNINGS_AS_ERRORS=ON -DLATTICE_BUILD_TESTS="$build_tests"
             cmake --build lattice-native/build --parallel
-            ctest --test-dir lattice-native/build --output-on-failure
+            if [ "$build_tests" = 'ON' ]; then
+              ctest --test-dir lattice-native/build --output-on-failure
+            fi
             file_output="$(file -L '${{ matrix.artifact_path }}')"
             printf '%s\n' "$file_output"
             if [ '${{ matrix.arch }}' = 'x86_64' ]; then
