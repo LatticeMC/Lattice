@@ -27,7 +27,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
  import java.util.function.Predicate;
  
  public final class ChunkEntitySlices {
-@@ -46,6 +47,10 @@ public final class ChunkEntitySlices {
+@@ -46,6 +47,13 @@ public final class ChunkEntitySlices {
      // Native setup is only amortised by dense entity sections.  The common
      // collision query retains Moonrise's exact iteration/filter semantics.
      private static final int NATIVE_AABB_MIN_ENTITIES = 32;
@@ -35,10 +35,13 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
 +    // section hovering on the threshold rebuild them every tick, so thinning out
 +    // has to fall well below the build point first.
 +    private static final int NATIVE_AABB_RELEASE_ENTITIES = NATIVE_AABB_MIN_ENTITIES / 2;
++    // A grid that keeps over one quarter of a section in one chain cannot
++    // reject enough candidates to pay for its retained footprint.
++    private static final int SPATIAL_AABB_MAX_CELL_CHAIN_DIVISOR = 4;
      // A one-block broad-phase grid becomes cheaper than either a JNI call or
      // a full section scan once a vertical section is genuinely dense.  Unlike
      // the native batch broad-phase this remains exact: large entities are kept
-@@ -76,7 +81,6 @@ public final class ChunkEntitySlices {
+@@ -76,7 +84,6 @@ public final class ChunkEntitySlices {
      private final Reference2ObjectOpenHashMap<Class<? extends Entity>, EntityCollectionBySection> entitiesByClass;
      private final Reference2ObjectOpenHashMap<EntityType<?>, EntityCollectionBySection> entitiesByType;
      private final EntityList entities = new EntityList();
@@ -46,7 +49,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
  
      public FullChunkStatus status;
      public final ChunkData chunkData;
-@@ -356,8 +360,14 @@ public final class ChunkEntitySlices {
+@@ -356,8 +363,14 @@ public final class ChunkEntitySlices {
          return true;
      }
  
@@ -62,7 +65,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
      }
  
      /** Called after Entity#setBoundingBox publishes a new live AABB. */
-@@ -455,11 +465,15 @@ public final class ChunkEntitySlices {
+@@ -455,11 +468,16 @@ public final class ChunkEntitySlices {
  
          private static final Entity[] EMPTY = new Entity[0];
          private static final int DEFAULT_CAPACITY = 4;
@@ -77,9 +80,10 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
 -        private final IdentityHashMap<E, Integer> indices = new IdentityHashMap<>();
 +        private Reference2IntOpenHashMap<E> indices;
          private SpatialAabbIndex<E> spatialAabbs;
++        private boolean spatialAabbRejected;
          private int size;
  
-@@ -501,7 +515,11 @@ public final class ChunkEntitySlices {
+@@ -501,7 +519,11 @@ public final class ChunkEntitySlices {
                  this.resize();
              }
              this.storage[idx] = entity;
@@ -92,7 +96,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
              if (this.aabbs != null) {
                  this.writeBoundingBox(idx, entity.getBoundingBox());
              }
-@@ -511,9 +529,30 @@ public final class ChunkEntitySlices {
+@@ -511,9 +533,30 @@ public final class ChunkEntitySlices {
              ++this.size;
          }
  
@@ -125,7 +129,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
          }
  
          public boolean remove(final E entity) {
-@@ -540,8 +579,10 @@ public final class ChunkEntitySlices {
+@@ -540,8 +583,10 @@ public final class ChunkEntitySlices {
                  if (this.spatialCells != null) {
                      System.arraycopy(this.spatialCells, idx + 1, this.spatialCells, idx, size - idx);
                  }
@@ -138,7 +142,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
                  }
              }
  
-@@ -549,7 +590,9 @@ public final class ChunkEntitySlices {
+@@ -549,7 +594,9 @@ public final class ChunkEntitySlices {
              if (this.spatialCells != null) {
                  this.spatialCells[size] = 0L;
              }
@@ -149,7 +153,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
  
              return true;
          }
-@@ -558,43 +601,96 @@ public final class ChunkEntitySlices {
+@@ -558,43 +605,108 @@ public final class ChunkEntitySlices {
              return this.indexOf(entity) != -1;
          }
  
@@ -167,6 +171,9 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
 +                return false;
 +            }
 +
++            // A sparse section gets a fresh selectivity decision if it becomes
++            // dense again later.
++            this.spatialAabbRejected = false;
 +            boolean released = false;
 +            if (this.aabbs != null) {
 +                this.aabbs = null;
@@ -237,12 +244,15 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
 +         * {@link Entity#getBoundingBox()} directly, so {@code aabbs} is only
 +         * needed by the strided native fallback, which builds it on demand.</p>
 +         *
-+         * @return true when this call was the one that built the grid.
++         * @return true when a spatial grid is retained for the section.
           */
 -        public void ensureSpatialAabbIndex() {
 +        public boolean ensureSpatialAabbIndex() {
              if (this.spatialAabbs != null) {
 -                return;
++                return true;
++            }
++            if (this.spatialAabbRejected) {
 +                return false;
              }
 -            this.ensureAabbCache();
@@ -252,11 +262,17 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
                  final E entity = this.storage[index];
                  this.spatialCells[index] = this.spatialAabbs.add(entity, entity.getBoundingBox());
              }
++            if (this.spatialAabbs.maximumChainLength() > this.size / SPATIAL_AABB_MAX_CELL_CHAIN_DIVISOR) {
++                this.spatialAabbs = null;
++                this.spatialCells = null;
++                this.spatialAabbRejected = true;
++                return false;
++            }
 +            return true;
          }
  
          /**
-@@ -624,16 +720,28 @@ public final class ChunkEntitySlices {
+@@ -624,16 +736,28 @@ public final class ChunkEntitySlices {
       * from the previous JNI path is that it avoids making one native call per
       * entity query: nearby push/collision queries only visit the occupied
       * one-block cells touching the query box.
@@ -288,9 +304,23 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
          }
  
          long add(final E entity, final AABB box) {
-@@ -643,31 +751,44 @@ public final class ChunkEntitySlices {
+@@ -643,31 +767,58 @@ public final class ChunkEntitySlices {
          }
  
++        private int maximumChainLength() {
++            int maximum = 0;
++            for (final int head : this.cells.values) {
++                int length = 0;
++                for (int slot = head; slot != NO_SLOT; slot = this.slotNext[slot]) {
++                    ++length;
++                }
++                if (length > maximum) {
++                    maximum = length;
++                }
++            }
++            return maximum;
++        }
++
          private void add(final E entity, final long cell) {
 -            if (cell == OVERFLOW_CELL) {
 -                this.overflow.add(entity);
@@ -351,7 +381,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
              }
          }
  
-@@ -694,45 +815,62 @@ public final class ChunkEntitySlices {
+@@ -694,45 +831,62 @@ public final class ChunkEntitySlices {
                  return -1;
              }
  
@@ -429,7 +459,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
          private boolean matches(final E entity, final Entity except, final AABB box, final Predicate<? super Entity> predicate) {
              return entity != except && entity.getBoundingBox().intersects(box)
                  && (predicate == null || predicate.test(entity));
-@@ -750,85 +888,142 @@ public final class ChunkEntitySlices {
+@@ -750,85 +904,142 @@ public final class ChunkEntitySlices {
          }
      }
  
@@ -609,7 +639,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
                  if (this.keys[position] == key) {
                      --this.size;
                      this.shiftKeys(position);
-@@ -838,93 +1033,99 @@ public final class ChunkEntitySlices {
+@@ -838,93 +1049,99 @@ public final class ChunkEntitySlices {
              }
          }
  
@@ -752,7 +782,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
      }
  
      private static final class EntityCollectionBySection {
-@@ -933,6 +1134,8 @@ public final class ChunkEntitySlices {
+@@ -933,6 +1150,8 @@ public final class ChunkEntitySlices {
          private final boolean nativeAabbEnabled;
          private final BasicEntityList<Entity>[] entitiesBySection;
          private int count;
@@ -761,7 +791,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
  
          public EntityCollectionBySection(final ChunkEntitySlices slices, final boolean nativeAabbEnabled) {
              this.slices = slices;
-@@ -943,6 +1146,10 @@ public final class ChunkEntitySlices {
+@@ -943,6 +1162,10 @@ public final class ChunkEntitySlices {
              this.entitiesBySection = new BasicEntityList[sectionCount];
          }
  
@@ -772,7 +802,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
          public void addEntity(final Entity entity, final int sectionIndex) {
              BasicEntityList<Entity> list = this.entitiesBySection[sectionIndex];
  
-@@ -969,6 +1176,17 @@ public final class ChunkEntitySlices {
+@@ -969,6 +1192,17 @@ public final class ChunkEntitySlices {
  
              if (list.isEmpty()) {
                  this.entitiesBySection[sectionIndex] = null;
@@ -790,7 +820,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
              }
          }
  
-@@ -1082,9 +1300,15 @@ public final class ChunkEntitySlices {
+@@ -1082,9 +1330,17 @@ public final class ChunkEntitySlices {
                  return -1;
              }
  
@@ -799,15 +829,19 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
 +            // transition of the whole list.
 +            final boolean cachedBefore = list.hasQueryCache();
              if (SPATIAL_AABB_ENABLED && entityCount >= SPATIAL_AABB_MIN_ENTITIES) {
-                 list.ensureSpatialAabbIndex();
+-                list.ensureSpatialAabbIndex();
++                final boolean spatialRetained = list.ensureSpatialAabbIndex();
 -                this.slices.nativeAabbCacheActive = true;
-+                if (!cachedBefore) {
++                if (spatialRetained && !cachedBefore) {
 +                    ++this.cachedSections;
 +                }
-                 final int spatialResult = list.scanSpatial(except, box, into, predicate, maxCount);
+-                final int spatialResult = list.scanSpatial(except, box, into, predicate, maxCount);
++                final int spatialResult = spatialRetained
++                    ? list.scanSpatial(except, box, into, predicate, maxCount)
++                    : -1;
                  if (spatialResult >= 0) {
                      return spatialResult;
-@@ -1095,7 +1319,9 @@ public final class ChunkEntitySlices {
+@@ -1095,7 +1351,9 @@ public final class ChunkEntitySlices {
                  return -1;
              }
              list.ensureAabbCache();
