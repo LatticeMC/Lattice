@@ -1,0 +1,288 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
+Date: Wed, 12 Aug 2026 00:00:00 +0800
+Subject: [PATCH] perf(entity): stream bounded pushable collision queries
+
+Port of Leaf commit cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6.
+
+Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
+Original license: MIT
+Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
+
+Stream only LivingEntity push candidates. The visitor keeps Lattice's Moonrise
+section and storage order, then processes PlatformHooks additions in their existing order.
+It aborts only once both the collision cap and cramming's non-passenger decision
+have resolved.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 8b30a55df6f8e872314347dcc9230b17176c876f..ca0e7930b1a81e210853567f73e9e54b4cde5d10 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -16,6 +16,7 @@ import net.minecraft.nbt.Tag;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.server.level.FullChunkStatus;
+ import net.minecraft.server.level.ServerLevel;
++import net.minecraft.util.AbortableIterationConsumer;
+ import net.minecraft.util.Mth;
+ import net.minecraft.util.ProblemReporter;
+ import net.minecraft.world.entity.Entity;
+@@ -398,6 +399,16 @@ public final class ChunkEntitySlices {
+         return this.allEntities.getEntitiesLimited(except, box, into, predicate, maxCount);
+     }
+
++    // Lattice start - Leaf: limit pushable entity queries
++    // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
++    // Original license: MIT
++    // Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
++    public boolean forEachEntity(final Entity except, final AABB box, final Predicate<? super Entity> predicate,
++                                 final AbortableIterationConsumer<Entity> consumer) {
++        return this.allEntities.forEachEntity(except, box, predicate, consumer);
++    }
++    // Lattice end - Leaf: limit pushable entity queries
++
+     public <T extends Entity> void getEntities(final EntityType<?> type, final AABB box, final List<? super T> into,
+                                                final Predicate<? super T> predicate) {
+         final EntityCollectionBySection byType = this.entitiesByType.get(type);
+@@ -1407,6 +1418,45 @@ public final class ChunkEntitySlices {
+             return false;
+         }
+
++        // Lattice start - Leaf: limit pushable entity queries
++        // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
++        // Original license: MIT
++        // Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
++        public boolean forEachEntity(final Entity except, final AABB box, final Predicate<? super Entity> predicate,
++                                     final AbortableIterationConsumer<Entity> consumer) {
++            if (this.count == 0) {
++                return false;
++            }
++
++            final int minSection = this.slices.minSection;
++            final int maxSection = this.slices.maxSection;
++            final int min = Mth.clamp(Mth.floor(box.minY - 2.0) >> 4, minSection, maxSection);
++            final int max = Mth.clamp(Mth.floor(box.maxY + 2.0) >> 4, minSection, maxSection);
++
++            for (int section = min; section <= max; ++section) {
++                final BasicEntityList<Entity> list = this.entitiesBySection[section - minSection];
++                if (list == null) {
++                    continue;
++                }
++
++                final Entity[] storage = list.storage;
++                for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
++                    final Entity entity = storage[i];
++                    if (entity == null || entity == except || !entity.getBoundingBox().intersects(box)) {
++                        continue;
++                    }
++                    if (predicate != null && !predicate.test(entity)) {
++                        continue;
++                    }
++                    if (consumer.accept(entity).shouldAbort()) {
++                        return true;
++                    }
++                }
++            }
++            return false;
++        }
++        // Lattice end - Leaf: limit pushable entity queries
++
+         /**
+          * Returns -1 when the Java loop must be used, 0 when the native scan
+          * completed, and 1 when the limited query reached its result cap.
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+index bcc88bab4075ad0e64ebc6a15f19ffa94ccd3c79..6c43d7f335b8b16fd469cb5a545967fbb471ca37 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/EntityLookup.java
+@@ -617,6 +617,48 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
+         }
+     }
+
++    // Lattice start - Leaf: limit pushable entity queries
++    // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
++    // Original license: MIT
++    // Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
++    public boolean forEachEntity(final Entity except, final AABB box, final Predicate<? super Entity> predicate,
++                                 final AbortableIterationConsumer<Entity> consumer) {
++        final int minChunkX = (Mth.floor(box.minX) - 2) >> 4;
++        final int minChunkZ = (Mth.floor(box.minZ) - 2) >> 4;
++        final int maxChunkX = (Mth.floor(box.maxX) + 2) >> 4;
++        final int maxChunkZ = (Mth.floor(box.maxZ) + 2) >> 4;
++        final int minRegionX = minChunkX >> REGION_SHIFT;
++        final int minRegionZ = minChunkZ >> REGION_SHIFT;
++        final int maxRegionX = maxChunkX >> REGION_SHIFT;
++        final int maxRegionZ = maxChunkZ >> REGION_SHIFT;
++
++        for (int currRegionZ = minRegionZ; currRegionZ <= maxRegionZ; ++currRegionZ) {
++            final int minZ = currRegionZ == minRegionZ ? minChunkZ & REGION_MASK : 0;
++            final int maxZ = currRegionZ == maxRegionZ ? maxChunkZ & REGION_MASK : REGION_MASK;
++            for (int currRegionX = minRegionX; currRegionX <= maxRegionX; ++currRegionX) {
++                final ChunkSlicesRegion region = this.getRegion(currRegionX, currRegionZ);
++                if (region == null) {
++                    continue;
++                }
++                final int minX = currRegionX == minRegionX ? minChunkX & REGION_MASK : 0;
++                final int maxX = currRegionX == maxRegionX ? maxChunkX & REGION_MASK : REGION_MASK;
++                for (int currZ = minZ; currZ <= maxZ; ++currZ) {
++                    for (int currX = minX; currX <= maxX; ++currX) {
++                        final ChunkEntitySlices chunk = region.get(currX | (currZ << REGION_SHIFT));
++                        if (chunk == null || !chunk.status.isOrAfter(FullChunkStatus.FULL)) {
++                            continue;
++                        }
++                        if (chunk.forEachEntity(except, box, predicate, consumer)) {
++                            return true;
++                        }
++                    }
++                }
++            }
++        }
++        return false;
++    }
++    // Lattice end - Leaf: limit pushable entity queries
++
+     // Lattice start - Leaf: optimize entity activation with a KD-tree
+     // Original author: hayanesuru <hayanesuru@outlook.jp>
+     // Original license: MIT
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index 4238250178eeb9ce7f30321e1e196db7796322bd..f2c643c22b400e2aaf7733ba3e584acbfa01e910 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -3976,39 +3976,32 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+             return;
+         }
+
+-        int i = ((ServerLevel) this.level()).getGameRules().get(GameRules.MAX_ENTITY_CRAMMING);
+-        if (i <= 0 && this.level().paperConfig().collisions.maxEntityCollisions <= 0) {
++        final int maxCramming = ((ServerLevel) this.level()).getGameRules().get(GameRules.MAX_ENTITY_CRAMMING);
++        final int maxEntityCollisions = this.level().paperConfig().collisions.maxEntityCollisions;
++        if (maxCramming <= 0 && maxEntityCollisions <= 0) {
+             return;
+         }
+         // Paper end - don't run getEntities if we're not going to use its result
+-        // Paper's max-entity-collisions is an output cap, so using it to cap
+-        // the lookup is equivalent for pushing and prevents a dense pile from
+-        // allocating/scanning every one of its O(n^2) candidates. Cramming
+-        // only needs to know whether the result reaches its configured limit.
+-        final int pushableQueryLimit = Math.max(i, this.level().paperConfig().collisions.maxEntityCollisions);
+-        List<Entity> pushableEntities = this.level().getPushableEntities(this, this.getBoundingBox(), pushableQueryLimit);
+-        if (!pushableEntities.isEmpty()) {
+-            if (this.level() instanceof ServerLevel serverLevel) {
+-                // Paper - don't run getEntities if we're not going to use its result; moved up
+-                if (i > 0 && pushableEntities.size() > i - 1 && this.random.nextInt(4) == 0) {
+-                    int i1 = 0;
+-
+-                    for (Entity entity : pushableEntities) {
+-                        if (!entity.isPassenger()) {
+-                            i1++;
+-                        }
+-                    }
+-
+-                    if (i1 > i - 1) {
+-                        this.hurtServer(serverLevel, this.damageSources().cramming(), 6.0F);
+-                    }
+-                }
++        // Lattice start - Leaf: limit pushable entity queries
++        // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
++        // Original license: MIT
++        // Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
++        final com.latticemc.lattice.world.EntityPushState pushState = this.level().lattice$acquirePushEntityQueryState(
++            this, maxCramming, maxEntityCollisions
++        );
++        try {
++            this.level().lattice$forEachPushableEntity(this, this.getBoundingBox(), EntitySelector.pushableBy(this), pushState);
++            if (!pushState.foundAny) {
++                return;
++            }
++            if (pushState.crammingDamage && this.level() instanceof ServerLevel serverLevel) {
++                this.hurtServer(serverLevel, this.damageSources().cramming(), 6.0F);
+             }
+
+             // Paper start - Cap entity collisions
+-            this.numCollisions = Math.max(0, this.numCollisions - this.level().paperConfig().collisions.maxEntityCollisions);
+-            for (Entity entity1 : pushableEntities) {
+-                if (this.numCollisions >= this.level().paperConfig().collisions.maxEntityCollisions) {
++            this.numCollisions = Math.max(0, this.numCollisions - maxEntityCollisions);
++            for (Entity entity1 : pushState.pushableEntities) {
++                if (this.numCollisions >= maxEntityCollisions) {
+                     break;
+                 }
+
+@@ -4017,7 +4010,10 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+                 // Paper end - Cap entity collisions
+                 this.doPush(entity1);
+             }
++        } finally {
++            pushState.release();
+         }
++        // Lattice end - Leaf: limit pushable entity queries
+     }
+
+     protected void checkAutoSpinAttack(AABB boundingBoxBeforeSpin, AABB boundingBoxAfterSpin) {
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 287ef75ae2957d727c6467ad053cbc0affab8973..306f0c3279c5c19a3051f009f072d4683ddca449 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1,6 +1,7 @@
+ package net.minecraft.world.level;
+
+ import com.latticemc.lattice.nativelib.NativeLineOfSight;
++import com.latticemc.lattice.world.EntityPushState;
+ import com.google.common.collect.Lists;
+ import com.mojang.serialization.Codec;
+ import java.io.IOException;
+@@ -243,6 +244,12 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+     // Paper start - rewrite chunk system
+     private ca.spottedleaf.moonrise.patches.chunk_system.level.entity.EntityLookup entityLookup;
+     private final ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<ca.spottedleaf.moonrise.patches.chunk_system.level.chunk.ChunkData> chunkData = new ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<>();
++    // Lattice start - Leaf: limit pushable entity queries
++    // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
++    // Original license: MIT
++    // Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
++    private final EntityPushState lattice$pushEntityQueryState = new EntityPushState();
++    // Lattice end - Leaf: limit pushable entity queries
+
+     @Override
+     public final ca.spottedleaf.moonrise.patches.chunk_system.level.entity.EntityLookup moonrise$getEntityLookup() {
+@@ -1864,6 +1871,43 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         return this.getEntities(entity, boundingBox, EntitySelector.pushableBy(entity));
+     }
+
++    // Lattice start - Leaf: limit pushable entity queries
++    // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
++    // Original license: MIT
++    // Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
++    public final EntityPushState lattice$acquirePushEntityQueryState(final net.minecraft.world.entity.LivingEntity source,
++                                                                      final int maxCramming, final int maxEntityCollisions) {
++        this.lattice$pushEntityQueryState.reset(source, maxCramming, maxEntityCollisions);
++        return this.lattice$pushEntityQueryState;
++    }
++
++    /**
++     * Streams candidates for {@link net.minecraft.world.entity.LivingEntity#pushEntities()} only.
++     * Moonrise keeps its normal region and section order; plugin-supplied entities retain their
++     * existing {@code PlatformHooks.addToGetEntities} order after the Moonrise traversal.
++     */
++    public final boolean lattice$forEachPushableEntity(final Entity except, final AABB boundingBox,
++                                                        final Predicate<? super Entity> predicate,
++                                                        final AbortableIterationConsumer<Entity> consumer) {
++        Profiler.get().incrementCounter("getEntities");
++        if (((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup()
++            .forEachEntity(except, boundingBox, predicate, consumer)) {
++            return true;
++        }
++
++        final List<Entity> platformEntities = new java.util.ArrayList<>();
++        ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities(
++            (Level)(Object)this, except, boundingBox, predicate, platformEntities
++        );
++        for (int index = 0, size = platformEntities.size(); index < size; ++index) {
++            if (consumer.accept(platformEntities.get(index)).shouldAbort()) {
++                return true;
++            }
++        }
++        return false;
++    }
++    // Lattice end - Leaf: limit pushable entity queries
++
+     /**
+      * Collision processing already caps the number of entities it can push.
+      * Do not materialise an unbounded candidate list merely to discard it in
