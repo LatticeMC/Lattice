@@ -1,0 +1,232 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Tue, 11 Aug 2026 22:00:00 +0800
+Subject: [PATCH] perf: replace dense entity reverse hash with direct ID index
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 5a18a19..8b30a55 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -7,7 +7,6 @@ import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
+ import com.google.common.collect.ImmutableList;
+ import com.mojang.logging.LogUtils;
+ import it.unimi.dsi.fastutil.HashCommon;
+-import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
+ import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
+ import net.minecraft.nbt.CompoundTag;
+@@ -468,15 +467,17 @@ public final class ChunkEntitySlices {
+
+         private static final Entity[] EMPTY = new Entity[0];
+         private static final int DEFAULT_CAPACITY = 4;
+-        // Only dense lists pay for a reverse index.  Scanning up to this many
+-        // references is a couple of cache lines and beats a hash probe, so
+-        // sparse sections keep Moonrise's linear search and allocate nothing.
+-        private static final int INDEX_MAP_MIN_ENTITIES = 32;
++        private static final int DENSE_ID_EMPTY = 0;
++        private static final int DENSE_ID_MAX_SLOTS = 1 << 20;
++        private static final int DENSE_ID_MAX_SLOTS_PER_ENTITY = 4;
+
+         private E[] storage;
+         private double[] aabbs;
+         private long[] spatialCells;
+-        private Reference2IntOpenHashMap<E> indices;
++        /** Entity ID to storage index + 1; only allocated for a retained query cache. */
++        private int[] denseIdToListIndex;
++        private int denseIdBase;
++        private boolean denseIdIndexRejected;
+         private SpatialAabbIndex<E> spatialAabbs;
+         private boolean spatialAabbRejected;
+         private int size;
+@@ -519,10 +520,8 @@ public final class ChunkEntitySlices {
+                 this.resize();
+             }
+             this.storage[idx] = entity;
+-            if (this.indices != null) {
+-                this.indices.put(entity, idx);
+-            } else if (idx + 1 >= INDEX_MAP_MIN_ENTITIES) {
+-                this.buildIndexMap(idx + 1);
++            if (this.denseIdToListIndex != null && !this.putDenseIdIndex(entity, idx, idx + 1)) {
++                this.buildDenseIdIndex(idx + 1);
+             }
+             if (this.aabbs != null) {
+                 this.writeBoundingBox(idx, entity.getBoundingBox());
+@@ -533,20 +532,103 @@ public final class ChunkEntitySlices {
+             ++this.size;
+         }
+
+-        private void buildIndexMap(final int count) {
+-            final Reference2IntOpenHashMap<E> indices = new Reference2IntOpenHashMap<>(count);
+-            indices.defaultReturnValue(-1);
++        private void buildDenseIdIndex(final int count) {
++            if (this.denseIdIndexRejected || count == 0) {
++                return;
++            }
+             final E[] storage = this.storage;
++            int minId = Integer.MAX_VALUE;
++            int maxId = Integer.MIN_VALUE;
+             for (int i = 0; i < count; ++i) {
+-                indices.put(storage[i], i);
++                final int id = storage[i].getId();
++                minId = Math.min(minId, id);
++                maxId = Math.max(maxId, id);
++            }
++
++            final long span = (long)maxId - (long)minId + 1L;
++            final long slotLimit = Math.min((long)DENSE_ID_MAX_SLOTS,
++                (long)count * DENSE_ID_MAX_SLOTS_PER_ENTITY);
++            if (span <= 0L || span > slotLimit) {
++                this.rejectDenseIdIndex();
++                return;
+             }
+-            this.indices = indices;
++
++            final int capacity = (int)Math.min(slotLimit, Math.max(span, (long)count * 2L));
++            final int[] direct = new int[capacity];
++            for (int i = 0; i < count; ++i) {
++                final int slot = storage[i].getId() - minId;
++                if (direct[slot] != DENSE_ID_EMPTY) {
++                    this.rejectDenseIdIndex();
++                    return;
++                }
++                direct[slot] = i + 1;
++            }
++            this.denseIdBase = minId;
++            this.denseIdToListIndex = direct;
++        }
++
++        private void ensureDenseIdIndex() {
++            if (this.denseIdToListIndex == null && !this.denseIdIndexRejected) {
++                this.buildDenseIdIndex(this.size);
++            }
++        }
++
++        private void rejectDenseIdIndex() {
++            this.denseIdToListIndex = null;
++            this.denseIdBase = 0;
++            this.denseIdIndexRejected = true;
++        }
++
++        private boolean putDenseIdIndex(final E entity, final int index, final int activeCount) {
++            final int[] direct = this.denseIdToListIndex;
++            final long slotLong = (long)entity.getId() - (long)this.denseIdBase;
++            if (slotLong < 0L || slotLong >= direct.length) {
++                return false;
++            }
++            final int slot = (int)slotLong;
++            final int previous = direct[slot] - 1;
++            if (previous >= 0 && previous < activeCount && previous != index && this.storage[previous] != entity) {
++                return false;
++            }
++            direct[slot] = index + 1;
++            return true;
++        }
++
++        private void clearDenseIdIndex(final E entity, final int index) {
++            final int[] direct = this.denseIdToListIndex;
++            if (direct == null) {
++                return;
++            }
++            final long slotLong = (long)entity.getId() - (long)this.denseIdBase;
++            if (slotLong >= 0L && slotLong < direct.length && direct[(int)slotLong] == index + 1) {
++                direct[(int)slotLong] = DENSE_ID_EMPTY;
++            }
++        }
++
++        private boolean moveDenseIdIndex(final E entity, final int oldIndex, final int newIndex) {
++            final int[] direct = this.denseIdToListIndex;
++            final long slotLong = (long)entity.getId() - (long)this.denseIdBase;
++            if (slotLong < 0L || slotLong >= direct.length) {
++                return false;
++            }
++            final int slot = (int)slotLong;
++            if (direct[slot] != oldIndex + 1) {
++                return false;
++            }
++            direct[slot] = newIndex + 1;
++            return true;
+         }
+
+         public int indexOf(final E entity) {
+-            final Reference2IntOpenHashMap<E> indices = this.indices;
+-            if (indices != null) {
+-                return indices.getInt(entity);
++            final int[] direct = this.denseIdToListIndex;
++            if (direct != null) {
++                final long slotLong = (long)entity.getId() - (long)this.denseIdBase;
++                if (slotLong >= 0L && slotLong < direct.length) {
++                    final int index = direct[(int)slotLong] - 1;
++                    if (index >= 0 && index < this.size && this.storage[index] == entity) {
++                        return index;
++                    }
++                }
+             }
+
+             final E[] storage = this.storage;
+@@ -568,6 +650,7 @@ public final class ChunkEntitySlices {
+             if (this.spatialAabbs != null) {
+                 this.spatialAabbs.remove(entity, this.spatialCells[idx]);
+             }
++            this.clearDenseIdIndex(entity, idx);
+
+             final int size = --this.size;
+             final E[] storage = this.storage;
+@@ -583,9 +666,16 @@ public final class ChunkEntitySlices {
+                 if (this.spatialCells != null) {
+                     System.arraycopy(this.spatialCells, idx + 1, this.spatialCells, idx, size - idx);
+                 }
+-                if (this.indices != null) {
++                if (this.denseIdToListIndex != null) {
++                    boolean rebuild = false;
+                     for (int i = idx; i < size; ++i) {
+-                        this.indices.put(storage[i], i);
++                        if (!this.moveDenseIdIndex(storage[i], i + 1, i)) {
++                            rebuild = true;
++                            break;
++                        }
++                    }
++                    if (rebuild) {
++                        this.buildDenseIdIndex(size);
+                     }
+                 }
+             }
+@@ -594,10 +684,6 @@ public final class ChunkEntitySlices {
+             if (this.spatialCells != null) {
+                 this.spatialCells[size] = 0L;
+             }
+-            if (this.indices != null) {
+-                this.indices.removeInt(entity);
+-            }
+-
+             return true;
+         }
+
+@@ -632,9 +718,9 @@ public final class ChunkEntitySlices {
+                 this.spatialCells = null;
+                 released = true;
+             }
+-            if (this.indices != null && this.size < (INDEX_MAP_MIN_ENTITIES >> 1)) {
+-                this.indices = null;
+-            }
++            this.denseIdToListIndex = null;
++            this.denseIdBase = 0;
++            this.denseIdIndexRejected = false;
+
+             return released;
+         }
+@@ -672,6 +758,7 @@ public final class ChunkEntitySlices {
+             for (int index = 0; index < this.size; ++index) {
+                 this.writeBoundingBox(index, this.storage[index].getBoundingBox());
+             }
++            this.ensureDenseIdIndex();
+             return true;
+         }
+
+@@ -706,5 +793,6 @@ public final class ChunkEntitySlices {
+                 this.spatialAabbRejected = true;
+                 return false;
+             }
++            this.ensureDenseIdIndex();
+             return true;
+         }
