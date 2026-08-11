@@ -29,6 +29,7 @@ final class ItemBenchmarkCommand extends Command {
     private final List<Chunk> loadedChunks = new ArrayList<>();
     private BukkitTask task;
     private BukkitTask pulseTask;
+    private BukkitTask cleanupTask;
     private Location origin;
     private int target;
     private int perTick;
@@ -36,6 +37,8 @@ final class ItemBenchmarkCommand extends Command {
     private long ticks;
     private long measureStart;
     private String layout;
+    private boolean cleaning;
+    private int cleanupCursor;
 
     ItemBenchmarkCommand(final JavaPlugin plugin) {
         super("itembench", "Runs a controlled large ItemEntity workload",
@@ -63,6 +66,9 @@ final class ItemBenchmarkCommand extends Command {
     }
 
     private boolean start(final CommandSender sender, final String[] args) {
+        if (this.cleaning) {
+            throw new IllegalArgumentException("previous workload is still cleaning (remaining=" + this.remainingItems() + ")");
+        }
         if (args.length < 3 || args.length > 8) {
             sender.sendMessage("/itembench start <count> <perTick> [compact|spread|hopper-single|hopper-array|piston-array] [world] [x] [y] [z]");
             return false;
@@ -191,12 +197,13 @@ final class ItemBenchmarkCommand extends Command {
     }
 
     private boolean status(final CommandSender sender) {
-        final String phase = task == null ? "stopped" : spawned < target ? "spawning" : "measuring";
+        final String phase = cleaning ? "cleaning" : task == null ? "stopped" : spawned < target ? "spawning" : "measuring";
         final Item first = items.isEmpty() ? null : items.get(0);
         sender.sendMessage("Itembench status: phase=" + phase + " target=" + target + " spawned=" + spawned
             + " live=" + liveCount() + " ticks=" + ticks + " layout=" + layout
             + " controlledFloor=" + hasControlledFloor()
             + " structures=" + changedBlocks.size()
+            + " cleaning=" + cleaning + " remaining=" + remainingItems()
             + " measuredSeconds=" + (measureStart == 0L ? 0.0D : (System.nanoTime() - measureStart) / 1_000_000_000.0D)
             + (first == null ? "" : " firstValid=" + first.isValid() + " firstDead=" + first.isDead()
                 + " firstWorld=" + (first.getWorld() == null ? "null" : first.getWorld().getName())
@@ -206,17 +213,30 @@ final class ItemBenchmarkCommand extends Command {
 
     private boolean stop(final CommandSender sender) {
         final String result = "Itembench stopped: spawned=" + spawned + " live=" + liveCount();
-        stopInternal(); sender.sendMessage(result); return true;
+        beginCleanup(); sender.sendMessage(result + "; cleaning started"); return true;
     }
 
     private int liveCount() {
         int live = 0; for (final Item item : items) if (item.isValid()) live++; return live;
     }
 
-    private void stopInternal() {
+    private void beginCleanup() {
+        if (cleaning) return;
         if (task != null) { task.cancel(); task = null; }
         if (pulseTask != null) { pulseTask.cancel(); pulseTask = null; }
-        for (final Entity item : items) if (item.isValid()) item.remove();
+        cleaning = true;
+        cleanupCursor = 0;
+        cleanupTask = plugin.getServer().getScheduler().runTaskTimer(plugin, this::cleanupTick, 1L, 1L);
+    }
+
+    private void cleanupTick() {
+        final int end = Math.min(items.size(), cleanupCursor + 5000);
+        while (cleanupCursor < end) {
+            final Entity item = items.get(cleanupCursor++);
+            if (item.isValid()) item.remove();
+        }
+        if (cleanupCursor < items.size()) return;
+        if (cleanupTask != null) { cleanupTask.cancel(); cleanupTask = null; }
         items.clear();
         final List<BlockState> states = new ArrayList<>(changedBlocks.values());
         Collections.reverse(states);
@@ -224,6 +244,16 @@ final class ItemBenchmarkCommand extends Command {
         changedBlocks.clear(); origin = null; target = perTick = spawned = 0; ticks = 0; measureStart = 0L; layout = null;
         for (final Chunk chunk : loadedChunks) chunk.removePluginChunkTicket(plugin);
         loadedChunks.clear();
+        cleaning = false;
+        cleanupCursor = 0;
+    }
+
+    private int remainingItems() { return Math.max(0, items.size() - cleanupCursor); }
+
+    private void stopInternal() {
+        if (cleaning) return;
+        beginCleanup();
+        while (cleaning) cleanupTick();
     }
 
     void shutdown() { stopInternal(); }
