@@ -38,7 +38,7 @@ class LatticeConfigTestSuite {
         assertTrue(contents.contains("# Legacy JVM property: -Dlattice.disable"));
         assertTrue(contents.contains("disable-native"));
         assertEquals("false", System.getProperty("lattice.disable"));
-        assertEquals("true", System.getProperty("lattice.nativeDensityFunction"));
+        assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("1024", System.getProperty("lattice.nativeDensityFunctionParityInterval"));
     }
 
@@ -72,12 +72,16 @@ class LatticeConfigTestSuite {
         Files.writeString(config, """
                 palette:
                   enabled: true
+                density:
+                  native-function: false
                 """);
         System.setProperty("lattice.nativePaletteOps", "false");
+        System.setProperty("lattice.nativeDensityFunction", "true");
 
         LatticeConfig.preload(config);
 
         assertEquals("false", System.getProperty("lattice.nativePaletteOps"));
+        assertEquals("true", System.getProperty("lattice.nativeDensityFunction"));
     }
 
     @Test

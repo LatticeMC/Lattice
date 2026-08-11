@@ -54,7 +54,7 @@ public final class LatticeConfig {
             bool("worldgen.profiler", "lattice.worldgenProfiler", false, "Enable world-generation profiler probes."),
             bool("worldgen.profiler-hot-loops", "lattice.worldgenProfilerHotLoops", false, "Enable high-frequency world-generation profiler probes."),
 
-            bool("density.native-function", "lattice.nativeDensityFunction", true, "Enable native density-function evaluation."),
+            bool("density.native-function", "lattice.nativeDensityFunction", false, "Enable native density-function evaluation."),
             bool("density.grid", "lattice.nativeDensityFunctionGrid", false, "Enable native density-function grid evaluation."),
             bool("density.cell", "lattice.nativeDensityFunctionCell", true, "Enable native density-function cell evaluation."),
             bool("density.direct-cell", "lattice.nativeDensityFunctionDirectCell", true, "Enable direct native density-function cell evaluation."),

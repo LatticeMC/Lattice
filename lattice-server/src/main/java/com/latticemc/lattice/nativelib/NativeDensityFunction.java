@@ -28,7 +28,7 @@ public final class NativeDensityFunction {
     public static final int CELL_COLUMNS_UNHANDLED = -1;
     public static final int CELL_COLUMNS_KNOWN_JAVA_ONLY = -2;
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
-    private static volatile boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "true"));
+    private static volatile boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "false"));
     private static final boolean GRID_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionGrid");
     private static volatile boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "true"));
     private static volatile boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "true"));
