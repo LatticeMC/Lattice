@@ -19,6 +19,7 @@ public final class EntityPushState implements AbortableIterationConsumer<Entity>
     private int maxCramming;
     private int maxEntityCollisions;
     public final List<Entity> pushableEntities = new ReferenceArrayList<>();
+    private final List<Entity> platformEntities = new ReferenceArrayList<>();
 
     private int pushableCount;
     private int nonPassengerCount;
@@ -38,6 +39,7 @@ public final class EntityPushState implements AbortableIterationConsumer<Entity>
         this.maxCramming = maxCramming;
         this.maxEntityCollisions = maxEntityCollisions;
         this.pushableEntities.clear();
+        this.platformEntities.clear();
         this.pushableCount = 0;
         this.nonPassengerCount = 0;
         this.foundAny = false;
@@ -49,7 +51,12 @@ public final class EntityPushState implements AbortableIterationConsumer<Entity>
     public void release() {
         this.source = null;
         this.pushableEntities.clear();
+        this.platformEntities.clear();
         this.inUse = false;
+    }
+
+    public List<Entity> platformEntities() {
+        return this.platformEntities;
     }
 
     @Override

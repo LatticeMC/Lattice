@@ -90,11 +90,13 @@ class EntityPushStateTestSuite {
 
         state.reset(source, 0, 1);
         state.accept(entity(false));
+        state.platformEntities().add(entity(false));
         state.release();
         state.reset(source, 0, 2);
 
         assertFalse(state.foundAny);
         assertTrue(state.pushableEntities.isEmpty());
+        assertTrue(state.platformEntities().isEmpty());
         assertEquals(AbortableIterationConsumer.Continuation.CONTINUE, state.accept(entity(false)));
         assertEquals(AbortableIterationConsumer.Continuation.ABORT, state.accept(entity(false)));
         state.release();

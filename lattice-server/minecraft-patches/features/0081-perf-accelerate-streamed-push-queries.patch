@@ -1,0 +1,203 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 00:00:00 +0800
+Subject: [PATCH] perf(entity): accelerate streamed push queries
+
+Lattice integration follow-up for Leaf commit
+cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6.
+
+Original Leaf author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
+Original Leaf license: MIT
+Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
+
+Route the abortable visitor through Lattice's retained SpatialAabbIndex and
+native visibility-bitset backends. Reuse the per-level state's platform hook
+buffer so the streamed path does not allocate an empty ArrayList per query.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index ca0e7930b1a81e210853567f73e9e54b4cde5d10..5e373006897cdf4c4f2e7251e836964e134317db 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -819,6 +819,12 @@ public final class ChunkEntitySlices {
+                 : this.spatialAabbs.scan(except, box, into, predicate, maxCount);
+         }
+
++        public int scanSpatial(final Entity except, final AABB box, final Predicate<? super Entity> predicate,
++                               final AbortableIterationConsumer<Entity> consumer) {
++            return this.spatialAabbs == null ? -1
++                : this.spatialAabbs.scan(except, box, predicate, consumer);
++        }
++
+         private void writeBoundingBox(final int index, final AABB box) {
+             final int capacity = this.storage.length;
+             this.aabbs[index] = box.minX;
+@@ -968,6 +974,39 @@ public final class ChunkEntitySlices {
+             return 0;
+         }
+
++        int scan(final Entity except, final AABB box, final Predicate<? super Entity> predicate,
++                 final AbortableIterationConsumer<Entity> consumer) {
++            final int minX = Mth.floor(box.minX - SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int minY = Mth.floor(box.minY - SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int minZ = Mth.floor(box.minZ - SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int maxX = Mth.floor(box.maxX + SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int maxY = Mth.floor(box.maxY + SPATIAL_MAX_SMALL_HALF_SPAN);
++            final int maxZ = Mth.floor(box.maxZ + SPATIAL_MAX_SMALL_HALF_SPAN);
++            final long cellsToVisit = (long)(maxX - minX + 1) * (long)(maxY - minY + 1) * (long)(maxZ - minZ + 1);
++            if (cellsToVisit > SPATIAL_MAX_QUERY_CELLS) {
++                return -1;
++            }
++
++            final LookupCache cache = CellTable.lookupCache();
++            for (int cellY = minY; cellY <= maxY; ++cellY) {
++                for (int cellZ = minZ; cellZ <= maxZ; ++cellZ) {
++                    for (int cellX = minX; cellX <= maxX; ++cellX) {
++                        final long cell = BlockPos.asLong(cellX, cellY, cellZ);
++                        if (cell == OVERFLOW_CELL) {
++                            continue;
++                        }
++                        if (this.scanChain(this.cells.get(cache, cell), except, box, predicate, consumer)) {
++                            return 1;
++                        }
++                    }
++                }
++            }
++            if (this.scanChain(this.cells.get(cache, OVERFLOW_CELL), except, box, predicate, consumer)) {
++                return 1;
++            }
++            return 0;
++        }
++
+         @SuppressWarnings("unchecked")
+         private boolean scanChain(int slot, final Entity except, final AABB box, final List<Entity> into,
+                                   final Predicate<? super Entity> predicate, final int maxCount) {
+@@ -986,6 +1025,22 @@ public final class ChunkEntitySlices {
+             return false;
+         }
+
++        @SuppressWarnings("unchecked")
++        private boolean scanChain(int slot, final Entity except, final AABB box,
++                                  final Predicate<? super Entity> predicate,
++                                  final AbortableIterationConsumer<Entity> consumer) {
++            final Entity[] slotEntities = this.slotEntities;
++            final int[] slotNext = this.slotNext;
++            while (slot != NO_SLOT) {
++                final E entity = (E)slotEntities[slot];
++                if (this.matches(entity, except, box, predicate) && consumer.accept(entity).shouldAbort()) {
++                    return true;
++                }
++                slot = slotNext[slot];
++            }
++            return false;
++        }
++
+         private int allocateSlot() {
+             final int recycled = this.freeSlot;
+             if (recycled != NO_SLOT) {
+@@ -1440,6 +1495,13 @@ public final class ChunkEntitySlices {
+                 }
+
+                 final Entity[] storage = list.storage;
++                final int acceleratedResult = this.scanEntitiesAbortable(list, except, box, predicate, consumer);
++                if (acceleratedResult >= 0) {
++                    if (acceleratedResult != 0) {
++                        return true;
++                    }
++                    continue;
++                }
+                 for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
+                     final Entity entity = storage[i];
+                     if (entity == null || entity == except || !entity.getBoundingBox().intersects(box)) {
+@@ -1455,6 +1517,71 @@ public final class ChunkEntitySlices {
+             }
+             return false;
+         }
++
++        /**
++         * Returns -1 when the Java loop must be used, 0 when an accelerated scan
++         * completed, and 1 when the consumer aborted the query.
++         */
++        private int scanEntitiesAbortable(final BasicEntityList<Entity> list, final Entity except, final AABB box,
++                                          final Predicate<? super Entity> predicate,
++                                          final AbortableIterationConsumer<Entity> consumer) {
++            final int entityCount = list.size();
++            if (!this.nativeAabbEnabled || entityCount < NATIVE_AABB_MIN_ENTITIES) {
++                return -1;
++            }
++
++            final boolean cachedBefore = list.hasQueryCache();
++            if (SPATIAL_AABB_ENABLED && entityCount >= SPATIAL_AABB_MIN_ENTITIES) {
++                final boolean spatialRetained = list.ensureSpatialAabbIndex();
++                if (spatialRetained && !cachedBefore) {
++                    ++this.cachedSections;
++                }
++                final int spatialResult = spatialRetained
++                    ? list.scanSpatial(except, box, predicate, consumer)
++                    : -1;
++                if (spatialResult >= 0) {
++                    return spatialResult;
++                }
++            }
++
++            if (!com.latticemc.lattice.nativelib.NativeAabbQuery.isAvailable()) {
++                return -1;
++            }
++            list.ensureAabbCache();
++            if (!cachedBefore && !list.hasSpatialAabbIndex()) {
++                ++this.cachedSections;
++            }
++
++            final NativeAabbScratchStack scratchStack = NATIVE_AABB_SCRATCH.get();
++            final NativeAabbScratch scratch = scratchStack.acquire(entityCount);
++            try {
++                scratch.query[0] = box.minX;
++                scratch.query[1] = box.minY;
++                scratch.query[2] = box.minZ;
++                scratch.query[3] = box.maxX;
++                scratch.query[4] = box.maxY;
++                scratch.query[5] = box.maxZ;
++
++                com.latticemc.lattice.nativelib.NativeAabbQuery.scanSoaStrided(
++                    scratch.query, 1, list.aabbs, entityCount, list.storage.length, scratch.visibility
++                );
++                for (int i = 0; i < entityCount; ++i) {
++                    if (((scratch.visibility[i >>> 6] >>> (i & 63)) & 1L) == 0L) {
++                        continue;
++                    }
++                    final Entity entity = list.storage[i];
++                    if (entity == except || (predicate != null && !predicate.test(entity))) {
++                        continue;
++                    }
++                    if (consumer.accept(entity).shouldAbort()) {
++                        return 1;
++                    }
++                }
++                return 0;
++            } finally {
++                scratchStack.release();
++            }
++        }
+         // Lattice end - Leaf: limit pushable entity queries
+
+         /**
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 306f0c3279c5c19a3051f009f072d4683ddca449..e79b62a84912b0bab4094ae21665e58e25e3bf85 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1888,14 +1888,14 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+      */
+     public final boolean lattice$forEachPushableEntity(final Entity except, final AABB boundingBox,
+                                                         final Predicate<? super Entity> predicate,
+-                                                        final AbortableIterationConsumer<Entity> consumer) {
++                                                        final EntityPushState consumer) {
+         Profiler.get().incrementCounter("getEntities");
+         if (((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup()
+             .forEachEntity(except, boundingBox, predicate, consumer)) {
+             return true;
+         }
+
+-        final List<Entity> platformEntities = new java.util.ArrayList<>();
++        final List<Entity> platformEntities = consumer.platformEntities();
+         ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities(
+             (Level)(Object)this, except, boundingBox, predicate, platformEntities
+         );
