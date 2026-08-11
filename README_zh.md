@@ -93,20 +93,79 @@ ctest --test-dir lattice-native/build --output-on-failure
 `-Dlattice.nativeTargetSampler.minWork=N`。门禁工作量为
 `candidateCount * max(1, obstacleCount)`。
 
-## 世界生成一致性 A/B
+## 私有 Native PGO 教程
 
-使用相同 seed，在 Leaf 与 Lattice 的独立世界中生成相同区块矩形，并分别正常停服后，
-运行下面的逐坐标比较：
+<details>
+<summary>展开私有 PGO 构建与训练教程</summary>
+
+正常 release 以及未指定 `LATTICE_PGO_MODE` 时仍是仅 LTO 构建。Native PGO 是私有且
+必须显式启用的构建流程：它不会改变公开 release，也不会让 PGO 产物通过正常 Loader
+公开使用。
+
+以下正式 PoC 示例面向 Linux x86_64。请安装包含 `llvm-profdata` 的 Clang 工具链，以及
+CMake、Ninja 和 JDK。两个 PGO 阶段都要求 x86_64 上启用 LTO 的单配置 Release Clang 构建。
+
+1. 从仓库根目录配置并构建带插桩的私有库：
+
+   ```bash
+   cmake -S lattice-native -B build/native-pgo-generate -G Ninja \
+     -DCMAKE_BUILD_TYPE=Release \
+     -DCMAKE_C_COMPILER=clang \
+     -DCMAKE_CXX_COMPILER=clang++ \
+     -DLATTICE_ENABLE_LTO=ON \
+     -DLATTICE_PGO_MODE=GENERATE
+   cmake --build build/native-pgo-generate
+   ```
+
+2. 每轮训练前都清空 raw profile 目录。使用生成库正常启动服务器，运行具有代表性的正常
+   工作负载；随后正常停服，确保所有 profile 数据都已写入。
+
+   ```bash
+   rm -rf /absolute/path/to/pgo/raw
+   mkdir -p /absolute/path/to/pgo/raw
+   export LLVM_PROFILE_FILE='/absolute/path/to/pgo/raw/lattice-%m-%p.profraw'
+   java '-Dlattice.native.path=/absolute/path/to/build/native-pgo-generate/liblattice-pgo-generate.so' \
+     -jar /absolute/path/to/lattice-server.jar nogui
+   ```
+
+3. 正常停服后，合并收集到的 raw profile：
+
+   ```bash
+   llvm-profdata merge -o /absolute/path/to/pgo/lattice.profdata \
+     /absolute/path/to/pgo/raw/*.profraw
+   ```
+
+4. 单独构建严格的 profile-use 库，再用它的绝对库路径启动服务器：
+
+   ```bash
+   cmake -S lattice-native -B build/native-pgo-use -G Ninja \
+     -DCMAKE_BUILD_TYPE=Release \
+     -DCMAKE_C_COMPILER=clang \
+     -DCMAKE_CXX_COMPILER=clang++ \
+     -DLATTICE_ENABLE_LTO=ON \
+     -DLATTICE_PGO_MODE=USE \
+     -DLATTICE_PGO_PROFILE=/absolute/path/to/pgo/lattice.profdata \
+     -DLATTICE_PGO_STRICT=ON
+   cmake --build build/native-pgo-use
+   java '-Dlattice.native.path=/absolute/path/to/build/native-pgo-use/liblattice-pgo-use.so' \
+     -jar /absolute/path/to/lattice-server.jar nogui
+   ```
+
+不得跨源码版本、编译器/工具链版本、操作系统或架构复用 `.profdata` 文件。如果 profile
+合并或严格 `USE` 构建失败，请丢弃本轮训练结果，并在匹配的环境中重新训练。
+
+Windows x86_64 LLVM-MinGW 可运行下列已验证的本地 smoke 检查：
 
 ```powershell
-.\tools\run-worldgen-consistency-ab.ps1 `
-  -LatticeWorld 'C:\path\to\lattice\world' `
-  -LeafWorld 'C:\path\to\leaf\world' `
-  -CenterX 0 -CenterZ 0 -Radius 32
+pwsh -File .\scripts\native-pgo\Invoke-NativePgoSmoke.ps1 `
+  -LlvmMingwRoot 'C:\llvm-mingw' `
+  -JdkRoot 'C:\Program Files\Zulu\zulu-25'
 ```
 
-测试会解码并比较每个方块状态与群系单元，以及高度图、方块实体和结构数据；不会把
-Anvil 时间戳、压缩字节、palette 排列或其他运行时元数据误判为世界生成差异。
+它不是具有代表性的训练，不能替代 Linux PoC。在 Windows 上应使用对应 DLL 的绝对路径，
+例如 `lattice-pgo-generate.dll` 和 `lattice-pgo-use.dll`，而不是上面的 Linux `.so` 路径。
+
+</details>
 
 ## 参与贡献
 

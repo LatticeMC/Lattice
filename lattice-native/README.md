@@ -1,125 +1,106 @@
 # lattice-native
 
-High-performance native optimisations for Minecraft 1.21.11 server hotspots,
-exposed to the Java side via JNI.
+`lattice-native` is the C++20 native component of Lattice.  It exposes
+performance-sensitive Minecraft server operations to Java through JNI while
+retaining Java-visible behaviour at the boundary.
 
-## Status: clean skeleton (T1 rewrite in progress)
+## Scope
 
-This subproject was previously populated with ~47 kloc of speculative C++ in
-which only one module (Pathfinder, itself a stub) was reachable from Java.
-That code has been archived under [`attic/`](./attic) and is not built.
-See the conversation archived alongside this repo for the full audit.
+The library groups native work around these server data paths:
 
-What **is** built right now:
+- I/O: zlib compression and NBT-related data paths, using libdeflate where
+  applicable.
+- Chunk data: packed palettes and light propagation.
+- Simulation queries: entity queries, collision, pathfinding, and AI sampling.
+- World generation: noise, density evaluation, surface rules, ore selection,
+  and ticking.
 
-```
-lattice-native/
-├── CMakeLists.txt                     # clean skeleton, LTO-enabled, x86-64-v1 + SSE2 baseline
-├── include/
-│   └── lattice/
-│       ├── config.hpp                 # compile-time flags
-│       ├── dispatch.hpp               # runtime CPU-feature snapshot
-│       └── lattice.hpp                # umbrella header
-├── jni/
-│   ├── jni_helper.hpp                 # exception-free JNI helpers
-│   └── loader.cpp                     # JNI_OnLoad + Java_…_nativeCpuSummary
-└── src/
-    └── core/
-        └── cpu/
-            └── detect.cpp             # CPUID / getauxval / sysctl population
-```
+The JNI boundary owns conversion, lifetime, and error translation.  Native
+implementations preserve the documented Java-side result and failure
+semantics; they do not turn a native optimisation into a different gameplay or
+data-format contract.
 
-The resulting `liblattice.so` / `lattice.dll` exposes exactly one Java-visible
-symbol today:
+## Architecture principles
 
-```java
-// com.latticemc.lattice.nativelib.LatticeNative
-static native String nativeCpuSummary();
-```
+- C++20 is used for native code and JNI is the only Java/native integration
+  boundary.
+- CPU-specific code is isolated from the portable baseline and selected at
+  runtime rather than by compiling for the build machine.
+- `-march=native` and `-ffast-math` are not used.  The baseline remains
+  portable, and floating-point-sensitive paths retain their required
+  semantics.
+- libdeflate is pinned to `v1.20` and obtained with CMake `FetchContent`; it
+  is linked statically rather than selected from a system installation.
+- `LATTICE_ENABLE_LTO` controls link-time optimisation for Release builds.
 
-which returns a line like `lattice cpu: vendor=Intel tier=AVX2 +BMI2(fast) family=0x6 model=0x8E`.
+## Build and test
 
-## T1 hotspot modules
-
-Three Minecraft 1.21.11 hotspots have been selected for native rewrites;
-each will be added as an independent module whose behaviour is bit-exact
-against the reference Java implementation (verified by `-Dlattice.verify=true`):
-
-| Module | Java package (lattice-server) | Minecraft target | Status |
-|---|---|---|---|
-| **Chunk serialiser** (libdeflate zlib)        | `com.latticemc.lattice.nativelib.NativeChunkSerializer` | `RegionFile` COMPRESSION_ZLIB path + `Inflater/Deflater` | **Phase 1 ✓** |
-| **Paletted storage** (bit-packed `long[]` ops) | `com.latticemc.lattice.nativelib.NativePaletteOps` | `PalettedContainer`, `PackedIntegerArray` | **Phase 1 ✓** (scalar; BMI2/SIMD planned) |
-| **Light engine** (`LevelPropagator` + `ChunkLightProvider`) | `com.latticemc.lattice.nativelib.NativeLightEngine` | `ChunkBlockLightProvider`, `ChunkSkyLightProvider`, `LevelPropagator` | **Phase 1 ✓** (BFS in C++, world queries via JNI callback) |
-| **ChunkNoiseSampler facade** (NoiseRouter bundle + per-channel cache) | `com.latticemc.lattice.nativelib.NativeChunkNoiseSampler` | `ChunkNoiseSampler` (router-driven density-function sampling) | **Worldgen-6 ✓** |
-| **OreVeinSampler** (per-block vein decision + Xoroshiro128++) | `com.latticemc.lattice.nativelib.NativeOreVeinSampler` | `net.minecraft.world.gen.OreVeinSampler` | **Worldgen-8 ✓** |
-| **DensityFunction batched grid fill** (NativeDensityFunction.evaluateGrid) | `com.latticemc.lattice.nativelib.NativeDensityFunction#evaluateGrid` | `DensityFunction.fill` / `DensityInterpolator` cell pre-fill | **Worldgen-9 ✓** |
-| **DensityFunction Spline node** (cubic-Hermite + recursive sub-splines) | `com.latticemc.lattice.nativelib.NativeDensityFunction#addSpline` | `net.minecraft.util.math.Spline` / `DensityFunctionTypes.Spline` | **Worldgen-10 ✓** |
-| **DensityFunction FindTopSurface node** (downward y-scan for density > 0) | `com.latticemc.lattice.nativelib.NativeDensityFunction#addFindTopSurface` | `DensityFunctionTypes.FindTopSurface` | **Worldgen-11 ✓** |
-| **InterpolatedNoiseSampler** (1.16-style blended noise; `old_blended_noise` DF node) | `com.latticemc.lattice.nativelib.NativeInterpolatedNoise` + `NativeDensityFunction#addOldBlendedNoise` | `net.minecraft.util.math.noise.InterpolatedNoiseSampler` | **Worldgen-12 ✓** |
-| **DensityInterpolator** (per-cell trilinear blend driving `kInterpolated`) | `com.latticemc.lattice.nativelib.NativeDensityFunction.Cache#startInterpolation`, `prepareInterpolators`, `setStartDensity`, `setEndDensity`, `setStartDensityRow`, `setEndDensityRow`, `swapBuffers`, `onSampledCellCorners`, `interpolateY/X/Z`, `stopInterpolation` | `net.minecraft.world.gen.chunk.ChunkNoiseSampler.DensityInterpolator` | **Worldgen-13 ✓** |
-
-### NativeChunkSerializer — Phase 1 scope
-
-Replaces `java.util.zip.Inflater` / `Deflater` with a libdeflate-backed
-implementation for the zlib format only. Java-side NBT parsing via
-`NbtIo` is untouched. Every call is guarded by `LatticeNative.isLoaded()`
-and falls back transparently to JDK streams when the native library
-isn't available. Under `-Dlattice.verify=true`, every native call is
-shadowed by the JDK reference and the outputs are compared
-(round-trip for deflate, since zlib output bytes aren't required to be
-bit-identical between encoders).
-
-A later **Phase 2** may flatten NBT parsing into native with an off-heap
-tree representation; this is gated on measurements showing that NBT
-parsing (rather than decompression) is the dominant cost after Phase 1.
-
-Compression library: libdeflate, pinned at tag `v1.20`, pulled in via
-CMake `FetchContent` (static link, no system dependency).
-
-## Building
-
-Requires CMake ≥ 3.20, a C++20 toolchain (GCC ≥ 11, Clang ≥ 13, MSVC 19.30+),
-and a JDK (for `<jni.h>`).
+Build with CMake 3.20 or newer, a C++20 toolchain (GCC 11+, Clang 13+, or MSVC
+19.30+), and a JDK that supplies `jni.h`:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake -S lattice-native -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native
 ```
 
-Options:
+The output is `lattice.dll` on Windows, `liblattice.dylib` on macOS, and
+`liblattice.so` on Linux and FreeBSD.  Platform packaging is responsible for
+placing that library where the Java loader expects it.
 
-| Option | Default | Description |
-|---|---|---|
-| `LATTICE_ENABLE_SIMD` | `ON` | Compile in the SIMD specialisations (runtime-dispatched) |
-| `LATTICE_ENABLE_LTO` | `ON` | Link-time optimisation in Release |
-| `LATTICE_BUILD_TESTS` | `OFF` | Build unit tests + diff-verification harness |
-| `LATTICE_WARNINGS_AS_ERRORS` | `OFF` | Promote warnings to errors |
+Enable the native test collection with:
 
-Runtime environment variables:
+```bash
+cmake -S lattice-native -B build/native-test -DCMAKE_BUILD_TYPE=Release -DLATTICE_BUILD_TESTS=ON
+cmake --build build/native-test
+ctest --test-dir build/native-test --output-on-failure
+```
 
-| Variable | Purpose |
-|---|---|
-| `LATTICE_CPU_FORCE_SCALAR=1` | Disable all SIMD specialisations |
-| `LATTICE_CPU_DISABLE=avx512,bmi2` | Disable specific ISA extensions |
+The test collection contains 31 CTest tests.  For applicable Java/native
+paths, `-Dlattice.verify=true` enables shadow/parity diagnostics against the
+Java reference; it is not a claim that every module has one universal parity
+oracle.
 
-World-generation SIMD coverage:
+## CMake options
 
-- Density-function evaluation has an AVX-512 path (with its `AVX512DQ`
-  guard). Perlin, DoublePerlin and Simplex remain AVX2/scalar: their current
-  permutation lookups and branch-heavy topology do not have a verified
-  8-lane implementation that preserves the non-FMA/floor semantics.
-- Heightmap scanning and packed palette access intentionally remain on their
-  AVX2/BMI2 paths because a wider irregular scan has no demonstrated safe
-  benefit yet; scalar/NEON fallbacks remain available.
-- `-Dlattice.nativeCpu=avx2` and `scalar` cap dispatch so AVX-512 objects are
-  never entered; `auto`/`avx512` still require CPUID/XCR0 support.
+| Option | Default | Meaning |
+|---|---:|---|
+| `LATTICE_ENABLE_SIMD` | `ON` | Build runtime-dispatched SIMD specialisations. |
+| `LATTICE_ENABLE_LTO` | `ON` | Request link-time optimisation for Release builds. |
+| `LATTICE_BUILD_TESTS` | `OFF` | Build the CTest collection and differential-verification tools. |
+| `LATTICE_WARNINGS_AS_ERRORS` | `OFF` | Treat compiler warnings as errors. |
 
-Notes:
+## Runtime dispatch and semantic constraints
 
-- The build **deliberately** does not use `-march=native`; the resulting
-  binary is portable at the baseline-ISA level (x86-64-v1 + SSE2, or
-  armv8-a), with SIMD specialisations runtime-dispatched.
-- `-ffast-math` is **not** enabled — light-engine float math must remain
-  bit-exact with the JVM.
-- The library is built with `-fno-exceptions -fno-rtti` on non-MSVC
-  toolchains. All helpers in `jni/jni_helper.hpp` are exception-free.
+The dispatcher selects among scalar, SSE2, AVX2, BMI2, AVX512, and NEON
+implementations only after checking runtime CPU and operating-system support.
+The selection can be constrained for diagnosis with
+`LATTICE_CPU_FORCE_SCALAR=1` or `LATTICE_CPU_DISABLE=avx512,bmi2`.
+
+Specialised implementations must retain the portable path's observable
+results, including bit-packed data conventions, JNI error behaviour, and the
+non-fast-math floating-point rules used by light and world-generation code.
+Runtime selection changes execution strategy; it does not alter the Java API
+or serialized data semantics.
+
+## Native PGO design
+
+The [Native PGO plan](../docs/native-pgo-plan.md) documents the first private
+PGO build loop and the later training/release work that is still pending.
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `LATTICE_PGO_MODE` | `OFF` | `OFF`, `GENERATE`, or `USE`; values are uppercase and PGO modes are private. |
+| `LATTICE_PGO_PROFILE` | empty | Required only by `USE`; a non-empty `.profdata` file. |
+| `LATTICE_PGO_STRICT` | `OFF` | Valid only with `USE`; promotes LLVM stale/unprofiled instrumentation diagnostics to errors. |
+
+`OFF` is the default and preserves the normal `lattice` LTO-only build.
+Public `native-latest`, Gradle, and the Java loader remain LTO-only; neither
+private output is discovered or published by those paths. `GENERATE` creates
+`lattice-pgo-generate`, and `USE` creates `lattice-pgo-use`. Both require a
+single-config Release Clang build on 64-bit x86_64 with LTO enabled. Linux is
+the formal PoC target; Windows x86_64 LLVM-MinGW is local experimental smoke
+coverage only. PGO build trees reject `cmake --install`.
+
+For a private DLL smoke load, pass an absolute library path to the existing
+loader override, for example `-Dlattice.native.path=C:\absolute\lattice-pgo-generate.dll`.
+This does not make a PGO artifact public or change normal loading behaviour.

@@ -36,6 +36,128 @@ option(LATTICE_ENABLE_LTO      "Enable link-time optimisation in Release builds"
 option(LATTICE_BUILD_TESTS     "Build unit tests + diff-verification harness" OFF)
 option(LATTICE_WARNINGS_AS_ERRORS "Promote warnings to errors" OFF)
 
+# Native PGO is deliberately a private build interface.  The default is the
+# existing LTO-only artifact; callers must opt in explicitly to either phase.
+set(LATTICE_PGO_MODE "OFF" CACHE STRING
+    "Native PGO mode: OFF, GENERATE, or USE (private builds only)")
+set_property(CACHE LATTICE_PGO_MODE PROPERTY STRINGS OFF GENERATE USE)
+set(LATTICE_PGO_PROFILE "" CACHE FILEPATH
+    "Merged LLVM .profdata input required when LATTICE_PGO_MODE=USE")
+option(LATTICE_PGO_STRICT
+    "Fail PGO USE builds on stale or unprofiled LLVM instrumentation" OFF)
+
+string(TOUPPER "${LATTICE_PGO_MODE}" LATTICE_PGO_MODE_NORMALIZED)
+if(NOT LATTICE_PGO_MODE_NORMALIZED STREQUAL LATTICE_PGO_MODE)
+    message(FATAL_ERROR
+        "LATTICE_PGO_MODE must be exactly one of OFF, GENERATE, or USE; got '${LATTICE_PGO_MODE}'")
+endif()
+if(NOT LATTICE_PGO_MODE STREQUAL "OFF" AND
+   NOT LATTICE_PGO_MODE STREQUAL "GENERATE" AND
+   NOT LATTICE_PGO_MODE STREQUAL "USE")
+    message(FATAL_ERROR
+        "LATTICE_PGO_MODE must be one of OFF, GENERATE, or USE; got '${LATTICE_PGO_MODE}'")
+endif()
+
+set(LATTICE_PGO_ENABLED OFF)
+set(LATTICE_PGO_PROFILE_ABSOLUTE "")
+if(NOT LATTICE_PGO_MODE STREQUAL "OFF")
+    set(LATTICE_PGO_ENABLED ON)
+
+    # PGO runs are intentionally single-config Release trees, so a profile
+    # cannot be silently reused across configurations.
+    if(CMAKE_CONFIGURATION_TYPES)
+        message(FATAL_ERROR
+            "LATTICE_PGO_MODE=${LATTICE_PGO_MODE} requires a single-config Release generator")
+    endif()
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+        message(FATAL_ERROR
+            "LATTICE_PGO_MODE=${LATTICE_PGO_MODE} requires -DCMAKE_BUILD_TYPE=Release")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        message(FATAL_ERROR
+            "LATTICE_PGO_MODE=${LATTICE_PGO_MODE} requires a Clang C++ compiler; got '${CMAKE_CXX_COMPILER_ID}'")
+    endif()
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" LATTICE_PGO_SYSTEM_PROCESSOR)
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR
+       NOT LATTICE_PGO_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+        message(FATAL_ERROR
+            "LATTICE_PGO_MODE=${LATTICE_PGO_MODE} is supported only on 64-bit x86_64")
+    endif()
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT WIN32)
+        message(FATAL_ERROR
+            "LATTICE_PGO_MODE=${LATTICE_PGO_MODE} is supported only on Linux x86_64 or experimental Windows x86_64 LLVM-MinGW")
+    endif()
+    if(NOT LATTICE_ENABLE_LTO)
+        message(FATAL_ERROR
+            "LATTICE_PGO_MODE=${LATTICE_PGO_MODE} requires -DLATTICE_ENABLE_LTO=ON")
+    endif()
+endif()
+
+if((LATTICE_PGO_MODE STREQUAL "OFF" OR LATTICE_PGO_MODE STREQUAL "GENERATE") AND
+   NOT LATTICE_PGO_PROFILE STREQUAL "")
+    message(FATAL_ERROR
+        "LATTICE_PGO_PROFILE is valid only when LATTICE_PGO_MODE=USE")
+endif()
+if(NOT LATTICE_PGO_MODE STREQUAL "USE" AND LATTICE_PGO_STRICT)
+    message(FATAL_ERROR
+        "LATTICE_PGO_STRICT is valid only when LATTICE_PGO_MODE=USE")
+endif()
+if(LATTICE_PGO_MODE STREQUAL "USE")
+    if(LATTICE_PGO_PROFILE STREQUAL "")
+        message(FATAL_ERROR "LATTICE_PGO_MODE=USE requires LATTICE_PGO_PROFILE")
+    endif()
+    get_filename_component(LATTICE_PGO_PROFILE_CANDIDATE
+        "${LATTICE_PGO_PROFILE}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    get_filename_component(LATTICE_PGO_PROFILE_EXTENSION
+        "${LATTICE_PGO_PROFILE_CANDIDATE}" EXT)
+    string(TOLOWER "${LATTICE_PGO_PROFILE_EXTENSION}" LATTICE_PGO_PROFILE_EXTENSION_LOWER)
+    if(NOT LATTICE_PGO_PROFILE_EXTENSION_LOWER STREQUAL ".profdata")
+        message(FATAL_ERROR
+            "LATTICE_PGO_PROFILE must have a .profdata extension: ${LATTICE_PGO_PROFILE_CANDIDATE}")
+    endif()
+    if(IS_DIRECTORY "${LATTICE_PGO_PROFILE_CANDIDATE}")
+        message(FATAL_ERROR "LATTICE_PGO_PROFILE must name a .profdata file, not a directory")
+    endif()
+    if(NOT EXISTS "${LATTICE_PGO_PROFILE_CANDIDATE}")
+        message(FATAL_ERROR
+            "LATTICE_PGO_PROFILE does not exist: ${LATTICE_PGO_PROFILE_CANDIDATE}")
+    endif()
+    file(SIZE "${LATTICE_PGO_PROFILE_CANDIDATE}" LATTICE_PGO_PROFILE_SIZE)
+    if(LATTICE_PGO_PROFILE_SIZE EQUAL 0)
+        message(FATAL_ERROR
+            "LATTICE_PGO_PROFILE must not be empty: ${LATTICE_PGO_PROFILE_CANDIDATE}")
+    endif()
+    file(REAL_PATH "${LATTICE_PGO_PROFILE_CANDIDATE}" LATTICE_PGO_PROFILE_ABSOLUTE)
+endif()
+
+# This target is private to lattice-native: only lattice and its SIMD OBJECT
+# libraries link it, so dependencies, FetchContent projects, and tests do not
+# inherit PGO instrumentation or profile-use flags.
+add_library(lattice_pgo_flags INTERFACE)
+if(LATTICE_PGO_MODE STREQUAL "GENERATE")
+    target_compile_options(lattice_pgo_flags INTERFACE -fprofile-instr-generate)
+    target_link_options(lattice_pgo_flags INTERFACE -fprofile-instr-generate)
+elseif(LATTICE_PGO_MODE STREQUAL "USE")
+    target_compile_options(lattice_pgo_flags INTERFACE
+        "-fprofile-instr-use=${LATTICE_PGO_PROFILE_ABSOLUTE}")
+    target_link_options(lattice_pgo_flags INTERFACE
+        "-fprofile-instr-use=${LATTICE_PGO_PROFILE_ABSOLUTE}")
+    if(LATTICE_PGO_STRICT)
+        target_compile_options(lattice_pgo_flags INTERFACE
+            -Werror=profile-instr-out-of-date
+            -Werror=profile-instr-unprofiled)
+    endif()
+endif()
+
+# Register this before FetchContent subdirectories so `cmake --install` fails
+# before any dependency can create an install artifact.
+if(LATTICE_PGO_ENABLED)
+    install(CODE [=[
+message(FATAL_ERROR
+    "Native PGO artifacts are private and cannot be installed. Reconfigure with -DLATTICE_PGO_MODE=OFF for the public install layout.")
+]=])
+endif()
+
 # ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
@@ -124,15 +246,22 @@ endif()
 # Main shared library (sources added by modules below)
 # ---------------------------------------------------------------------------
 add_library(lattice SHARED)
-target_link_libraries(lattice PRIVATE lattice_baseline_flags)
+target_link_libraries(lattice PRIVATE lattice_baseline_flags lattice_pgo_flags)
 target_include_directories(lattice
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
             ${CMAKE_CURRENT_SOURCE_DIR}/jni
             ${JNI_INCLUDE_DIRS}
 )
+if(LATTICE_PGO_MODE STREQUAL "GENERATE")
+    set(LATTICE_OUTPUT_NAME "lattice-pgo-generate")
+elseif(LATTICE_PGO_MODE STREQUAL "USE")
+    set(LATTICE_OUTPUT_NAME "lattice-pgo-use")
+else()
+    set(LATTICE_OUTPUT_NAME "lattice")
+endif()
 set_target_properties(lattice PROPERTIES
-    OUTPUT_NAME "lattice"
+    OUTPUT_NAME "${LATTICE_OUTPUT_NAME}"
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
 )
@@ -145,10 +274,22 @@ endif()
 
 if(LATTICE_ENABLE_LTO)
     include(CheckIPOSupported)
-    check_ipo_supported(RESULT _ipo_ok OUTPUT _ipo_err)
+    if(LATTICE_PGO_ENABLED)
+        # PGO must not inspect libdeflate's C compiler: only the C++ IPO
+        # pipeline is part of the native PGO contract.
+        check_ipo_supported(RESULT _ipo_ok OUTPUT _ipo_err LANGUAGES CXX)
+    else()
+        # Preserve the pre-PGO OFF/LTO-only probe exactly, including its
+        # language set and its non-fatal unsupported behaviour.
+        check_ipo_supported(RESULT _ipo_ok OUTPUT _ipo_err)
+    endif()
     if(_ipo_ok)
         set_property(TARGET lattice PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
     else()
+        if(LATTICE_PGO_ENABLED)
+            message(FATAL_ERROR
+                "LATTICE_PGO_MODE=${LATTICE_PGO_MODE} requires C++ IPO/LTO support: ${_ipo_err}")
+        endif()
         message(STATUS "LTO not supported: ${_ipo_err}")
     endif()
 endif()
@@ -169,7 +310,7 @@ function(lattice_add_simd_object name)
         message(FATAL_ERROR "lattice_add_simd_object(${name}): SOURCES required")
     endif()
     add_library(${name} OBJECT ${ARG_SOURCES})
-    target_link_libraries(${name} PRIVATE lattice_baseline_flags)
+    target_link_libraries(${name} PRIVATE lattice_baseline_flags lattice_pgo_flags)
     target_include_directories(${name} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -181,6 +322,9 @@ function(lattice_add_simd_object name)
         # them via target_compile_options identically — caller is
         # responsible for passing platform-appropriate flags.
         target_compile_options(${name} PRIVATE ${ARG_FLAGS})
+    endif()
+    if(LATTICE_PGO_ENABLED)
+        set_property(TARGET ${name} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
     endif()
     target_sources(lattice PRIVATE $<TARGET_OBJECTS:${name}>)
 endfunction()
@@ -580,11 +724,13 @@ endif()
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
-install(TARGETS lattice
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
-    ARCHIVE DESTINATION lib
-)
+if(NOT LATTICE_PGO_ENABLED)
+    install(TARGETS lattice
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+        ARCHIVE DESTINATION lib
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # Diagnostic summary
@@ -595,6 +741,11 @@ message(STATUS "  C++ standard  : C++${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build type    : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  SIMD enabled  : ${LATTICE_ENABLE_SIMD}")
 message(STATUS "  LTO requested : ${LATTICE_ENABLE_LTO}")
+message(STATUS "  PGO mode      : ${LATTICE_PGO_MODE}")
+if(LATTICE_PGO_MODE STREQUAL "USE")
+    message(STATUS "  PGO profile   : ${LATTICE_PGO_PROFILE_ABSOLUTE}")
+    message(STATUS "  PGO strict    : ${LATTICE_PGO_STRICT}")
+endif()
 message(STATUS "  Tests         : ${LATTICE_BUILD_TESTS}")
 message(STATUS "  Warn-as-error : ${LATTICE_WARNINGS_AS_ERRORS}")
 message(STATUS "========================================================")

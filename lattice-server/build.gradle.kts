@@ -324,43 +324,6 @@ tasks.test {
     jvmArgumentProviders.add(provider)
 }
 
-val brainEligibilityBenchmark by tasks.registering(JavaExec::class) {
-    group = "verification"
-    description = "Benchmark Java and JNI Brain memory eligibility evaluators"
-    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.named("testClasses"))
-    classpath = sourceSets.test.get().runtimeClasspath
-    mainClass.set("com.latticemc.lattice.nativelib.NativeBrainEligibilityBenchmark")
-
-    val nativeLibrary = rootProject.layout.buildDirectory.file("lattice-native/${System.mapLibraryName("lattice")}")
-    inputs.file(nativeLibrary)
-    systemProperty("lattice.native.path", nativeLibrary.get().asFile.absolutePath)
-    systemProperty("lattice.nativeBrainEligibility.minRequirements", "1")
-
-    listOf("Warmup" to "warmup", "Samples" to "samples", "Iterations" to "iterations").forEach { (propertySuffix, option) ->
-        providers.gradleProperty("brainEligibilityBenchmark$propertySuffix").orNull?.let { value ->
-            args("--$option=$value")
-        }
-    }
-}
-
-val biologicalAiBenchmark by tasks.registering(JavaExec::class) {
-    group = "verification"
-    description = "Benchmark Java and JNI biological AI decision evaluators"
-    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.named("testClasses"))
-    classpath = sourceSets.test.get().runtimeClasspath
-    mainClass.set("com.latticemc.lattice.nativelib.NativeBiologicalAiBenchmark")
-
-    val nativeLibrary = rootProject.layout.buildDirectory.file("lattice-native/${System.mapLibraryName("lattice")}")
-    inputs.file(nativeLibrary)
-    systemProperty("lattice.native.path", nativeLibrary.get().asFile.absolutePath)
-
-    listOf("Warmup" to "warmup", "Samples" to "samples", "Iterations" to "iterations").forEach { (propertySuffix, option) ->
-        providers.gradleProperty("biologicalAiBenchmark$propertySuffix").orNull?.let { value ->
-            args("--$option=$value")
-        }
-    }
-}
-
 val generatedDir: java.nio.file.Path = layout.projectDirectory.dir("../paper-server/src/generated/java").asFile.toPath() // Purpur
 idea {
     module {
