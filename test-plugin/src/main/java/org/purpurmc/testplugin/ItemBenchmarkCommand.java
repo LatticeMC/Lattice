@@ -251,8 +251,13 @@ final class ItemBenchmarkCommand extends Command {
     private int remainingItems() { return Math.max(0, items.size() - cleanupCursor); }
 
     private void stopInternal() {
-        if (cleaning) return;
-        beginCleanup();
+        if (task != null) { task.cancel(); task = null; }
+        if (pulseTask != null) { pulseTask.cancel(); pulseTask = null; }
+        if (cleanupTask != null) { cleanupTask.cancel(); cleanupTask = null; }
+        if (!cleaning) {
+            cleaning = true;
+            cleanupCursor = 0;
+        }
         while (cleaning) cleanupTick();
     }
 
