@@ -496,6 +496,11 @@ struct CacheState {
     /// ABI. The cache remains per-evaluation-context; roots are not cleared.
     std::vector<NodeRef> batch_roots;
 
+    /// JNI-owned BoundSliceOutputs pointer for the bound slice-batch ABI.
+    /// It is published and retired by the JNI binding code; clear() must not
+    /// reset it because bindings outlive individual evaluations.
+    void* jni_bound_slice_outputs = nullptr;
+
     /// Per-slot Interpolator state (one entry per kInterpolated node).
     std::vector<InterpolatorState> interpolators;
 

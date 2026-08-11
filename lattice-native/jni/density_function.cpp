@@ -140,7 +140,11 @@ void delete_global_refs(JNIEnv* env, BoundSliceOutputs& binding) {
 }
 
 void clear_bindings(JNIEnv* env, df::CacheState* cache) {
-    if (!env || !cache) return;
+    if (!cache) return;
+    // Prevent future hot calls from discovering an entry that is being
+    // retired. The global map -> entry lock order below protects cleanup.
+    cache->jni_bound_slice_outputs = nullptr;
+    if (!env) return;
     std::unique_ptr<BoundSliceOutputs> removed_slice_outputs;
     {
         std::lock_guard<std::mutex> lock(g_bindings_mutex);
@@ -818,6 +822,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeBindSliceOutput
     std::lock_guard<std::mutex> lock(g_bindings_mutex);
     auto& entry = g_slice_output_bindings[cache];
     if (!entry) entry = std::make_unique<BoundSliceOutputs>();
+    cache->jni_bound_slice_outputs = entry.get();
     std::lock_guard<std::mutex> entry_lock(entry->mutex);
     auto& current = entry->slots[static_cast<std::size_t>(bindingSlot)];
     delete_global_refs(env, current);
@@ -1648,17 +1653,12 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
     if (count <= 0 || yRows <= 0 || zRows <= 0 || cellWidth <= 0) return;
     const jlong required = static_cast<jlong>(yRows) * static_cast<jlong>(zRows);
 
-    // Acquire the entry under the global map lock, then release the global
-    // lock before pinning/evaluating. The per-cache lock keeps refs alive.
-    std::unique_lock<std::mutex> map_lock(g_bindings_mutex);
-    const auto bindings = g_slice_output_bindings.find(cache);
-    if (bindings == g_slice_output_bindings.end() || !bindings->second) {
+    auto* entry = static_cast<BoundSliceOutputs*>(cache->jni_bound_slice_outputs);
+    if (!entry) {
         lattice::jni::throw_illegal_state(env, "lattice density: missing bound slice outputs");
         return;
     }
-    BoundSliceOutputs* entry = bindings->second.get();
     std::unique_lock<std::mutex> entry_lock(entry->mutex);
-    map_lock.unlock();
     const auto& binding = entry->slots[static_cast<std::size_t>(bindingSlot)];
     if (binding.arrays.size() != static_cast<std::size_t>(count)
             || binding.lengths.size() != binding.arrays.size()
