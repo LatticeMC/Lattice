@@ -10,13 +10,22 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
 import net.minecraft.util.AbortableIterationConsumer;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class EntityPushStateTestSuite {
+    @BeforeAll
+    static void bootstrapRegistries() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+    }
+
     @Test
     void collectsOnlyTheFirstCollisionCapEntities() {
         final EntityPushState state = new EntityPushState();
