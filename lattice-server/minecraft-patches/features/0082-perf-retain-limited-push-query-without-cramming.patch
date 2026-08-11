@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 00:00:00 +0800
+Subject: [PATCH] perf(entity): retain limited push query without cramming
+
+The Leaf dual-threshold visitor is required when cramming is enabled. When
+maxEntityCramming is disabled, Lattice already has a lower-overhead indexed
+limited query with identical collision-cap semantics; keep that fast path.
+
+diff --git a/net/minecraft/world/entity/LivingEntity.java b/net/minecraft/world/entity/LivingEntity.java
+index f2c643c22b400e2aaf7733ba3e584acbfa01e910..9abd1898b11351965bd3399c86ba08a287d7e1d4 100644
+--- a/net/minecraft/world/entity/LivingEntity.java
++++ b/net/minecraft/world/entity/LivingEntity.java
+@@ -3986,6 +3986,25 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
+         // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
+         // Original license: MIT
+         // Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
++        // Lattice keeps its lower-overhead limited query when cramming does not need a second threshold.
++        if (maxCramming <= 0) {
++            final List<Entity> pushableEntities = this.level().getPushableEntities(
++                this, this.getBoundingBox(), maxEntityCollisions
++            );
++            if (!pushableEntities.isEmpty()) {
++                this.numCollisions = Math.max(0, this.numCollisions - maxEntityCollisions);
++                for (Entity entity : pushableEntities) {
++                    if (this.numCollisions >= maxEntityCollisions) {
++                        break;
++                    }
++                    entity.numCollisions++;
++                    this.numCollisions++;
++                    this.doPush(entity);
++                }
++            }
++            return;
++        }
++
+         final com.latticemc.lattice.world.EntityPushState pushState = this.level().lattice$acquirePushEntityQueryState(
+             this, maxCramming, maxEntityCollisions
+         );
