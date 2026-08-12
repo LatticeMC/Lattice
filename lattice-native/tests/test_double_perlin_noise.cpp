@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -25,6 +26,10 @@ PerlinNoiseSampler oct(std::uint8_t seed, double ox = 0.0, double oy = 0.0, doub
 #if defined(LATTICE_TEST_HAS_DOUBLE_PERLIN_AVX512)
 TEST_CASE("double_perlin: tests request AVX-512 before feature initialization") {
     CHECK(lattice::cpu::configure_requested_tier("avx512"));
+}
+
+bool same_bits(double left, double right) {
+    return std::bit_cast<std::uint64_t>(left) == std::bit_cast<std::uint64_t>(right);
 }
 #endif
 
@@ -149,16 +154,16 @@ TEST_CASE("double_perlin: AVX-512 paths match scalar reference") {
     sample_batch_avx512(s, x.data(), y.data(), z.data(), count, avx512.data());
     sample_batch(s, x.data(), y.data(), z.data(), count, dispatched.data());
     for (std::size_t i = 0; i < count; ++i) {
-        CHECK(avx512[i] == scalar[i]);
-        CHECK(dispatched[i] == scalar[i]);
+        CHECK(same_bits(avx512[i], scalar[i]));
+        CHECK(same_bits(dispatched[i], scalar[i]));
     }
 
     sample_y_column_scalar(s, 3.25, -8.5, 6.75, 0.125, count, scalar.data());
     sample_y_column_avx512(s, 3.25, -8.5, 6.75, 0.125, count, avx512.data());
     sample_y_column(s, 3.25, -8.5, 6.75, 0.125, count, dispatched.data());
     for (std::size_t i = 0; i < count; ++i) {
-        CHECK(avx512[i] == scalar[i]);
-        CHECK(dispatched[i] == scalar[i]);
+        CHECK(same_bits(avx512[i], scalar[i]));
+        CHECK(same_bits(dispatched[i], scalar[i]));
     }
 }
 #endif

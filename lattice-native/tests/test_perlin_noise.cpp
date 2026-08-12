@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -48,6 +49,10 @@ PerlinNoiseSampler make_shuffled_sampler() {
 #if defined(LATTICE_TEST_HAS_PERLIN_AVX512)
 TEST_CASE("perlin: tests request AVX-512 before feature initialization") {
     CHECK(lattice::cpu::configure_requested_tier("avx512"));
+}
+
+bool same_bits(double left, double right) {
+    return std::bit_cast<std::uint64_t>(left) == std::bit_cast<std::uint64_t>(right);
 }
 #endif
 
@@ -241,27 +246,27 @@ TEST_CASE("perlin: AVX-512 eight-lane paths match scalar reference") {
 
     sample_batch_scalar(s, x.data(), y.data(), z.data(), count, scalar.data());
     sample_batch_avx512(s, x.data(), y.data(), z.data(), count, avx512.data());
-    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+    for (std::size_t i = 0; i < count; ++i) CHECK(same_bits(avx512[i], scalar[i]));
 
     sample_y_column_scalar(s, 1.25, -4.5, 8.75, 0.125, count, scalar.data());
     sample_y_column_avx512(s, 1.25, -4.5, 8.75, 0.125, count, avx512.data());
-    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+    for (std::size_t i = 0; i < count; ++i) CHECK(same_bits(avx512[i], scalar[i]));
 
     sample_y_array_scalar(s, 1.25, y.data(), 8.75, count, scalar.data());
     sample_y_array_avx512(s, 1.25, y.data(), 8.75, count, avx512.data());
-    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+    for (std::size_t i = 0; i < count; ++i) CHECK(same_bits(avx512[i], scalar[i]));
 
     sample_y_scaled_batch_scalar(s, x.data(), y.data(), z.data(), 0.125, 0.75, count, scalar.data());
     sample_y_scaled_batch_avx512(s, x.data(), y.data(), z.data(), 0.125, 0.75, count, avx512.data());
-    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+    for (std::size_t i = 0; i < count; ++i) CHECK(same_bits(avx512[i], scalar[i]));
 
     sample_y_scaled_batch_ymax_scalar(s, x.data(), y.data(), z.data(), 0.125, y_max.data(), count, scalar.data());
     sample_y_scaled_batch_ymax_avx512(s, x.data(), y.data(), z.data(), 0.125, y_max.data(), count, avx512.data());
-    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+    for (std::size_t i = 0; i < count; ++i) CHECK(same_bits(avx512[i], scalar[i]));
 
     sample_y_scaled_array_ymax_scalar(s, 1.25, y.data(), 8.75, 0.125, y_max.data(), count, scalar.data());
     sample_y_scaled_array_ymax_avx512(s, 1.25, y.data(), 8.75, 0.125, y_max.data(), count, avx512.data());
-    for (std::size_t i = 0; i < count; ++i) CHECK(avx512[i] == scalar[i]);
+    for (std::size_t i = 0; i < count; ++i) CHECK(same_bits(avx512[i], scalar[i]));
 }
 
 TEST_CASE("perlin: AVX-512 dispatcher boundary matches scalar reference") {
@@ -279,7 +284,7 @@ TEST_CASE("perlin: AVX-512 dispatcher boundary matches scalar reference") {
         }
         sample_batch_scalar(s, x.data(), y.data(), z.data(), count, scalar.data());
         sample_batch(s, x.data(), y.data(), z.data(), count, dispatched.data());
-        for (std::size_t i = 0; i < count; ++i) CHECK(dispatched[i] == scalar[i]);
+        for (std::size_t i = 0; i < count; ++i) CHECK(same_bits(dispatched[i], scalar[i]));
     }
 }
 #endif
