@@ -1,9 +1,13 @@
 package net.minecraft.world.level;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -68,6 +72,77 @@ class BlockGetterTraversalTestSuite {
 
         assertEquals(expected, actual);
         assertEquals(expectedResult, actualResult);
+    }
+
+    @Test
+    void restoresScratchAfterVisitorThrows() {
+        Vec3 travel = new Vec3(0.5, 0.5, 0.5);
+        AABB boundingBox = new AABB(1.0, 1.0, 1.0, 1.5, 1.5, 1.5);
+
+        assertThrows(IllegalStateException.class, () -> BlockGetter.forEachBlockIntersectedBetween(Vec3.ZERO, travel, boundingBox, (pos, index) -> {
+            throw new IllegalStateException("visitor failure");
+        }));
+
+        assertTraversalMatchesBaseline(travel, boundingBox, Integer.MAX_VALUE);
+    }
+
+    @Test
+    void replacesOversizedReleasedSet() throws ReflectiveOperationException {
+        BlockIntersectionScratch scratch = new BlockIntersectionScratch();
+        LongSet oversizedSet = scratch.acquire();
+        for (long value = 0; value <= 256; value++) {
+            oversizedSet.add(value);
+        }
+
+        scratch.release();
+
+        LongOpenHashSet replacement = scratchSets(scratch).get(0);
+        assertNotSame(oversizedSet, replacement);
+        assertSame(replacement, scratch.acquire());
+        scratch.release();
+    }
+
+    @Test
+    void trimsScratchDepthAfterNestedReleases() throws ReflectiveOperationException {
+        BlockIntersectionScratch scratch = new BlockIntersectionScratch();
+        for (int depth = 0; depth < 5; depth++) {
+            scratch.acquire();
+        }
+
+        for (int depth = 0; depth < 5; depth++) {
+            scratch.release();
+        }
+
+        assertEquals(4, scratchSets(scratch).size());
+    }
+
+    @Test
+    void preservesOuterTraversalAfterLargeInnerTraversal() {
+        Vec3 travel = new Vec3(0.5, 0.5, 0.5);
+        AABB boundingBox = new AABB(1.0, 1.0, 1.0, 1.5, 1.5, 1.5);
+        List<Visit> expected = new ArrayList<>();
+        boolean expectedResult = baselineForEachBlockIntersectedBetween(Vec3.ZERO, travel, boundingBox, visitor(expected, Integer.MAX_VALUE));
+        List<Visit> actual = new ArrayList<>();
+        boolean[] reentered = new boolean[1];
+        boolean actualResult = BlockGetter.forEachBlockIntersectedBetween(Vec3.ZERO, travel, boundingBox, (pos, index) -> {
+            actual.add(new Visit(pos.asLong(), index));
+            if (!reentered[0]) {
+                reentered[0] = true;
+                BlockGetter.forEachBlockIntersectedBetween(Vec3.ZERO, new Vec3(300.0, 0.0, 0.0), boundingBox, (ignoredPos, ignoredIndex) -> true);
+            }
+
+            return true;
+        });
+
+        assertEquals(expected, actual);
+        assertEquals(expectedResult, actualResult);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<LongOpenHashSet> scratchSets(BlockIntersectionScratch scratch) throws ReflectiveOperationException {
+        Field sets = BlockIntersectionScratch.class.getDeclaredField("sets");
+        sets.setAccessible(true);
+        return (List<LongOpenHashSet>)sets.get(scratch);
     }
 
     private static void assertTraversalMatchesBaseline(Vec3 travel, AABB boundingBox, int stopAfter) {
