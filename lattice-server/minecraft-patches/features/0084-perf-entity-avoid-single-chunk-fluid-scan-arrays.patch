@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 17:30:55 +0800
+Subject: [PATCH] perf(entity): avoid single-chunk fluid scan arrays
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index eb923079575da26114e1b961f66f42e92f5b8fa8..bbb562db2591d5faae98d860a50c01c70ec712b3 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -4947,23 +4947,35 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         final net.minecraft.world.level.chunk.ChunkSource chunkSource = world.getChunkSource();
+ 
+         final int chunkLenX = maxChunkX - minChunkX + 1;
++        final int chunkLenZ = maxChunkZ - minChunkZ + 1;
+         // chunk index = (x - minX) + (maxX-minX+1)*(z - minZ)
+         //             = x + (maxX-minX+1)*z - (minX + (maxX-minX+1)*minZ)
+         final int chunkOffset = -(minChunkX + chunkLenX*minChunkZ);
+         //             = x + (maxX-minX+1)*z + chunkOffset
+-        final net.minecraft.world.level.chunk.LevelChunkSection[][] sections = new net.minecraft.world.level.chunk.LevelChunkSection[chunkLenX * (maxChunkZ - minChunkZ + 1)][];
++        final net.minecraft.world.level.chunk.LevelChunkSection[] singleSections;
++        final net.minecraft.world.level.chunk.LevelChunkSection[][] sections;
++        if (chunkLenX * chunkLenZ == 1) {
++            singleSections = chunkSource.getChunk(minChunkX, minChunkZ, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false).getSections();
++            sections = null;
++        } else {
++            singleSections = null;
++            sections = new net.minecraft.world.level.chunk.LevelChunkSection[chunkLenX * chunkLenZ][];
+ 
+-        // init chunks
+-        for (int currChunkZ = minChunkZ; currChunkZ <= maxChunkZ; ++currChunkZ) {
+-            for (int currChunkX = minChunkX; currChunkX <= maxChunkX; ++currChunkX) {
+-                sections[currChunkX + chunkLenX*currChunkZ + chunkOffset] = chunkSource.getChunk(currChunkX, currChunkZ, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false).getSections();
++            // init chunks
++            for (int currChunkZ = minChunkZ; currChunkZ <= maxChunkZ; ++currChunkZ) {
++                for (int currChunkX = minChunkX; currChunkX <= maxChunkX; ++currChunkX) {
++                    sections[currChunkX + chunkLenX*currChunkZ + chunkOffset] = chunkSource.getChunk(currChunkX, currChunkZ, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false).getSections();
++                }
+             }
+         }
+ 
+         for (int currX = minBlockX; currX <= maxBlockX; ++currX) {
+             for (int currY = minBlockY; currY <= maxBlockY; ++currY) {
+                 for (int currZ = minBlockZ; currZ <= maxBlockZ; ++currZ) {
+-                    final FluidState fluidState = sections[(currX >> 4) + chunkLenX*(currZ >> 4) + chunkOffset][(currY >> 4) - minSection]
++                    final net.minecraft.world.level.chunk.LevelChunkSection[] currentSections = singleSections != null
++                        ? singleSections
++                        : sections[(currX >> 4) + chunkLenX*(currZ >> 4) + chunkOffset];
++                    final FluidState fluidState = currentSections[(currY >> 4) - minSection]
+                         .states.get((currX & 15) | ((currZ & 15) << 4) | ((currY & 15) << 8)).getFluidState();
+ 
+                     if (fluidState.isEmpty() || !fluidState.is(fluid)) {
