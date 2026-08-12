@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 18:19:05 +0800
+Subject: [PATCH] perf(entity): reuse inside-block step scratch
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index bbb562db2591d5faae98d860a50c01c70ec712b3..3bec6d1cf405bc12a02576b9a6b36ae0a43642f1 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -354,6 +354,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     // Licensed under: LGPL-3.0-only (https://www.gnu.org/licenses/lgpl-3.0.html)
+     private @Nullable ChunkAccess insideBlockCachedChunk;
+     private long insideBlockCachedChunkPos = Long.MIN_VALUE;
++    private int insideBlocksLastStep;
+     // Leaf end - optimize checkInsideBlocks calls
+     private final InsideBlockEffectApplier.StepBasedCollector insideEffectCollector = new InsideBlockEffectApplier.StepBasedCollector();
+     private CustomData customData = CustomData.EMPTY;
+@@ -1819,66 +1820,71 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         boolean flag = from.distanceToSqr(to) > Mth.square(0.9999900000002526);
+         ServerLevel serverLevel = level instanceof ServerLevel currentServerLevel ? currentServerLevel : null;
+         boolean flag1 = serverLevel != null && serverLevel.getServer().debugSubscribers().hasAnySubscriberFor(DebugSubscriptions.ENTITY_BLOCK_INTERSECTIONS);
+-        AtomicInteger atomicInteger = new AtomicInteger();
+-        BlockGetter.forEachBlockIntersectedBetween(
+-            from,
+-            to,
+-            aabb,
+-            (pos, index) -> {
+-                if (!this.isAlive()) {
+-                    return false;
+-                } else if (index >= maxSteps) {
+-                    return false;
+-                } else {
+-                    atomicInteger.set(index);
+-                    BlockState blockState = this.getInsideBlockState(level, pos);
+-                    if (blockState.isAir()) {
+-                        if (flag1) {
+-                            this.debugBlockIntersection(serverLevel, pos.immutable(), false, false);
+-                        }
+-
+-                        return true;
++        int previousInsideBlocksLastStep = this.insideBlocksLastStep;
++        this.insideBlocksLastStep = 0;
++        try {
++            BlockGetter.forEachBlockIntersectedBetween(
++                from,
++                to,
++                aabb,
++                (pos, index) -> {
++                    if (!this.isAlive()) {
++                        return false;
++                    } else if (index >= maxSteps) {
++                        return false;
+                     } else {
+-                        VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(level, pos, this);
+-                        boolean flag2 = entityInsideCollisionShape == Shapes.block()
+-                            || this.collidedWithShapeMovingFrom(from, to, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
+-                        FluidState fluidState = blockState.getFluidState();
+-                        boolean flag3 = !fluidState.isEmpty() && this.collidedWithFluid(fluidState, pos, from, to);
+-                        if ((flag2 || flag3) && visited.add(pos.asLong())) {
+-                            if (flag2) {
+-                                try {
+-                                    boolean flag4 = flag || aabb.intersects(pos);
+-                                    stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+-                                    blockState.entityInside(level, pos, this, stepBasedCollector, flag4);
+-                                    this.onInsideBlock(blockState);
+-                                } catch (Throwable var20) {
+-                                    CrashReport crashReport = CrashReport.forThrowable(var20, "Colliding entity with block");
+-                                    CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
+-                                    CrashReportCategory.populateBlockDetails(crashReportCategory, level, pos, blockState);
+-                                    CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
+-                                    this.fillCrashReportCategory(crashReportCategory1);
+-                                    throw new ReportedException(crashReport);
+-                                }
+-                            }
+-
+-                            if (flag3) {
+-                                stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
+-                                fluidState.entityInside(level, pos, this, stepBasedCollector);
+-                            }
+-
++                        this.insideBlocksLastStep = index;
++                        BlockState blockState = this.getInsideBlockState(level, pos);
++                        if (blockState.isAir()) {
+                             if (flag1) {
+-                                this.debugBlockIntersection(serverLevel, pos.immutable(), flag2, flag3);
++                                this.debugBlockIntersection(serverLevel, pos.immutable(), false, false);
+                             }
+ 
+                             return true;
+                         } else {
+-                            return true;
++                            VoxelShape entityInsideCollisionShape = blockState.getEntityInsideCollisionShape(level, pos, this);
++                            boolean flag2 = entityInsideCollisionShape == Shapes.block()
++                                || this.collidedWithShapeMovingFrom(from, to, entityInsideCollisionShape.move(new Vec3(pos)).toAabbs());
++                            FluidState fluidState = blockState.getFluidState();
++                            boolean flag3 = !fluidState.isEmpty() && this.collidedWithFluid(fluidState, pos, from, to);
++                            if ((flag2 || flag3) && visited.add(pos.asLong())) {
++                                if (flag2) {
++                                    try {
++                                        boolean flag4 = flag || aabb.intersects(pos);
++                                        stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
++                                        blockState.entityInside(level, pos, this, stepBasedCollector, flag4);
++                                        this.onInsideBlock(blockState);
++                                    } catch (Throwable var20) {
++                                        CrashReport crashReport = CrashReport.forThrowable(var20, "Colliding entity with block");
++                                        CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
++                                        CrashReportCategory.populateBlockDetails(crashReportCategory, level, pos, blockState);
++                                        CrashReportCategory crashReportCategory1 = crashReport.addCategory("Entity being checked for collision");
++                                        this.fillCrashReportCategory(crashReportCategory1);
++                                        throw new ReportedException(crashReport);
++                                    }
++                                }
++
++                                if (flag3) {
++                                    stepBasedCollector.advanceStep(index, pos); // Paper - track position inside effect was triggered on
++                                    fluidState.entityInside(level, pos, this, stepBasedCollector);
++                                }
++
++                                if (flag1) {
++                                    this.debugBlockIntersection(serverLevel, pos.immutable(), flag2, flag3);
++                                }
++
++                                return true;
++                            } else {
++                                return true;
++                            }
+                         }
+                     }
+                 }
+-            }
+-        );
+-        return atomicInteger.get() + 1;
++            );
++            return this.insideBlocksLastStep + 1;
++        } finally {
++            this.insideBlocksLastStep = previousInsideBlocksLastStep;
++        }
+     }
+ 
+     // Leaf start - optimize checkInsideBlocks calls
