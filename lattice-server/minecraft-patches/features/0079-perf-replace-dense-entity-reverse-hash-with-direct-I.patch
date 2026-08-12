@@ -5,7 +5,7 @@ Subject: [PATCH] perf: replace dense entity reverse hash with direct ID index
 
 
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
-index 5a18a19..8b30a55 100644
+index 5a18a19809e0e547413a09d69c364e4b9a1b7633..8b30a55df6f8e872314347dcc9230b17176c876f 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
 +++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
 @@ -7,7 +7,6 @@ import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
@@ -17,7 +17,7 @@ index 5a18a19..8b30a55 100644
  import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
  import net.minecraft.nbt.CompoundTag;
 @@ -468,15 +467,17 @@ public final class ChunkEntitySlices {
-
+ 
          private static final Entity[] EMPTY = new Entity[0];
          private static final int DEFAULT_CAPACITY = 4;
 -        // Only dense lists pay for a reverse index.  Scanning up to this many
@@ -27,7 +27,7 @@ index 5a18a19..8b30a55 100644
 +        private static final int DENSE_ID_EMPTY = 0;
 +        private static final int DENSE_ID_MAX_SLOTS = 1 << 20;
 +        private static final int DENSE_ID_MAX_SLOTS_PER_ENTITY = 4;
-
+ 
          private E[] storage;
          private double[] aabbs;
          private long[] spatialCells;
@@ -55,7 +55,7 @@ index 5a18a19..8b30a55 100644
 @@ -533,20 +532,103 @@ public final class ChunkEntitySlices {
              ++this.size;
          }
-
+ 
 -        private void buildIndexMap(final int count) {
 -            final Reference2IntOpenHashMap<E> indices = new Reference2IntOpenHashMap<>(count);
 -            indices.defaultReturnValue(-1);
@@ -147,7 +147,7 @@ index 5a18a19..8b30a55 100644
 +            direct[slot] = newIndex + 1;
 +            return true;
          }
-
+ 
          public int indexOf(final E entity) {
 -            final Reference2IntOpenHashMap<E> indices = this.indices;
 -            if (indices != null) {
@@ -162,14 +162,14 @@ index 5a18a19..8b30a55 100644
 +                    }
 +                }
              }
-
+ 
              final E[] storage = this.storage;
 @@ -568,6 +650,7 @@ public final class ChunkEntitySlices {
              if (this.spatialAabbs != null) {
                  this.spatialAabbs.remove(entity, this.spatialCells[idx]);
              }
 +            this.clearDenseIdIndex(entity, idx);
-
+ 
              final int size = --this.size;
              final E[] storage = this.storage;
 @@ -583,9 +666,16 @@ public final class ChunkEntitySlices {
@@ -201,7 +201,7 @@ index 5a18a19..8b30a55 100644
 -
              return true;
          }
-
+ 
 @@ -632,9 +718,9 @@ public final class ChunkEntitySlices {
                  this.spatialCells = null;
                  released = true;
@@ -212,7 +212,7 @@ index 5a18a19..8b30a55 100644
 +            this.denseIdToListIndex = null;
 +            this.denseIdBase = 0;
 +            this.denseIdIndexRejected = false;
-
+ 
              return released;
          }
 @@ -672,6 +758,7 @@ public final class ChunkEntitySlices {
@@ -222,11 +222,12 @@ index 5a18a19..8b30a55 100644
 +            this.ensureDenseIdIndex();
              return true;
          }
-
-@@ -706,5 +793,6 @@ public final class ChunkEntitySlices {
+ 
+@@ -706,6 +793,7 @@ public final class ChunkEntitySlices {
                  this.spatialAabbRejected = true;
                  return false;
              }
 +            this.ensureDenseIdIndex();
              return true;
          }
+ 

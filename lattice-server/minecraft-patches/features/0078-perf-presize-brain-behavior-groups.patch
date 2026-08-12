@@ -11,7 +11,7 @@ index ed06691e8f25bc159fadaa2b79c796c990e17108..23c6c8a0272f760b142f0d1a1aa8ec9a
 @@ -398,16 +398,41 @@ public class Brain<E extends LivingEntity> {
              this.activityMemoriesToEraseWhenStopped.put(activity, memoryTypes);
          }
-
+ 
 +        // Lattice start - Leaf: optimized Brain collections
          for (Pair<Integer, ? extends BehaviorControl<? super E>> pair : tasks) {
 -            this.availableBehaviorsByPriority
@@ -38,7 +38,7 @@ index ed06691e8f25bc159fadaa2b79c796c990e17108..23c6c8a0272f760b142f0d1a1aa8ec9a
          this.activeBehaviorGroups = (BehaviorControlArraySet<? super E>[]) EMPTY_BEHAVIOR_GROUPS; // Lattice - Leaf: invalidate active behavior cache
          this.latticeNativeEligibilityPlan = null;
      }
-
+ 
 +    // Lattice start - Leaf: optimized Brain collections
 +    private static int countAtPriority(List<? extends Pair<Integer, ?>> tasks, Integer priority) {
 +        int count = 0;

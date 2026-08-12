@@ -29,7 +29,7 @@ index 8b30a55df6f8e872314347dcc9230b17176c876f..ca0e7930b1a81e210853567f73e9e54b
 @@ -398,6 +399,16 @@ public final class ChunkEntitySlices {
          return this.allEntities.getEntitiesLimited(except, box, into, predicate, maxCount);
      }
-
+ 
 +    // Lattice start - Leaf: limit pushable entity queries
 +    // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
 +    // Original license: MIT
@@ -46,7 +46,7 @@ index 8b30a55df6f8e872314347dcc9230b17176c876f..ca0e7930b1a81e210853567f73e9e54b
 @@ -1407,6 +1418,45 @@ public final class ChunkEntitySlices {
              return false;
          }
-
+ 
 +        // Lattice start - Leaf: limit pushable entity queries
 +        // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
 +        // Original license: MIT
@@ -96,7 +96,7 @@ index bcc88bab4075ad0e64ebc6a15f19ffa94ccd3c79..6c43d7f335b8b16fd469cb5a545967fb
 @@ -617,6 +617,48 @@ public abstract class EntityLookup implements LevelEntityGetter<Entity> {
          }
      }
-
+ 
 +    // Lattice start - Leaf: limit pushable entity queries
 +    // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
 +    // Original license: MIT
@@ -149,7 +149,7 @@ index 4238250178eeb9ce7f30321e1e196db7796322bd..f2c643c22b400e2aaf7733ba3e584acb
 @@ -3976,39 +3976,32 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
              return;
          }
-
+ 
 -        int i = ((ServerLevel) this.level()).getGameRules().get(GameRules.MAX_ENTITY_CRAMMING);
 -        if (i <= 0 && this.level().paperConfig().collisions.maxEntityCollisions <= 0) {
 +        final int maxCramming = ((ServerLevel) this.level()).getGameRules().get(GameRules.MAX_ENTITY_CRAMMING);
@@ -195,7 +195,7 @@ index 4238250178eeb9ce7f30321e1e196db7796322bd..f2c643c22b400e2aaf7733ba3e584acb
 +            if (pushState.crammingDamage && this.level() instanceof ServerLevel serverLevel) {
 +                this.hurtServer(serverLevel, this.damageSources().cramming(), 6.0F);
              }
-
+ 
              // Paper start - Cap entity collisions
 -            this.numCollisions = Math.max(0, this.numCollisions - this.level().paperConfig().collisions.maxEntityCollisions);
 -            for (Entity entity1 : pushableEntities) {
@@ -205,7 +205,7 @@ index 4238250178eeb9ce7f30321e1e196db7796322bd..f2c643c22b400e2aaf7733ba3e584acb
 +                if (this.numCollisions >= maxEntityCollisions) {
                      break;
                  }
-
+ 
 @@ -4017,7 +4010,10 @@ public abstract class LivingEntity extends Entity implements Attackable, Waypoin
                  // Paper end - Cap entity collisions
                  this.doPush(entity1);
@@ -215,7 +215,7 @@ index 4238250178eeb9ce7f30321e1e196db7796322bd..f2c643c22b400e2aaf7733ba3e584acb
          }
 +        // Lattice end - Leaf: limit pushable entity queries
      }
-
+ 
      protected void checkAutoSpinAttack(AABB boundingBoxBeforeSpin, AABB boundingBoxAfterSpin) {
 diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
 index 287ef75ae2957d727c6467ad053cbc0affab8973..306f0c3279c5c19a3051f009f072d4683ddca449 100644
@@ -223,7 +223,7 @@ index 287ef75ae2957d727c6467ad053cbc0affab8973..306f0c3279c5c19a3051f009f072d468
 +++ b/net/minecraft/world/level/Level.java
 @@ -1,6 +1,7 @@
  package net.minecraft.world.level;
-
+ 
  import com.latticemc.lattice.nativelib.NativeLineOfSight;
 +import com.latticemc.lattice.world.EntityPushState;
  import com.google.common.collect.Lists;
@@ -239,13 +239,13 @@ index 287ef75ae2957d727c6467ad053cbc0affab8973..306f0c3279c5c19a3051f009f072d468
 +    // Source: https://github.com/Winds-Studio/Leaf/commit/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6
 +    private final EntityPushState lattice$pushEntityQueryState = new EntityPushState();
 +    // Lattice end - Leaf: limit pushable entity queries
-
+ 
      @Override
      public final ca.spottedleaf.moonrise.patches.chunk_system.level.entity.EntityLookup moonrise$getEntityLookup() {
 @@ -1864,6 +1871,43 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
          return this.getEntities(entity, boundingBox, EntitySelector.pushableBy(entity));
      }
-
+ 
 +    // Lattice start - Leaf: limit pushable entity queries
 +    // Original author: HaHaWTH/Creeam <102713261+HaHaWTH@users.noreply.github.com>
 +    // Original license: MIT

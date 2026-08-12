@@ -5,7 +5,7 @@ Subject: [PATCH] perf: shrink entity AABB query cache footprint
 
 
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
-index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc97a162117 100644
+index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..5a18a19809e0e547413a09d69c364e4b9a1b7633 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
 +++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
 @@ -7,6 +7,7 @@ import ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity;
@@ -65,7 +65,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
      }
  
      /** Called after Entity#setBoundingBox publishes a new live AABB. */
-@@ -455,11 +468,16 @@ public final class ChunkEntitySlices {
+@@ -455,12 +468,17 @@ public final class ChunkEntitySlices {
  
          private static final Entity[] EMPTY = new Entity[0];
          private static final int DEFAULT_CAPACITY = 4;
@@ -83,6 +83,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
 +        private boolean spatialAabbRejected;
          private int size;
  
+         public BasicEntityList() {
 @@ -501,7 +519,11 @@ public final class ChunkEntitySlices {
                  this.resize();
              }
@@ -304,7 +305,8 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
          }
  
          long add(final E entity, final AABB box) {
-@@ -643,31 +767,58 @@ public final class ChunkEntitySlices {
+@@ -642,32 +766,59 @@ public final class ChunkEntitySlices {
+             return cell;
          }
  
 +        private int maximumChainLength() {
@@ -381,7 +383,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
              }
          }
  
-@@ -694,45 +831,62 @@ public final class ChunkEntitySlices {
+@@ -694,45 +845,62 @@ public final class ChunkEntitySlices {
                  return -1;
              }
  
@@ -459,7 +461,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
          private boolean matches(final E entity, final Entity except, final AABB box, final Predicate<? super Entity> predicate) {
              return entity != except && entity.getBoundingBox().intersects(box)
                  && (predicate == null || predicate.test(entity));
-@@ -750,85 +904,142 @@ public final class ChunkEntitySlices {
+@@ -750,85 +918,142 @@ public final class ChunkEntitySlices {
          }
      }
  
@@ -639,7 +641,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
                  if (this.keys[position] == key) {
                      --this.size;
                      this.shiftKeys(position);
-@@ -838,93 +1049,99 @@ public final class ChunkEntitySlices {
+@@ -838,93 +1063,99 @@ public final class ChunkEntitySlices {
              }
          }
  
@@ -743,7 +745,8 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
      }
  
 -    private static final class SpatialBucket<E extends Entity> {
--
++    private static final class LookupCache {
+ 
 -        private Entity[] storage = new Entity[4];
 -        private int size;
 -
@@ -771,8 +774,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
 -        E get(final int index) {
 -            return (E)this.storage[index];
 -        }
-+    private static final class LookupCache {
- 
+-
 -        boolean isEmpty() {
 -            return this.size == 0;
 -        }
@@ -782,7 +784,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
      }
  
      private static final class EntityCollectionBySection {
-@@ -933,6 +1150,8 @@ public final class ChunkEntitySlices {
+@@ -933,6 +1164,8 @@ public final class ChunkEntitySlices {
          private final boolean nativeAabbEnabled;
          private final BasicEntityList<Entity>[] entitiesBySection;
          private int count;
@@ -791,7 +793,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
  
          public EntityCollectionBySection(final ChunkEntitySlices slices, final boolean nativeAabbEnabled) {
              this.slices = slices;
-@@ -943,6 +1162,10 @@ public final class ChunkEntitySlices {
+@@ -943,6 +1176,10 @@ public final class ChunkEntitySlices {
              this.entitiesBySection = new BasicEntityList[sectionCount];
          }
  
@@ -802,7 +804,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
          public void addEntity(final Entity entity, final int sectionIndex) {
              BasicEntityList<Entity> list = this.entitiesBySection[sectionIndex];
  
-@@ -969,6 +1192,17 @@ public final class ChunkEntitySlices {
+@@ -969,6 +1206,17 @@ public final class ChunkEntitySlices {
  
              if (list.isEmpty()) {
                  this.entitiesBySection[sectionIndex] = null;
@@ -820,7 +822,7 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
              }
          }
  
-@@ -1082,9 +1330,17 @@ public final class ChunkEntitySlices {
+@@ -1082,10 +1330,18 @@ public final class ChunkEntitySlices {
                  return -1;
              }
  
@@ -830,17 +832,18 @@ index 7e1f0d636fe48741131f9f6b700ca3908fc53a95..b9c040c89e18c10568eba94a2c455cc9
 +            final boolean cachedBefore = list.hasQueryCache();
              if (SPATIAL_AABB_ENABLED && entityCount >= SPATIAL_AABB_MIN_ENTITIES) {
 -                list.ensureSpatialAabbIndex();
-+                final boolean spatialRetained = list.ensureSpatialAabbIndex();
 -                this.slices.nativeAabbCacheActive = true;
+-                final int spatialResult = list.scanSpatial(except, box, into, predicate, maxCount);
++                final boolean spatialRetained = list.ensureSpatialAabbIndex();
 +                if (spatialRetained && !cachedBefore) {
 +                    ++this.cachedSections;
 +                }
--                final int spatialResult = list.scanSpatial(except, box, into, predicate, maxCount);
 +                final int spatialResult = spatialRetained
 +                    ? list.scanSpatial(except, box, into, predicate, maxCount)
 +                    : -1;
                  if (spatialResult >= 0) {
                      return spatialResult;
+                 }
 @@ -1095,7 +1351,9 @@ public final class ChunkEntitySlices {
                  return -1;
              }

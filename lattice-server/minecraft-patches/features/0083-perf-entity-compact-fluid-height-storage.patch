@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 16:54:21 +0800
+Subject: [PATCH] perf(entity): compact fluid height storage
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 769ffd23d308c0d8e7b8c014c40561d9c713afae..eb923079575da26114e1b961f66f42e92f5b8fa8 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -293,7 +293,10 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     public int tickCount;
+     private int remainingFireTicks;
+     public boolean wasTouchingWater;
+-    protected Object2DoubleMap<TagKey<Fluid>> fluidHeight = new Object2DoubleArrayMap<>(2);
++    private double waterFluidHeight;
++    private double lavaFluidHeight;
++    @Nullable
++    protected Object2DoubleMap<TagKey<Fluid>> fluidHeight;
+     protected boolean wasEyeInWater;
+     private final Set<TagKey<Fluid>> fluidOnEyes = new HashSet<>();
+     public int invulnerableTime;
+@@ -2154,7 +2157,9 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     }
+ 
+     protected boolean updateInWaterStateAndDoFluidPushing() {
+-        this.fluidHeight.clear();
++        this.waterFluidHeight = 0.0;
++        this.lavaFluidHeight = 0.0;
++        this.fluidHeight = null;
+         this.updateInWaterStateAndDoWaterCurrentPushing();
+         double d = this.level.environmentAttributes().getDimensionValue(EnvironmentAttributes.FAST_LAVA) ? 0.007 : 0.0023333333333333335;
+         boolean flag = this.updateFluidHeightAndDoFluidPushing(FluidTags.LAVA, d);
+@@ -2275,7 +2280,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     }
+ 
+     public boolean isInLava() {
+-        return !this.firstTick && this.fluidHeight.getDouble(FluidTags.LAVA) > 0.0;
++        return !this.firstTick && this.getStoredFluidHeight(FluidTags.LAVA) > 0.0;
+     }
+ 
+     public void moveRelative(float amount, Vec3 relative) {
+@@ -5000,7 +5005,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+             }
+         }
+ 
+-        this.fluidHeight.put(fluid, maxHeightDiff);
++        this.setFluidHeight(fluid, maxHeightDiff);
+ 
+         if (pushVector == Vec3.ZERO) {
+             return inFluid;
+@@ -5056,7 +5061,31 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     }
+ 
+     public double getFluidHeight(TagKey<Fluid> fluidTag) {
+-        return this.fluidHeight.getDouble(fluidTag);
++        return this.getStoredFluidHeight(fluidTag);
++    }
++
++    private void setFluidHeight(TagKey<Fluid> fluidTag, double fluidHeight) {
++        if (FluidTags.WATER.equals(fluidTag)) {
++            this.waterFluidHeight = fluidHeight;
++        } else if (FluidTags.LAVA.equals(fluidTag)) {
++            this.lavaFluidHeight = fluidHeight;
++        } else {
++            if (this.fluidHeight == null) {
++                this.fluidHeight = new Object2DoubleArrayMap<>(1);
++            }
++
++            this.fluidHeight.put(fluidTag, fluidHeight);
++        }
++    }
++
++    private double getStoredFluidHeight(TagKey<Fluid> fluidTag) {
++        if (FluidTags.WATER.equals(fluidTag)) {
++            return this.waterFluidHeight;
++        } else if (FluidTags.LAVA.equals(fluidTag)) {
++            return this.lavaFluidHeight;
++        } else {
++            return this.fluidHeight == null ? 0.0 : this.fluidHeight.getDouble(fluidTag);
++        }
+     }
+ 
+     public double getFluidJumpThreshold() {

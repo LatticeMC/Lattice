@@ -21,7 +21,7 @@ index ca0e7930b1a81e210853567f73e9e54b4cde5d10..5e373006897cdf4c4f2e7251e836964e
 @@ -819,6 +819,12 @@ public final class ChunkEntitySlices {
                  : this.spatialAabbs.scan(except, box, into, predicate, maxCount);
          }
-
+ 
 +        public int scanSpatial(final Entity except, final AABB box, final Predicate<? super Entity> predicate,
 +                               final AbortableIterationConsumer<Entity> consumer) {
 +            return this.spatialAabbs == null ? -1
@@ -34,7 +34,7 @@ index ca0e7930b1a81e210853567f73e9e54b4cde5d10..5e373006897cdf4c4f2e7251e836964e
 @@ -968,6 +974,39 @@ public final class ChunkEntitySlices {
              return 0;
          }
-
+ 
 +        int scan(final Entity except, final AABB box, final Predicate<? super Entity> predicate,
 +                 final AbortableIterationConsumer<Entity> consumer) {
 +            final int minX = Mth.floor(box.minX - SPATIAL_MAX_SMALL_HALF_SPAN);
@@ -74,7 +74,7 @@ index ca0e7930b1a81e210853567f73e9e54b4cde5d10..5e373006897cdf4c4f2e7251e836964e
 @@ -986,6 +1025,22 @@ public final class ChunkEntitySlices {
              return false;
          }
-
+ 
 +        @SuppressWarnings("unchecked")
 +        private boolean scanChain(int slot, final Entity except, final AABB box,
 +                                  final Predicate<? super Entity> predicate,
@@ -96,7 +96,7 @@ index ca0e7930b1a81e210853567f73e9e54b4cde5d10..5e373006897cdf4c4f2e7251e836964e
              if (recycled != NO_SLOT) {
 @@ -1440,6 +1495,13 @@ public final class ChunkEntitySlices {
                  }
-
+ 
                  final Entity[] storage = list.storage;
 +                final int acceleratedResult = this.scanEntitiesAbortable(list, except, box, predicate, consumer);
 +                if (acceleratedResult >= 0) {
@@ -178,7 +178,7 @@ index ca0e7930b1a81e210853567f73e9e54b4cde5d10..5e373006897cdf4c4f2e7251e836964e
 +            }
 +        }
          // Lattice end - Leaf: limit pushable entity queries
-
+ 
          /**
 diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
 index 306f0c3279c5c19a3051f009f072d4683ddca449..e79b62a84912b0bab4094ae21665e58e25e3bf85 100644
@@ -195,7 +195,7 @@ index 306f0c3279c5c19a3051f009f072d4683ddca449..e79b62a84912b0bab4094ae21665e58e
              .forEachEntity(except, boundingBox, predicate, consumer)) {
              return true;
          }
-
+ 
 -        final List<Entity> platformEntities = new java.util.ArrayList<>();
 +        final List<Entity> platformEntities = consumer.platformEntities();
          ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities(
