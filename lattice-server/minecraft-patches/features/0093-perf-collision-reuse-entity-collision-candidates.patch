@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 22:25:12 +0800
+Subject: [PATCH] perf(collision): reuse entity collision candidates
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java b/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
+index f74715d4b03abc7ad6a4b71c7899634d6fcd2fbc..66cde651f8a82ae128e8c9eeffb364df9a6de1d9 100644
+--- a/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
++++ b/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
+@@ -2137,50 +2137,36 @@ public final class CollisionUtil {
+         // Vanilla for hard collisions has this backwards, and they expand by +epsilon but this causes terrible problems
+         // specifically with boat collisions.
+         aabb = aabb.inflate(-COLLISION_EPSILON, -COLLISION_EPSILON, -COLLISION_EPSILON);
+-        if (checkOnly && into == null && (entity == null || !((ChunkSystemEntity)entity).moonrise$isHardColliding())) {
+-            final HardCollisionQueryScratch scratch = HARD_COLLISION_QUERY_SCRATCH.get();
+-            final List<Entity> entities = scratch.acquire();
+-            try {
+-                // Keep the complete Moonrise snapshot before calling entity collision methods.
++        final HardCollisionQueryScratch scratch = HARD_COLLISION_QUERY_SCRATCH.get();
++        final List<Entity> entities = scratch.acquire();
++        try {
++            // Keep the complete query snapshot before calling entity collision methods.
++            if (entity != null && ((ChunkSystemEntity)entity).moonrise$isHardColliding()) {
++                world.lattice$getEntities(entity, aabb, predicate, entities);
++            } else {
+                 world.lattice$getHardCollidingEntities(entity, aabb, predicate, entities);
+-                for (int i = 0, len = entities.size(); i < len; ++i) {
+-                    final Entity otherEntity = entities.get(i);
+-                    if (!otherEntity.isSpectator()
+-                        && ((entity == null && otherEntity.canBeCollidedWith(entity)) || (entity != null && entity.canCollideWith(otherEntity)))) {
+-                        return true;
+-                    }
+-                }
+-                return false;
+-            } finally {
+-                scratch.release();
+             }
+-        }
+ 
+-        final List<Entity> entities;
+-        if (entity != null && ((ChunkSystemEntity)entity).moonrise$isHardColliding()) {
+-            entities = world.getEntities(entity, aabb, predicate);
+-        } else {
+-            entities = ((ChunkSystemEntityGetter)world).moonrise$getHardCollidingEntities(entity, aabb, predicate);
+-        }
+-
+-        for (int i = 0, len = entities.size(); i < len; ++i) {
+-            final Entity otherEntity = entities.get(i);
++            for (int i = 0, len = entities.size(); i < len; ++i) {
++                final Entity otherEntity = entities.get(i);
+ 
+-            if (otherEntity.isSpectator()) {
+-                continue;
+-            }
++                if (otherEntity.isSpectator()) {
++                    continue;
++                }
+ 
+-            if ((entity == null && otherEntity.canBeCollidedWith(entity)) || (entity != null && entity.canCollideWith(otherEntity))) {
+-                if (checkOnly) {
+-                    return true;
+-                } else {
+-                    into.add(otherEntity.getBoundingBox());
+-                    ret = true;
++                if ((entity == null && otherEntity.canBeCollidedWith(entity)) || (entity != null && entity.canCollideWith(otherEntity))) {
++                    if (checkOnly) {
++                        return true;
++                    } else {
++                        into.add(otherEntity.getBoundingBox());
++                        ret = true;
++                    }
+                 }
+             }
++            return ret;
++        } finally {
++            scratch.release();
+         }
+-
+-        return ret;
+     }
+ 
+     static final class HardCollisionQueryScratch {
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index de5acc05a2bc1f6504f13d0924d93ac9b3daafb2..49408c95551ec39f4394346f7ee55dd7ec3b73e7 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -296,6 +296,14 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+             .getHardCollidingEntities(entity, box, into, predicate);
+     }
+ 
++    public final void lattice$getEntities(final Entity entity, final AABB box,
++                                          final Predicate<? super Entity> predicate, final List<Entity> into) {
++        Profiler.get().incrementCounter("getEntities");
++        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup()
++            .getEntities(entity, box, into, predicate);
++        ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities((Level)(Object)this, entity, box, predicate, into);
++    }
++
+     @Override
+     public LevelChunk moonrise$getFullChunkIfLoaded(final int chunkX, final int chunkZ) {
+         return (LevelChunk)this.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
+@@ -1741,18 +1749,9 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+ 
+     @Override
+     public List<Entity> getEntities(@Nullable Entity entity, AABB boundingBox, Predicate<? super Entity> predicate) {
+-        Profiler.get().incrementCounter("getEntities");
+-        List<Entity> list = Lists.newArrayList();
+-
+-        // Paper start - rewrite chunk system
+         final List<Entity> ret = new java.util.ArrayList<>();
+-
+-        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup().getEntities(entity, boundingBox, ret, predicate);
+-
+-        ca.spottedleaf.moonrise.common.PlatformHooks.get().addToGetEntities((Level)(Object)this, entity, boundingBox, predicate, ret);
+-
++        this.lattice$getEntities(entity, boundingBox, predicate, ret);
+         return ret;
+-        // Paper end - rewrite chunk system
+     }
+ 
+     @Override
