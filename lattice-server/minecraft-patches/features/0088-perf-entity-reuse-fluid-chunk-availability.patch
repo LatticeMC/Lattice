@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 19:53:45 +0800
+Subject: [PATCH] perf(entity): reuse fluid chunk availability
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 3bec6d1cf405bc12a02576b9a6b36ae0a43642f1..7a5cab007cce475aac3a9fedaf79e3fd3cf7fa22 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -2166,16 +2166,21 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+         this.waterFluidHeight = 0.0;
+         this.lavaFluidHeight = 0.0;
+         this.fluidHeight = null;
+-        this.updateInWaterStateAndDoWaterCurrentPushing();
++        boolean touchingUnloadedChunk = this.touchingUnloadedChunk();
++        this.updateInWaterStateAndDoWaterCurrentPushing(touchingUnloadedChunk);
+         double d = this.level.environmentAttributes().getDimensionValue(EnvironmentAttributes.FAST_LAVA) ? 0.007 : 0.0023333333333333335;
+-        boolean flag = this.updateFluidHeightAndDoFluidPushing(FluidTags.LAVA, d);
++        boolean flag = this.updateFluidHeightAndDoFluidPushing(FluidTags.LAVA, d, touchingUnloadedChunk);
+         return this.isInWater() || flag;
+     }
+ 
+     public void updateInWaterStateAndDoWaterCurrentPushing() {
++        this.updateInWaterStateAndDoWaterCurrentPushing(this.touchingUnloadedChunk());
++    }
++
++    private void updateInWaterStateAndDoWaterCurrentPushing(boolean touchingUnloadedChunk) {
+         if (this.getVehicle() instanceof AbstractBoat abstractBoat && !abstractBoat.isUnderWater()) {
+             this.wasTouchingWater = false;
+-        } else if (this.updateFluidHeightAndDoFluidPushing(FluidTags.WATER, 0.014)) {
++        } else if (this.updateFluidHeightAndDoFluidPushing(FluidTags.WATER, 0.014, touchingUnloadedChunk)) {
+             if (!this.wasTouchingWater && !this.firstTick) {
+                 this.doWaterSplashEffect();
+             }
+@@ -4918,7 +4923,11 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+ 
+     // Paper start - optimise collisions
+     public boolean updateFluidHeightAndDoFluidPushing(final TagKey<Fluid> fluid, final double flowScale) {
+-        if (this.touchingUnloadedChunk()) {
++        return this.updateFluidHeightAndDoFluidPushing(fluid, flowScale, this.touchingUnloadedChunk());
++    }
++
++    private boolean updateFluidHeightAndDoFluidPushing(final TagKey<Fluid> fluid, final double flowScale, final boolean touchingUnloadedChunk) {
++        if (touchingUnloadedChunk) {
+             return false;
+         }
+ 
+@@ -5050,11 +5059,11 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     // Paper end - optimise collisions
+ 
+     public boolean touchingUnloadedChunk() {
+-        AABB aabb = this.getBoundingBox().inflate(1.0);
+-        int minBlockX = Mth.floor(aabb.minX);
+-        int maxBlockX = Mth.ceil(aabb.maxX);
+-        int minBlockZ = Mth.floor(aabb.minZ);
+-        int maxBlockZ = Mth.ceil(aabb.maxZ);
++        AABB aabb = this.getBoundingBox();
++        int minBlockX = Mth.floor(aabb.minX - 1.0);
++        int maxBlockX = Mth.ceil(aabb.maxX + 1.0);
++        int minBlockZ = Mth.floor(aabb.minZ - 1.0);
++        int maxBlockZ = Mth.ceil(aabb.maxZ + 1.0);
+ 
+         // The entity lookup owns this status, so a fully-contained query can avoid
+         // re-looking up the same loaded chunk in ServerChunkCache's concurrent map.
