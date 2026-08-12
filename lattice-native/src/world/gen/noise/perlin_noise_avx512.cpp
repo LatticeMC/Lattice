@@ -5,6 +5,12 @@
 #include <cstdint>
 #include <immintrin.h>
 
+// Keep the ZMM arithmetic as separate multiply/add operations. The scalar
+// reference and Java bytecode rely on their individual rounding points.
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
+
 namespace lattice::world::gen::noise {
 namespace {
 

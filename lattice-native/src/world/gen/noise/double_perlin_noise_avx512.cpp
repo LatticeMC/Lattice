@@ -4,6 +4,11 @@
 #include <immintrin.h>
 #include <vector>
 
+// Preserve the scalar reference's multiply/add rounding sequence.
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
+
 namespace lattice::world::gen::noise {
 namespace {
 

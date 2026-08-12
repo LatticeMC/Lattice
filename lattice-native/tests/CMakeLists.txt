@@ -68,6 +68,7 @@ set(_brain_eligibility_simd_srcs "")
 set(_perlin_simd_srcs "")
 set(_perlin_avx512_srcs "")
 set(_double_perlin_simd_srcs "")
+set(_double_perlin_avx512_srcs "")
 set(_simplex_simd_srcs "")
 set(_density_simd_srcs "")
 if(LATTICE_ARCH_X86)
@@ -86,6 +87,7 @@ if(LATTICE_ARCH_X86)
     list(APPEND _perlin_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise_avx2.cpp)
     list(APPEND _perlin_avx512_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise_avx512.cpp)
     list(APPEND _double_perlin_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise_avx2.cpp)
+    list(APPEND _double_perlin_avx512_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise_avx512.cpp)
     list(APPEND _simplex_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise_avx2.cpp)
     list(APPEND _density_simd_srcs ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function_avx2.cpp)
 elseif(LATTICE_ARCH_ARM64)
@@ -138,7 +140,15 @@ foreach(s IN LISTS _perlin_avx512_srcs)
     if(MSVC)
         set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX512")
     elseif(LATTICE_ARCH_X86)
-        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512dq")
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512dq;-mavx512vl;-ffp-contract=off")
+    endif()
+endforeach()
+
+foreach(s IN LISTS _double_perlin_avx512_srcs)
+    if(MSVC)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "/arch:AVX512")
+    elseif(LATTICE_ARCH_X86)
+        set_source_files_properties(${s} PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512dq;-mavx512vl;-ffp-contract=off")
     endif()
 endforeach()
 
@@ -270,9 +280,10 @@ lattice_add_test(double_perlin_noise
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
              ${_double_perlin_simd_srcs}
+             ${_double_perlin_avx512_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 if(LATTICE_ARCH_X86)
-    target_compile_definitions(lattice_test_double_perlin_noise PRIVATE LATTICE_TEST_HAS_DOUBLE_PERLIN_AVX2=1)
+    target_compile_definitions(lattice_test_double_perlin_noise PRIVATE LATTICE_HAS_PERLIN_AVX512=1 LATTICE_HAS_DOUBLE_PERLIN_AVX512=1 LATTICE_TEST_HAS_DOUBLE_PERLIN_AVX2=1 LATTICE_TEST_HAS_DOUBLE_PERLIN_AVX512=1)
 endif()
 
 lattice_add_test(density_function

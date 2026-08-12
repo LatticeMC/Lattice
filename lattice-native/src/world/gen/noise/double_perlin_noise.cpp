@@ -10,6 +10,15 @@
 namespace lattice::world::gen::noise {
 
 namespace {
+constexpr std::size_t kAvx512MinimumBatchSize = 129;
+
+inline bool can_use_avx512(std::size_t count) noexcept {
+    const auto& f = lattice::cpu::features();
+    return count >= kAvx512MinimumBatchSize
+        && f.requested_tier == lattice::cpu::RequestedTier::Avx512
+        && f.avx512f && f.avx512dq && f.avx512vl;
+}
+
 struct DoublePerlinBatchScratch {
     std::vector<double> scaled_x;
     std::vector<double> scaled_y;
@@ -64,7 +73,7 @@ void sample_batch(const DoublePerlinNoiseSampler& s,
                   std::size_t count, double* out) noexcept {
     if (!x || !y || !z || !out) return;
 #if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX512)
-    if (lattice::cpu::features().avx512f && lattice::cpu::features().avx512dq) {
+    if (can_use_avx512(count)) {
         sample_batch_avx512(s, x, y, z, count, out);
         return;
     }
@@ -102,7 +111,7 @@ void sample_y_column(const DoublePerlinNoiseSampler& s,
                      std::size_t count, double* out) noexcept {
     if (!out) return;
 #if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX512)
-    if (lattice::cpu::features().avx512f && lattice::cpu::features().avx512dq) {
+    if (can_use_avx512(count)) {
         sample_y_column_avx512(s, x, y0, z, dy, count, out);
         return;
     }

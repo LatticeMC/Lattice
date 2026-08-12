@@ -463,7 +463,7 @@ if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
             FLAGS   -mavx2)
         lattice_add_simd_object(lattice_perlin_avx512
             SOURCES src/world/gen/noise/perlin_noise_avx512.cpp
-            FLAGS   -mavx512f -mavx512dq)
+            FLAGS   -mavx512f -mavx512dq -mavx512vl -ffp-contract=off)
     endif()
 endif()
 
@@ -499,7 +499,7 @@ if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
             FLAGS   -mavx2)
         lattice_add_simd_object(lattice_double_perlin_avx512
             SOURCES src/world/gen/noise/double_perlin_noise_avx512.cpp
-            FLAGS   -mavx512f)
+            FLAGS   -mavx512f -mavx512dq -mavx512vl -ffp-contract=off)
     endif()
 endif()
 
