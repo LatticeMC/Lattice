@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 22:01:34 +0800
+Subject: [PATCH] perf(collision): reuse hard collision query snapshots
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java b/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
+index 227263470ab3d65c36a597e24517ca41db8e60a0..f74715d4b03abc7ad6a4b71c7899634d6fcd2fbc 100644
+--- a/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
++++ b/ca/spottedleaf/moonrise/patches/collisions/CollisionUtil.java
+@@ -41,6 +41,7 @@ import net.minecraft.world.phys.shapes.OffsetDoubleList;
+ import net.minecraft.world.phys.shapes.Shapes;
+ import net.minecraft.world.phys.shapes.SliceShape;
+ import net.minecraft.world.phys.shapes.VoxelShape;
++import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.List;
+ import java.util.Objects;
+@@ -51,6 +52,9 @@ public final class CollisionUtil {
+ 
+     public static final double COLLISION_EPSILON = 1.0E-7;
+     public static final DoubleArrayList ZERO_ONE = DoubleArrayList.wrap(new double[] { 0.0, 1.0 });
++    private static final int RETAINED_HARD_COLLISION_QUERY_CAPACITY = 256;
++    private static final int RETAINED_HARD_COLLISION_QUERY_DEPTH = 4;
++    private static final ThreadLocal<HardCollisionQueryScratch> HARD_COLLISION_QUERY_SCRATCH = ThreadLocal.withInitial(HardCollisionQueryScratch::new);
+ 
+     public static boolean isSpecialCollidingBlock(final net.minecraft.world.level.block.state.BlockBehaviour.BlockStateBase block) {
+         return block.hasLargeCollisionShape() || block.getBlock() == Blocks.MOVING_PISTON;
+@@ -2133,6 +2137,25 @@ public final class CollisionUtil {
+         // Vanilla for hard collisions has this backwards, and they expand by +epsilon but this causes terrible problems
+         // specifically with boat collisions.
+         aabb = aabb.inflate(-COLLISION_EPSILON, -COLLISION_EPSILON, -COLLISION_EPSILON);
++        if (checkOnly && into == null && (entity == null || !((ChunkSystemEntity)entity).moonrise$isHardColliding())) {
++            final HardCollisionQueryScratch scratch = HARD_COLLISION_QUERY_SCRATCH.get();
++            final List<Entity> entities = scratch.acquire();
++            try {
++                // Keep the complete Moonrise snapshot before calling entity collision methods.
++                world.lattice$getHardCollidingEntities(entity, aabb, predicate, entities);
++                for (int i = 0, len = entities.size(); i < len; ++i) {
++                    final Entity otherEntity = entities.get(i);
++                    if (!otherEntity.isSpectator()
++                        && ((entity == null && otherEntity.canBeCollidedWith(entity)) || (entity != null && entity.canCollideWith(otherEntity)))) {
++                        return true;
++                    }
++                }
++                return false;
++            } finally {
++                scratch.release();
++            }
++        }
++
+         final List<Entity> entities;
+         if (entity != null && ((ChunkSystemEntity)entity).moonrise$isHardColliding()) {
+             entities = world.getEntities(entity, aabb, predicate);
+@@ -2160,6 +2183,33 @@ public final class CollisionUtil {
+         return ret;
+     }
+ 
++    static final class HardCollisionQueryScratch {
++
++        private final List<ArrayList<Entity>> lists = new ArrayList<>(RETAINED_HARD_COLLISION_QUERY_DEPTH);
++        private int depth;
++
++        List<Entity> acquire() {
++            final int index = this.depth++;
++            if (index == this.lists.size()) {
++                this.lists.add(new ArrayList<>());
++            }
++            return this.lists.get(index);
++        }
++
++        void release() {
++            final int index = --this.depth;
++            final ArrayList<Entity> list = this.lists.get(index);
++            if (list.size() > RETAINED_HARD_COLLISION_QUERY_CAPACITY) {
++                this.lists.set(index, new ArrayList<>());
++            } else {
++                list.clear();
++            }
++            if (this.depth == 0 && this.lists.size() > RETAINED_HARD_COLLISION_QUERY_DEPTH) {
++                this.lists.subList(RETAINED_HARD_COLLISION_QUERY_DEPTH, this.lists.size()).clear();
++            }
++        }
++    }
++
+     public static boolean getCollisions(final Level world, final Entity entity, final AABB aabb,
+                                         final List<VoxelShape> intoVoxel, final List<AABB> intoAABB, final int collisionFlags,
+                                         final BiPredicate<BlockState, BlockPos> blockPredicate,
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 968da0a962229d36d5fdd34a79fb24012dbb8d79..de5acc05a2bc1f6504f13d0924d93ac9b3daafb2 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -283,14 +283,19 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+ 
+     @Override
+     public final List<Entity> moonrise$getHardCollidingEntities(final Entity entity, final AABB box, final Predicate<? super Entity> predicate) {
+-        Profiler.get().incrementCounter("getEntities");
+         final List<Entity> ret = new java.util.ArrayList<>();
+-
+-        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup().getHardCollidingEntities(entity, box, ret, predicate);
+-
++        this.lattice$getHardCollidingEntities(entity, box, predicate, ret);
+         return ret;
+     }
+ 
++    public final void lattice$getHardCollidingEntities(final Entity entity, final AABB box,
++                                                        final Predicate<? super Entity> predicate,
++                                                        final List<Entity> into) {
++        Profiler.get().incrementCounter("getEntities");
++        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup()
++            .getHardCollidingEntities(entity, box, into, predicate);
++    }
++
+     @Override
+     public LevelChunk moonrise$getFullChunkIfLoaded(final int chunkX, final int chunkZ) {
+         return (LevelChunk)this.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
