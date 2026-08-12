@@ -48,6 +48,28 @@ class BlockGetterTraversalTestSuite {
         assertTraversalMatchesBaseline(new Vec3(0.5, 0.5, 0.5), new AABB(1.0, 1.0, 1.0, 1.5, 1.5, 1.5), Integer.MAX_VALUE);
     }
 
+    @Test
+    void preservesOuterTraversalWhenVisitorReenters() {
+        Vec3 travel = new Vec3(0.5, 0.5, 0.5);
+        AABB boundingBox = new AABB(1.0, 1.0, 1.0, 1.5, 1.5, 1.5);
+        List<Visit> expected = new ArrayList<>();
+        boolean expectedResult = baselineForEachBlockIntersectedBetween(Vec3.ZERO, travel, boundingBox, visitor(expected, Integer.MAX_VALUE));
+        List<Visit> actual = new ArrayList<>();
+        boolean[] reentered = new boolean[1];
+        boolean actualResult = BlockGetter.forEachBlockIntersectedBetween(Vec3.ZERO, travel, boundingBox, (pos, index) -> {
+            actual.add(new Visit(pos.asLong(), index));
+            if (!reentered[0]) {
+                reentered[0] = true;
+                BlockGetter.forEachBlockIntersectedBetween(Vec3.ZERO, new Vec3(-0.25, 0.25, 0.0), boundingBox, (ignoredPos, ignoredIndex) -> true);
+            }
+
+            return true;
+        });
+
+        assertEquals(expected, actual);
+        assertEquals(expectedResult, actualResult);
+    }
+
     private static void assertTraversalMatchesBaseline(Vec3 travel, AABB boundingBox, int stopAfter) {
         List<Visit> expected = new ArrayList<>();
         boolean expectedResult = baselineForEachBlockIntersectedBetween(Vec3.ZERO, travel, boundingBox, visitor(expected, stopAfter));
