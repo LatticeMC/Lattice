@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 23:35:50 +0800
+Subject: [PATCH] perf(explosion): skip final ray coordinate update
+
+
+diff --git a/net/minecraft/world/level/ServerExplosion.java b/net/minecraft/world/level/ServerExplosion.java
+index bcbf7daa2c2b7941ab7cb333de15494969ca665c..0fe3aa977d110eb196ecd055b2879466404e30e0 100644
+--- a/net/minecraft/world/level/ServerExplosion.java
++++ b/net/minecraft/world/level/ServerExplosion.java
+@@ -467,10 +467,13 @@ public class ServerExplosion implements Explosion {
+                 }
+ 
+                 power -= 0.22500001F;
++                if (!(power > 0.0f)) {
++                    break;
++                }
+                 currX += incX;
+                 currY += incY;
+                 currZ += incZ;
+-            } while (power > 0.0f);
++            } while (true);
+         }
+ 
+         return ret;
