@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 19:24:48 +0800
+Subject: [PATCH] perf(entity): bound block scan scratch retention
+
+
+diff --git a/net/minecraft/world/level/BlockGetter.java b/net/minecraft/world/level/BlockGetter.java
+index a8b78c4a34ca1a1afd2cca97d27362cfb8d1d11a..0930cdb71ea1f3a3ee704ccd17e55c4b602b06d3 100644
+--- a/net/minecraft/world/level/BlockGetter.java
++++ b/net/minecraft/world/level/BlockGetter.java
+@@ -339,6 +339,8 @@ public interface BlockGetter extends LevelHeightAccessor {
+ 
+ final class BlockIntersectionScratch {
+     static final ThreadLocal<BlockIntersectionScratch> THREAD_LOCAL = ThreadLocal.withInitial(BlockIntersectionScratch::new);
++    private static final int MAX_RETAINED_ENTRIES = 256;
++    private static final int MAX_RETAINED_DEPTH = 4;
+ 
+     private final List<LongOpenHashSet> sets = new ArrayList<>(1);
+     private int depth;
+@@ -355,6 +357,16 @@ final class BlockIntersectionScratch {
+     }
+ 
+     void release() {
+-        this.sets.get(--this.depth).clear();
++        LongOpenHashSet set = this.sets.get(this.depth - 1);
++        int index = --this.depth;
++        if (set.size() > MAX_RETAINED_ENTRIES) {
++            this.sets.set(index, new LongOpenHashSet());
++        } else {
++            set.clear();
++        }
++
++        if (this.depth == 0 && this.sets.size() > MAX_RETAINED_DEPTH) {
++            this.sets.subList(MAX_RETAINED_DEPTH, this.sets.size()).clear();
++        }
+     }
+ }
