@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 21:34:02 +0800
+Subject: [PATCH] perf(item): avoid transient velocity vector
+
+
+diff --git a/net/minecraft/world/entity/item/ItemEntity.java b/net/minecraft/world/entity/item/ItemEntity.java
+index ddf7fa8e67440beb102b6bf91b30f2b340b52a8e..0c17b74d169594deca1960d44ba08e81013f7ced 100644
+--- a/net/minecraft/world/entity/item/ItemEntity.java
++++ b/net/minecraft/world/entity/item/ItemEntity.java
+@@ -212,7 +212,11 @@ public class ItemEntity extends Entity implements TraceableEntity {
+ 
+             this.needsSync = this.needsSync | this.updateInWaterStateAndDoFluidPushing();
+             if (!this.level().isClientSide()) {
+-                double d = this.getDeltaMovement().subtract(deltaMovement).lengthSqr();
++                Vec3 currentDeltaMovement = this.getDeltaMovement();
++                double deltaX = currentDeltaMovement.x - deltaMovement.x;
++                double deltaY = currentDeltaMovement.y - deltaMovement.y;
++                double deltaZ = currentDeltaMovement.z - deltaMovement.z;
++                double d = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+                 if (d > 0.01) {
+                     this.needsSync = true;
+                 }
