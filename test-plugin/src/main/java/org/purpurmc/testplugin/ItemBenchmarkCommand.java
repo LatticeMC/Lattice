@@ -14,6 +14,7 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.data.Directional;
+import org.bukkit.block.data.type.Hopper;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
@@ -42,7 +43,7 @@ final class ItemBenchmarkCommand extends Command {
 
     ItemBenchmarkCommand(final JavaPlugin plugin) {
         super("itembench", "Runs a controlled large ItemEntity workload",
-            "/itembench <start|status|stop> ...", Collections.emptyList());
+            "/itembench <start|measure|status|stop> ...", Collections.emptyList());
         this.plugin = plugin;
     }
 
@@ -55,6 +56,7 @@ final class ItemBenchmarkCommand extends Command {
         try {
             return switch (args[0].toLowerCase(Locale.ROOT)) {
                 case "start" -> start(sender, args);
+                case "measure" -> measure(sender);
                 case "status" -> status(sender);
                 case "stop" -> stop(sender);
                 default -> { sender.sendMessage(this.getUsage()); yield false; }
@@ -119,7 +121,7 @@ final class ItemBenchmarkCommand extends Command {
             item.setCanMobPickup(false);
             items.add(item);
         }
-        if (spawned >= target && measureStart == 0L) measureStart = System.nanoTime();
+        if (spawned >= target && measureStart == 0L && !isHopperLayout()) measureStart = System.nanoTime();
     }
 
     private Location locationFor(final int index) {
@@ -144,8 +146,10 @@ final class ItemBenchmarkCommand extends Command {
             buildControlledFloor();
         } else if (layout.equals("hopper-single")) {
             setBlock(origin.getBlock(), Material.HOPPER);
+            setHoppersEnabled(false);
         } else if (layout.equals("hopper-array")) {
             for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) setBlock(origin.clone().add(x, 0, z).getBlock(), Material.HOPPER);
+            setHoppersEnabled(false);
         } else if (layout.equals("piston-array")) {
             for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
                 final Block piston = origin.clone().add(x, 0, z).getBlock();
@@ -169,6 +173,27 @@ final class ItemBenchmarkCommand extends Command {
 
     private boolean hasControlledFloor() {
         return "compact".equals(layout);
+    }
+
+    private boolean isHopperLayout() {
+        return "hopper-single".equals(layout) || "hopper-array".equals(layout);
+    }
+
+    private void setHoppersEnabled(final boolean enabled) {
+        if (!isHopperLayout()) return;
+        if ("hopper-single".equals(layout)) {
+            setHopperEnabled(origin.getBlock(), enabled);
+            return;
+        }
+        for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+            setHopperEnabled(origin.getBlock().getRelative(x, 0, z), enabled);
+        }
+    }
+
+    private void setHopperEnabled(final Block block, final boolean enabled) {
+        final Hopper hopper = (Hopper) block.getBlockData();
+        hopper.setEnabled(enabled);
+        block.setBlockData(hopper, false);
     }
 
     private void buildControlledFloor() {
@@ -196,8 +221,19 @@ final class ItemBenchmarkCommand extends Command {
         changedBlocks.computeIfAbsent(block, ignored -> block.getState());
     }
 
+    private boolean measure(final CommandSender sender) {
+        if (cleaning || task == null) throw new IllegalArgumentException("no workload is running");
+        if (!isHopperLayout()) throw new IllegalArgumentException("measure is only available for hopper scenarios");
+        if (spawned != target) throw new IllegalArgumentException("workload has not reached target: spawned=" + spawned + " target=" + target);
+        if (measureStart != 0L) throw new IllegalArgumentException("workload is already measuring");
+        setHoppersEnabled(true);
+        measureStart = System.nanoTime();
+        sender.sendMessage("Itembench measuring: target=" + target + " live=" + liveCount() + " layout=" + layout);
+        return true;
+    }
+
     private boolean status(final CommandSender sender) {
-        final String phase = cleaning ? "cleaning" : task == null ? "stopped" : spawned < target ? "spawning" : "measuring";
+        final String phase = cleaning ? "cleaning" : task == null ? "stopped" : spawned < target ? "spawning" : isHopperLayout() && measureStart == 0L ? "ready" : "measuring";
         final Item first = items.isEmpty() ? null : items.get(0);
         sender.sendMessage("Itembench status: phase=" + phase + " target=" + target + " spawned=" + spawned
             + " live=" + liveCount() + " ticks=" + ticks + " layout=" + layout
