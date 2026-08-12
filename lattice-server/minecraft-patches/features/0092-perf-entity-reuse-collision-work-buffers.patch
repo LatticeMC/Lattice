@@ -1,0 +1,184 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 22:14:25 +0800
+Subject: [PATCH] perf(entity): reuse collision work buffers
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index 7a5cab007cce475aac3a9fedaf79e3fd3cf7fa22..d01d833815bc2ed38c87b3166c0677c56e10c0fc 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -158,6 +158,9 @@ import org.slf4j.Logger;
+ 
+ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Nameable, ItemOwner, SlotProvider, EntityAccess, ScoreHolder, DataComponentGetter, ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity, ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerEntity { // Paper - rewrite chunk system // Paper - optimise entity tracker
+     public static javax.script.ScriptEngine scriptEngine = new javax.script.ScriptEngineManager().getEngineByName("rhino"); // Purpur - Configurable entity base attributes
++    private static final int LATTICE_RETAINED_COLLISION_SCRATCH_CAPACITY = 256;
++    private static final int LATTICE_RETAINED_COLLISION_SCRATCH_DEPTH = 4;
++    private static final ThreadLocal<CollisionScratch> LATTICE_COLLISION_SCRATCH = ThreadLocal.withInitial(CollisionScratch::new);
+     // CraftBukkit start
+     private static final int CURRENT_LEVEL = 2;
+     static boolean isLevelAtLeast(ValueInput input, int level) {
+@@ -1582,66 +1585,119 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+ 
+         final AABB currentBox = this.getBoundingBox();
+ 
+-        final List<VoxelShape> potentialCollisionsVoxel = new ArrayList<>();
+-        final List<AABB> potentialCollisionsBB = new ArrayList<>();
++        final CollisionScratch collisionScratch = LATTICE_COLLISION_SCRATCH.get();
++        final CollisionScratch.CollisionLists collisionLists = collisionScratch.acquire();
++        try {
++            final List<VoxelShape> potentialCollisionsVoxel = collisionLists.voxels;
++            final List<AABB> potentialCollisionsBB = collisionLists.aabbs;
++
++            final AABB initialCollisionBox;
++            if (xZero & zZero) {
++                // note: xZero & zZero -> collision on x/z == 0 -> no step height calculation
++                // this specifically optimises entities standing still
++                initialCollisionBox = movement.y < 0.0 ?
++                    ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.cutDownwards(currentBox, movement.y) : ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.cutUpwards(currentBox, movement.y);
++            } else {
++                initialCollisionBox = currentBox.expandTowards(movement);
++            }
+ 
+-        final AABB initialCollisionBox;
+-        if (xZero & zZero) {
+-            // note: xZero & zZero -> collision on x/z == 0 -> no step height calculation
+-            // this specifically optimises entities standing still
+-            initialCollisionBox = movement.y < 0.0 ?
+-                ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.cutDownwards(currentBox, movement.y) : ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.cutUpwards(currentBox, movement.y);
+-        } else {
+-            initialCollisionBox = currentBox.expandTowards(movement);
+-        }
++            final List<AABB> entityAABBs = collisionLists.entityAabbs;
++            ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getEntityHardCollisions(
++                this.level, (Entity)(Object)this, initialCollisionBox, entityAABBs, 0, null
++            );
+ 
+-        final List<AABB> entityAABBs = new ArrayList<>();
+-        ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getEntityHardCollisions(
+-            this.level, (Entity)(Object)this, initialCollisionBox, entityAABBs, 0, null
+-        );
++            ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getCollisionsForBlocksOrWorldBorder(
++                this.level, (Entity)(Object)this, initialCollisionBox, potentialCollisionsVoxel, potentialCollisionsBB,
++                ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.COLLISION_FLAG_CHECK_BORDER, null
++            );
++            potentialCollisionsBB.addAll(entityAABBs);
++            final Vec3 collided = ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.performCollisions(movement, currentBox, potentialCollisionsVoxel, potentialCollisionsBB);
+ 
+-        ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getCollisionsForBlocksOrWorldBorder(
+-            this.level, (Entity)(Object)this, initialCollisionBox, potentialCollisionsVoxel, potentialCollisionsBB,
+-            ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.COLLISION_FLAG_CHECK_BORDER, null
+-        );
+-        potentialCollisionsBB.addAll(entityAABBs);
+-        final Vec3 collided = ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.performCollisions(movement, currentBox, potentialCollisionsVoxel, potentialCollisionsBB);
++            final boolean collidedX = collided.x != movement.x;
++            final boolean collidedY = collided.y != movement.y;
++            final boolean collidedZ = collided.z != movement.z;
+ 
+-        final boolean collidedX = collided.x != movement.x;
+-        final boolean collidedY = collided.y != movement.y;
+-        final boolean collidedZ = collided.z != movement.z;
++            final boolean collidedDownwards = collidedY && movement.y < 0.0;
+ 
+-        final boolean collidedDownwards = collidedY && movement.y < 0.0;
++            final double stepHeight;
+ 
+-        final double stepHeight;
++            if ((!collidedDownwards && !this.onGround) || (!collidedX && !collidedZ) || (stepHeight = (double)this.maxUpStep()) <= 0.0) {
++                return collided;
++            }
++
++            final AABB collidedYBox = collidedDownwards ? currentBox.move(0.0, collided.y, 0.0) : currentBox;
++            AABB stepRetrievalBox = collidedYBox.expandTowards(movement.x, stepHeight, movement.z);
++            if (!collidedDownwards) {
++                stepRetrievalBox = stepRetrievalBox.expandTowards(0.0, (double)-1.0E-5F, 0.0);
++            }
++
++            final List<VoxelShape> stepVoxels = collisionLists.stepVoxels;
++            final List<AABB> stepAABBs = entityAABBs;
++
++            ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getCollisionsForBlocksOrWorldBorder(
++                this.level, (Entity)(Object)this, stepRetrievalBox, stepVoxels, stepAABBs,
++                ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.COLLISION_FLAG_CHECK_BORDER, null
++            );
++
++            for (final float step : calculateStepHeights(collidedYBox, stepVoxels, stepAABBs, (float)stepHeight, (float)collided.y)) {
++                final Vec3 stepResult = ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.performCollisions(new Vec3(movement.x, (double)step, movement.z), collidedYBox, stepVoxels, stepAABBs);
++                if (stepResult.horizontalDistanceSqr() > collided.horizontalDistanceSqr()) {
++                    return stepResult.add(0.0, collidedYBox.minY - currentBox.minY, 0.0);
++                }
++            }
+ 
+-        if ((!collidedDownwards && !this.onGround) || (!collidedX && !collidedZ) || (stepHeight = (double)this.maxUpStep()) <= 0.0) {
+             return collided;
++        } finally {
++            collisionScratch.release();
+         }
++        // Paper end - optimise collisions
++    }
+ 
+-        final AABB collidedYBox = collidedDownwards ? currentBox.move(0.0, collided.y, 0.0) : currentBox;
+-        AABB stepRetrievalBox = collidedYBox.expandTowards(movement.x, stepHeight, movement.z);
+-        if (!collidedDownwards) {
+-            stepRetrievalBox = stepRetrievalBox.expandTowards(0.0, (double)-1.0E-5F, 0.0);
+-        }
++    static final class CollisionScratch {
+ 
+-        final List<VoxelShape> stepVoxels = new ArrayList<>();
+-        final List<AABB> stepAABBs = entityAABBs;
++        private final List<CollisionLists> lists = new ArrayList<>(LATTICE_RETAINED_COLLISION_SCRATCH_DEPTH);
++        private int depth;
+ 
+-        ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.getCollisionsForBlocksOrWorldBorder(
+-            this.level, (Entity)(Object)this, stepRetrievalBox, stepVoxels, stepAABBs,
+-            ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.COLLISION_FLAG_CHECK_BORDER, null
+-        );
++        CollisionLists acquire() {
++            final int index = this.depth++;
++            if (index == this.lists.size()) {
++                this.lists.add(new CollisionLists());
++            }
++            return this.lists.get(index);
++        }
+ 
+-        for (final float step : calculateStepHeights(collidedYBox, stepVoxels, stepAABBs, (float)stepHeight, (float)collided.y)) {
+-            final Vec3 stepResult = ca.spottedleaf.moonrise.patches.collisions.CollisionUtil.performCollisions(new Vec3(movement.x, (double)step, movement.z), collidedYBox, stepVoxels, stepAABBs);
+-            if (stepResult.horizontalDistanceSqr() > collided.horizontalDistanceSqr()) {
+-                return stepResult.add(0.0, collidedYBox.minY - currentBox.minY, 0.0);
++        void release() {
++            final int index = --this.depth;
++            final CollisionLists collisionLists = this.lists.get(index);
++            collisionLists.release();
++            if (this.depth == 0 && this.lists.size() > LATTICE_RETAINED_COLLISION_SCRATCH_DEPTH) {
++                this.lists.subList(LATTICE_RETAINED_COLLISION_SCRATCH_DEPTH, this.lists.size()).clear();
+             }
+         }
+ 
+-        return collided;
+-        // Paper end - optimise collisions
++        static final class CollisionLists {
++
++            final ArrayList<VoxelShape> voxels = new ArrayList<>();
++            final ArrayList<AABB> aabbs = new ArrayList<>();
++            final ArrayList<AABB> entityAabbs = new ArrayList<>();
++            final ArrayList<VoxelShape> stepVoxels = new ArrayList<>();
++
++            void release() {
++                release(this.voxels);
++                release(this.aabbs);
++                release(this.entityAabbs);
++                release(this.stepVoxels);
++            }
++
++            private static void release(final ArrayList<?> list) {
++                if (list.size() > LATTICE_RETAINED_COLLISION_SCRATCH_CAPACITY) {
++                    list.clear();
++                    list.trimToSize();
++                } else {
++                    list.clear();
++                }
++            }
++        }
+     }
+ 
+     private static float[] collectCandidateStepUpHeights(AABB box, List<VoxelShape> colliders, float deltaY, float maxUpStep) {
