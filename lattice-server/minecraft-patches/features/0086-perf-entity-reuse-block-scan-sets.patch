@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 18:48:44 +0800
+Subject: [PATCH] perf(entity): reuse block scan sets
+
+
+diff --git a/net/minecraft/world/level/BlockGetter.java b/net/minecraft/world/level/BlockGetter.java
+index 8a21910fe7ed61c903c4f36fced63b179ace4577..a8b78c4a34ca1a1afd2cca97d27362cfb8d1d11a 100644
+--- a/net/minecraft/world/level/BlockGetter.java
++++ b/net/minecraft/world/level/BlockGetter.java
+@@ -2,6 +2,8 @@ package net.minecraft.world.level;
+ 
+ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+ import it.unimi.dsi.fastutil.longs.LongSet;
++import java.util.ArrayList;
++import java.util.List;
+ import java.util.Optional;
+ import java.util.function.BiFunction;
+ import java.util.function.Function;
+@@ -220,27 +222,31 @@ public interface BlockGetter extends LevelHeightAccessor {
+ 
+             return true;
+         } else {
+-            LongSet set = new LongOpenHashSet();
++            BlockIntersectionScratch scratch = BlockIntersectionScratch.THREAD_LOCAL.get();
++            LongSet set = scratch.acquire();
++            try {
++                for (BlockPos blockPos1 : BlockPos.betweenCornersInDirection(boundingBox.move(vec3.scale(-1.0)), vec3)) {
++                    if (!visitor.visit(blockPos1, 0)) {
++                        return false;
++                    }
+ 
+-            for (BlockPos blockPos1 : BlockPos.betweenCornersInDirection(boundingBox.move(vec3.scale(-1.0)), vec3)) {
+-                if (!visitor.visit(blockPos1, 0)) {
+-                    return false;
++                    set.add(blockPos1.asLong());
+                 }
+ 
+-                set.add(blockPos1.asLong());
+-            }
+-
+-            int i = addCollisionsAlongTravel(set, vec3, boundingBox, visitor);
+-            if (i < 0) {
+-                return false;
+-            } else {
+-                for (BlockPos blockPos2 : BlockPos.betweenCornersInDirection(boundingBox, vec3)) {
+-                    if (set.add(blockPos2.asLong()) && !visitor.visit(blockPos2, i + 1)) {
+-                        return false;
++                int i = addCollisionsAlongTravel(set, vec3, boundingBox, visitor);
++                if (i < 0) {
++                    return false;
++                } else {
++                    for (BlockPos blockPos2 : BlockPos.betweenCornersInDirection(boundingBox, vec3)) {
++                        if (set.add(blockPos2.asLong()) && !visitor.visit(blockPos2, i + 1)) {
++                            return false;
++                        }
+                     }
+-                }
+ 
+-                return true;
++                    return true;
++                }
++            } finally {
++                scratch.release();
+             }
+         }
+     }
+@@ -330,3 +336,25 @@ public interface BlockGetter extends LevelHeightAccessor {
+         boolean visit(BlockPos pos, int index);
+     }
+ }
++
++final class BlockIntersectionScratch {
++    static final ThreadLocal<BlockIntersectionScratch> THREAD_LOCAL = ThreadLocal.withInitial(BlockIntersectionScratch::new);
++
++    private final List<LongOpenHashSet> sets = new ArrayList<>(1);
++    private int depth;
++
++    LongSet acquire() {
++        int index = this.depth++;
++        if (index == this.sets.size()) {
++            this.sets.add(new LongOpenHashSet());
++        }
++
++        LongOpenHashSet set = this.sets.get(index);
++        set.clear();
++        return set;
++    }
++
++    void release() {
++        this.sets.get(--this.depth).clear();
++    }
++}
