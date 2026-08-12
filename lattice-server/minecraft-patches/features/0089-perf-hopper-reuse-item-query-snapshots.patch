@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Wed, 12 Aug 2026 20:50:56 +0800
+Subject: [PATCH] perf(hopper): reuse item query snapshots
+
+
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index e79b62a84912b0bab4094ae21665e58e25e3bf85..968da0a962229d36d5fdd34a79fb24012dbb8d79 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -274,6 +274,13 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         return ret;
+     }
+ 
++    public final <T extends Entity> void getEntitiesOfClass(final Class<T> entityClass, final AABB boundingBox,
++                                                            final Predicate<? super T> predicate, final List<? super T> into) {
++        Profiler.get().incrementCounter("getEntities");
++        ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel)this).moonrise$getEntityLookup()
++            .getEntities(entityClass, null, boundingBox, into, predicate);
++    }
++
+     @Override
+     public final List<Entity> moonrise$getHardCollidingEntities(final Entity entity, final AABB box, final Predicate<? super Entity> predicate) {
+         Profiler.get().incrementCounter("getEntities");
+diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+index 12f8105d6b12c5d63cb6e5e79435c7fd22655475..f9f1b15ee5bf52afe8b86cc6037d369fdf29295d 100644
+--- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.level.block.entity;
+ 
++import java.util.ArrayList;
+ import java.util.List;
+ import java.util.function.BooleanSupplier;
+ import net.minecraft.core.BlockPos;
+@@ -33,7 +34,10 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     public static final int HOPPER_CONTAINER_SIZE = 5;
+     private static final int[][] CACHED_SLOTS = new int[54][];
+     private static final int NO_COOLDOWN_TIME = -1;
++    private static final int RETAINED_ITEM_QUERY_CAPACITY = 256;
++    private static final int RETAINED_ITEM_QUERY_DEPTH = 4;
+     private static final Component DEFAULT_NAME = Component.translatable("container.hopper");
++    private static final ThreadLocal<ItemEntityQueryScratch> ITEM_ENTITY_QUERY_SCRATCH = ThreadLocal.withInitial(ItemEntityQueryScratch::new);
+     private NonNullList<ItemStack> items = NonNullList.withSize(5, ItemStack.EMPTY);
+     public int cooldownTime = -1;
+     private long tickedGameTime;
+@@ -546,10 +550,17 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         } else {
+             boolean flag = hopper.isGridAligned() && blockState.isCollisionShapeFullBlock(level, blockPos) && !blockState.is(BlockTags.DOES_NOT_BLOCK_HOPPERS);
+             if (!flag) {
+-                for (ItemEntity itemEntity : getItemsAtAndAbove(level, hopper)) {
+-                    if (addItem(hopper, itemEntity)) {
+-                        return true;
++                ItemEntityQueryScratch scratch = ITEM_ENTITY_QUERY_SCRATCH.get();
++                List<ItemEntity> itemEntities = scratch.acquire();
++                try {
++                    getItemsAtAndAbove(level, hopper, itemEntities);
++                    for (int index = 0, count = itemEntities.size(); index < count; index++) {
++                        if (addItem(hopper, itemEntities.get(index))) {
++                            return true;
++                        }
+                     }
++                } finally {
++                    scratch.release();
+                 }
+             }
+ 
+@@ -766,8 +777,45 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+     }
+ 
+     public static List<ItemEntity> getItemsAtAndAbove(Level level, Hopper hopper) {
++        List<ItemEntity> items = new ArrayList<>();
++        getItemsAtAndAbove(level, hopper, items);
++        return items;
++    }
++
++    private static void getItemsAtAndAbove(Level level, Hopper hopper, List<ItemEntity> into) {
+         AABB aabb = hopper.getSuckAabb().move(hopper.getLevelX() - 0.5, hopper.getLevelY() - 0.5, hopper.getLevelZ() - 0.5);
+-        return level.getEntitiesOfClass(ItemEntity.class, aabb, EntitySelector.ENTITY_STILL_ALIVE);
++        level.getEntitiesOfClass(ItemEntity.class, aabb, EntitySelector.ENTITY_STILL_ALIVE, into);
++    }
++
++    static final class ItemEntityQueryScratch {
++        private final List<ArrayList<ItemEntity>> lists = new ArrayList<>();
++        private int depth;
++
++        List<ItemEntity> acquire() {
++            ArrayList<ItemEntity> list;
++            if (this.depth == this.lists.size()) {
++                list = new ArrayList<>();
++                this.lists.add(list);
++            } else {
++                list = this.lists.get(this.depth);
++            }
++
++            ++this.depth;
++            return list;
++        }
++
++        void release() {
++            ArrayList<ItemEntity> list = this.lists.get(--this.depth);
++            if (list.size() > RETAINED_ITEM_QUERY_CAPACITY) {
++                this.lists.set(this.depth, new ArrayList<>());
++            } else {
++                list.clear();
++            }
++
++            if (this.depth == 0 && this.lists.size() > RETAINED_ITEM_QUERY_DEPTH) {
++                this.lists.subList(RETAINED_ITEM_QUERY_DEPTH, this.lists.size()).clear();
++            }
++        }
+     }
+ 
+     public static @Nullable Container getContainerAt(Level level, BlockPos pos) {
