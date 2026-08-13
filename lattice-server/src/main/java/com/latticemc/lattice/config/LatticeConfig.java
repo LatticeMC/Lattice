@@ -37,6 +37,9 @@ public final class LatticeConfig {
             cpuTier("native.cpu-tier", "lattice.nativeCpu", "auto", "Native CPU tier: auto, scalar, avx2, or avx512. Unsupported hardware safely falls back to a compatible native implementation."),
             bool("native.aabb-query", "lattice.nativeAabbQuery", true, "Use native AABB intersection scans when available."),
             bool("native.scalar-perlin", "lattice.nativeScalarPerlin", false, "Use native scalar Perlin noise evaluation."),
+            bool("native.io.iocp", "lattice.nativeIocp", false, "Reserve the Windows IOCP native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
+            bool("native.io.io-uring", "lattice.nativeIoUring", false, "Reserve the Linux io_uring native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
+            bool("native.io.kqueue", "lattice.nativeKqueue", false, "Reserve the macOS kqueue native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
 
             bool("entity.activation-kd-tree", "lattice.entityActivationKdTree", false, "Use the entity-activation KD-tree accelerator."),
             bool("entity.spatial-aabb-query", "lattice.spatialAabbQuery", true, "Use the spatial AABB-query cache."),

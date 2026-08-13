@@ -40,6 +40,9 @@ class LatticeConfigTestSuite {
         assertEquals("false", System.getProperty("lattice.disable"));
         assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("1024", System.getProperty("lattice.nativeDensityFunctionParityInterval"));
+        assertEquals("false", System.getProperty("lattice.nativeIocp"));
+        assertEquals("false", System.getProperty("lattice.nativeIoUring"));
+        assertEquals("false", System.getProperty("lattice.nativeKqueue"));
     }
 
     @Test
