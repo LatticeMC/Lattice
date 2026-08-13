@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Thu, 13 Aug 2026 15:15:16 +0800
+Subject: [PATCH] perf(ai): precheck non-POI repellent sections
+
+Adapted from the section palette precheck approach documented from Lithium and Leaf PR #862; preserve original Level lookup and predicate semantics.
+
+diff --git a/net/minecraft/world/entity/ai/sensing/HoglinSpecificSensor.java b/net/minecraft/world/entity/ai/sensing/HoglinSpecificSensor.java
+index 744e962fc401aa9f07295d12b068aa9e2ebb96d0..25c3c3908186c8ad71f3c7f2737202b14a8841ab 100644
+--- a/net/minecraft/world/entity/ai/sensing/HoglinSpecificSensor.java
++++ b/net/minecraft/world/entity/ai/sensing/HoglinSpecificSensor.java
+@@ -14,8 +14,13 @@ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+ import net.minecraft.world.entity.ai.memory.NearestVisibleLivingEntities;
+ import net.minecraft.world.entity.monster.hoglin.Hoglin;
+ import net.minecraft.world.entity.monster.piglin.Piglin;
++import net.minecraft.world.level.chunk.ChunkAccess;
++import net.minecraft.world.level.chunk.LevelChunkSection;
++import net.minecraft.world.level.chunk.status.ChunkStatus;
++import net.minecraft.world.level.block.state.BlockState;
+ 
+ public class HoglinSpecificSensor extends Sensor<Hoglin> {
++    private static final java.util.function.Predicate<BlockState> HOGLIN_REPELLENT = state -> state.is(BlockTags.HOGLIN_REPELLENTS);
+     @Override
+     public Set<MemoryModuleType<?>> requires() {
+         return ImmutableSet.of(
+@@ -60,6 +65,22 @@ public class HoglinSpecificSensor extends Sensor<Hoglin> {
+     }
+ 
+     private Optional<BlockPos> findNearestRepellent(ServerLevel level, Hoglin hoglin) {
+-        return BlockPos.findClosestMatch(hoglin.blockPosition(), 8, 4, pos -> level.getBlockState(pos).is(BlockTags.HOGLIN_REPELLENTS));
++        return BlockPos.findClosestMatch(hoglin.blockPosition(), 8, 4, pos -> isValidRepellent(level, pos));
++    }
++
++    private static boolean isValidRepellent(ServerLevel level, BlockPos pos) {
++        // Tree generation captures can override a chunk state, so retain Level's path.
++        if (level.captureTreeGeneration) {
++            return level.getBlockState(pos).is(BlockTags.HOGLIN_REPELLENTS);
++        }
++
++        // This matches Level#getBlockState's regular valid-bounds path.
++        if (!level.isInValidBounds(pos)) {
++            return false;
++        }
++
++        ChunkAccess chunk = level.getChunk(pos.getX() >> 4, pos.getZ() >> 4, ChunkStatus.FULL, true);
++        LevelChunkSection section = chunk.getSection(chunk.getSectionIndex(pos.getY()));
++        return section.maybeHas(HOGLIN_REPELLENT) && chunk.getBlockState(pos).is(BlockTags.HOGLIN_REPELLENTS);
+     }
+ }
+diff --git a/net/minecraft/world/entity/ai/sensing/PiglinSpecificSensor.java b/net/minecraft/world/entity/ai/sensing/PiglinSpecificSensor.java
+index 6d96e6a80f4bcf6b83671f089e13b826d21fd0ef..4ea8b445635331d86a443c645637c68541b62c77 100644
+--- a/net/minecraft/world/entity/ai/sensing/PiglinSpecificSensor.java
++++ b/net/minecraft/world/entity/ai/sensing/PiglinSpecificSensor.java
+@@ -22,11 +22,15 @@ import net.minecraft.world.entity.monster.piglin.PiglinAi;
+ import net.minecraft.world.entity.monster.piglin.PiglinBrute;
+ import net.minecraft.world.entity.monster.skeleton.WitherSkeleton;
+ import net.minecraft.world.entity.player.Player;
++import net.minecraft.world.level.chunk.ChunkAccess;
++import net.minecraft.world.level.chunk.LevelChunkSection;
++import net.minecraft.world.level.chunk.status.ChunkStatus;
+ import net.minecraft.world.level.block.Blocks;
+ import net.minecraft.world.level.block.CampfireBlock;
+ import net.minecraft.world.level.block.state.BlockState;
+ 
+ public class PiglinSpecificSensor extends Sensor<LivingEntity> {
++    private static final java.util.function.Predicate<BlockState> PIGLIN_REPELLENT = state -> state.is(BlockTags.PIGLIN_REPELLENTS);
+     @Override
+     public Set<MemoryModuleType<?>> requires() {
+         return ImmutableSet.of(
+@@ -120,7 +124,27 @@ public class PiglinSpecificSensor extends Sensor<LivingEntity> {
+     }
+ 
+     private static boolean isValidRepellent(ServerLevel level, BlockPos pos) {
+-        BlockState blockState = level.getBlockState(pos);
++        // Tree generation captures can override a chunk state, so retain Level's path.
++        if (level.captureTreeGeneration) {
++            return isValidRepellent(level.getBlockState(pos));
++        }
++
++        // This is Level#getBlockState's regular path, with its one chunk lookup reused
++        // for the section prefilter and final state lookup.
++        if (!level.isInValidBounds(pos)) {
++            return false;
++        }
++
++        ChunkAccess chunk = level.getChunk(pos.getX() >> 4, pos.getZ() >> 4, ChunkStatus.FULL, true);
++        LevelChunkSection section = chunk.getSection(chunk.getSectionIndex(pos.getY()));
++        if (!section.maybeHas(PIGLIN_REPELLENT)) {
++            return false;
++        }
++
++        return isValidRepellent(chunk.getBlockState(pos));
++    }
++
++    private static boolean isValidRepellent(BlockState blockState) {
+         boolean isPiglinRepellents = blockState.is(BlockTags.PIGLIN_REPELLENTS);
+         return isPiglinRepellents && blockState.is(Blocks.SOUL_CAMPFIRE) ? CampfireBlock.isLitCampfire(blockState) : isPiglinRepellents;
+     }

@@ -36,7 +36,7 @@ public final class NativeIoCapability {
 
     static State resolve(String osName, boolean iocpRequested, boolean ioUringRequested, boolean kqueueRequested) {
         String normalizedOsName = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
-        if (normalizedOsName.contains("win")) {
+        if (normalizedOsName.startsWith("windows")) {
             return unavailable(Backend.IOCP, iocpRequested);
         }
         if (normalizedOsName.contains("linux")) {
