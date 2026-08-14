@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 14 Aug 2026 16:57:17 +0800
+Subject: [PATCH] perf(tracker): skip unchanged motion distance checks
+
+
+diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
+index 3a817c92147bb78c60238f3ddc1644b721aed7a2..1d1b53220d7fb73885cb9afb09674b7d522602fb 100644
+--- a/net/minecraft/server/level/ServerEntity.java
++++ b/net/minecraft/server/level/ServerEntity.java
+@@ -197,23 +197,30 @@ public class ServerEntity {
+ 
+                 if (this.entity.needsSync || this.trackDelta || this.entity instanceof LivingEntity && ((LivingEntity)this.entity).isFallFlying()) {
+                     Vec3 deltaMovement = this.entity.getDeltaMovement();
+-                    double d = deltaMovement.distanceToSqr(this.lastSentMovement);
+-                    if (d > 1.0E-7 || d > 0.0 && deltaMovement.lengthSqr() == 0.0) {
+-                        this.lastSentMovement = deltaMovement;
+-                        if (this.entity instanceof AbstractHurtingProjectile abstractHurtingProjectile) {
+-                            this.synchronizer
+-                                .sendToTrackingPlayers(
+-                                    new ClientboundBundlePacket(
+-                                        List.of(
+-                                            new ClientboundSetEntityMotionPacket(this.entity.getId(), this.lastSentMovement),
+-                                            new ClientboundProjectilePowerPacket(abstractHurtingProjectile.getId(), abstractHurtingProjectile.accelerationPower)
++                    // Lattice start - Leaf: skip unchanged motion distance calculation
++                    // Original author: MrPowerGamerBR <git@mrpowergamerbr.com>
++                    // Original project: SparklyPaper (https://github.com/SparklyPower/SparklyPaper)
++                    // Source: https://github.com/Winds-Studio/Leaf/blob/cc2a6fdfdec6245b9084b8860bdcbbbd7ddf04e6/leaf-server/minecraft-patches/features/0110-SparklyPaper-Skip-distanceToSqr-call-in-ServerEntity.patch
++                    if (deltaMovement != this.lastSentMovement) {
++                        double d = deltaMovement.distanceToSqr(this.lastSentMovement);
++                        if (d > 1.0E-7 || d > 0.0 && deltaMovement.lengthSqr() == 0.0) {
++                            this.lastSentMovement = deltaMovement;
++                            if (this.entity instanceof AbstractHurtingProjectile abstractHurtingProjectile) {
++                                this.synchronizer
++                                    .sendToTrackingPlayers(
++                                        new ClientboundBundlePacket(
++                                            List.of(
++                                                new ClientboundSetEntityMotionPacket(this.entity.getId(), this.lastSentMovement),
++                                                new ClientboundProjectilePowerPacket(abstractHurtingProjectile.getId(), abstractHurtingProjectile.accelerationPower)
++                                            )
+                                         )
+-                                    )
+-                                );
+-                        } else {
+-                            this.synchronizer.sendToTrackingPlayers(new ClientboundSetEntityMotionPacket(this.entity.getId(), this.lastSentMovement));
++                                    );
++                            } else {
++                                this.synchronizer.sendToTrackingPlayers(new ClientboundSetEntityMotionPacket(this.entity.getId(), this.lastSentMovement));
++                            }
+                         }
+                     }
++                    // Lattice end - Leaf: skip unchanged motion distance calculation
+                 }
+ 
+                 if (packet != null) {
