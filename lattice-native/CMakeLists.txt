@@ -335,6 +335,7 @@ endfunction()
 target_sources(lattice PRIVATE
     src/core/cpu/detect.cpp
     jni/loader.cpp
+    jni/native_region_file_read.cpp
 )
 
 # ---------------------------------------------------------------------------
