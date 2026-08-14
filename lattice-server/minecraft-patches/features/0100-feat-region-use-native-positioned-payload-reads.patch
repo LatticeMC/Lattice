@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 14 Aug 2026 10:53:16 +0800
+Subject: [PATCH] feat(region): use native positioned payload reads
+
+
+diff --git a/net/minecraft/world/level/chunk/storage/RegionFile.java b/net/minecraft/world/level/chunk/storage/RegionFile.java
+index c6adcb44bc96eaeba74bfc228a6a61765b1628e7..60d5f5e967cfa22d7d15aeb2f4afe5c7b7c7d4e4 100644
+--- a/net/minecraft/world/level/chunk/storage/RegionFile.java
++++ b/net/minecraft/world/level/chunk/storage/RegionFile.java
+@@ -1,6 +1,7 @@
+ package net.minecraft.world.level.chunk.storage;
+ 
+ import com.google.common.annotations.VisibleForTesting;
++import com.latticemc.lattice.nativelib.NativeRegionFileRead;
+ import com.mojang.logging.LogUtils;
+ import java.io.ByteArrayInputStream;
+ import java.io.ByteArrayOutputStream;
+@@ -26,6 +27,9 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+     private static final Logger LOGGER = LogUtils.getLogger();
+     public static final int MAX_CHUNK_SIZE = 500 * 1024 * 1024; // Paper - don't write garbage data to disk if writing serialization fails
+     private static final int SECTOR_BYTES = 4096;
++    // One full region sector avoids paying JNI overhead for small chunk payloads.
++    private static final int NATIVE_POSITIONED_READ_MINIMUM_BYTES = SECTOR_BYTES;
++    private static final boolean NATIVE_POSITIONED_READ_ENABLED = Boolean.getBoolean("lattice.nativeRegionFileRead");
+     @VisibleForTesting
+     protected static final int SECTOR_INTS = 1024;
+     private static final int CHUNK_HEADER_SIZE = 5;
+@@ -38,6 +42,7 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+     final RegionStorageInfo info;
+     private final Path path;
+     private final FileChannel file;
++    private final @Nullable NativeRegionFileRead nativeRegionFileRead;
+     private final Path externalFileDir;
+     final RegionFileVersion version;
+     private final ByteBuffer header = ByteBuffer.allocateDirect(8192);
+@@ -526,6 +531,7 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+                 }
+                 // Paper end
+             }
++            this.nativeRegionFileRead = NATIVE_POSITIONED_READ_ENABLED ? NativeRegionFileRead.open(path) : null;
+         }
+     }
+ 
+@@ -578,11 +584,11 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+             }
+             // Spigot end
+             int i = numSectors * 4096;
+-            ByteBuffer byteBuffer = ByteBuffer.allocate(i);
+-            this.file.read(byteBuffer, sectorNumber * 4096);
+-            byteBuffer.flip();
+-            if (byteBuffer.remaining() < 5) {
+-                LOGGER.error("Chunk {} header is truncated: expected {} but read {}", chunkPos, i, byteBuffer.remaining());
++            ByteBuffer chunkHeader = ByteBuffer.allocate(CHUNK_HEADER_SIZE);
++            this.file.read(chunkHeader, sectorNumber * 4096L);
++            chunkHeader.flip();
++            if (chunkHeader.remaining() < CHUNK_HEADER_SIZE) {
++                LOGGER.error("Chunk {} header is truncated: expected {} but read {}", chunkPos, i, chunkHeader.remaining());
+                 // Paper start - recalculate header on regionfile corruption
+                 if (this.canRecalcHeader && this.recalculateHeader()) {
+                     return this.getChunkDataInputStream(chunkPos);
+@@ -590,8 +596,8 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+                 // Paper end - recalculate header on regionfile corruption
+                 return null;
+             } else {
+-                int _int = byteBuffer.getInt();
+-                byte b = byteBuffer.get();
++                int _int = chunkHeader.getInt();
++                byte b = chunkHeader.get();
+                 if (_int == 0) {
+                     LOGGER.warn("Chunk {} is allocated, but stream is missing", chunkPos);
+                     // Paper start - recalculate header on regionfile corruption
+@@ -619,8 +625,8 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+                         }
+                         return ret;
+                         // Paper end - recalculate header on regionfile corruption
+-                    } else if (i1 > byteBuffer.remaining()) {
+-                        LOGGER.error("Chunk {} stream is truncated: expected {} but read {}", chunkPos, i1, byteBuffer.remaining());
++                    } else if (i1 > i - CHUNK_HEADER_SIZE) {
++                        LOGGER.error("Chunk {} stream is truncated: expected {} but read {}", chunkPos, i1, i - CHUNK_HEADER_SIZE);
+                         // Paper start - recalculate header on regionfile corruption
+                         if (this.canRecalcHeader && this.recalculateHeader()) {
+                             return this.getChunkDataInputStream(chunkPos);
+@@ -636,9 +642,18 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+                         // Paper end - recalculate header on regionfile corruption
+                         return null;
+                     } else {
++                        byte[] payload = new byte[i1];
++                        int bytesRead = this.readInternalChunkPayload(payload, sectorNumber * 4096L + CHUNK_HEADER_SIZE);
++                        if (bytesRead != i1) {
++                            LOGGER.error("Chunk {} stream is truncated: expected {} but read {}", chunkPos, i1, Math.max(bytesRead, 0));
++                            if (this.canRecalcHeader && this.recalculateHeader()) {
++                                return this.getChunkDataInputStream(chunkPos);
++                            }
++                            return null;
++                        }
+                         JvmProfiler.INSTANCE.onRegionFileRead(this.info, chunkPos, this.version, i1);
+                         // Paper start - recalculate header on regionfile corruption
+-                        final DataInputStream ret = this.createChunkInputStream(chunkPos, b, createStream(byteBuffer, i1));
++                        final DataInputStream ret = this.createChunkInputStream(chunkPos, b, new ByteArrayInputStream(payload));
+                         if (ret == null && this.canRecalcHeader && this.recalculateHeader()) {
+                             return this.getChunkDataInputStream(chunkPos);
+                         }
+@@ -650,6 +665,13 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+         }
+     }
+ 
++    private int readInternalChunkPayload(byte[] payload, long position) throws IOException {
++        if (this.nativeRegionFileRead != null && payload.length >= NATIVE_POSITIONED_READ_MINIMUM_BYTES) {
++            return this.nativeRegionFileRead.readAt(payload, 0, payload.length, position);
++        }
++        return this.file.read(ByteBuffer.wrap(payload), position);
++    }
++
+     private static int getTimestamp() {
+         return (int)(Util.getEpochMillis() / 1000L);
+     }
+@@ -871,14 +893,42 @@ public class RegionFile implements AutoCloseable, ca.spottedleaf.moonrise.patche
+ 
+     @Override
+     public void close() throws IOException {
++        Throwable failure = null;
+         try {
+-            this.padToFullSector();
+-        } finally {
+             try {
+-                this.file.force(true);
++                this.padToFullSector();
+             } finally {
+-                this.file.close();
++                try {
++                    this.file.force(true);
++                } finally {
++                    this.file.close();
++                }
+             }
++        } catch (Throwable throwable) {
++            failure = throwable;
++        }
++        try {
++            if (this.nativeRegionFileRead != null) {
++                this.nativeRegionFileRead.close();
++            }
++        } catch (IOException exception) {
++            if (failure != null) {
++                failure.addSuppressed(exception);
++            } else {
++                failure = exception;
++            }
++        }
++        if (failure instanceof IOException exception) {
++            throw exception;
++        }
++        if (failure instanceof RuntimeException exception) {
++            throw exception;
++        }
++        if (failure instanceof Error error) {
++            throw error;
++        }
++        if (failure != null) {
++            throw new IOException("Unable to close RegionFile", failure);
+         }
+     }
+ 

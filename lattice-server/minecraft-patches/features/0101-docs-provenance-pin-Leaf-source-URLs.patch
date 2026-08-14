@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 14 Aug 2026 11:02:29 +0800
+Subject: [PATCH] docs(provenance): pin Leaf source URLs
+
+provenance-only URL pin
+
+diff --git a/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java b/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
+index dbe71eab0b271e492df0a420ec196d27fac80c6f..fde50a3988668892b5a492d950125318ad1dbc08 100644
+--- a/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
++++ b/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
+@@ -22,7 +22,7 @@ public class SetLookAndInteract {
+                         // Lattice start - Leaf: optimize SetLookAndInteract and NearestVisibleLivingEntities
+                         // Adapted from Leaf by Taiyou06 <kaandindar21@gmail.com>
+                         // Original license: MIT
+-                        // Source: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0195-Optimize-SetLookAndInteract-and-NearestVisibleLiving.patch
++                        // Source: https://github.com/Winds-Studio/Leaf/blob/b7106326a4af7d39871b0b2710b2c38762b1cc4c/leaf-server/minecraft-patches/features/0195-Optimize-SetLookAndInteract-and-NearestVisibleLiving.patch
+                         Optional<LivingEntity> optional = instance.<NearestVisibleLivingEntities>get(nearestVisibleLivingEntities)
+                             .findClosest(nearEntity -> entityType.equals(nearEntity.getType()) && nearEntity.distanceToSqr(entity) <= i);
+                         // Lattice end - Leaf: optimize SetLookAndInteract and NearestVisibleLivingEntities
+diff --git a/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java b/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
+index 3e1176bdddde62a56ed24755306978ec0296ff26..1d9e1c6567be11e32e7d45ec3423593bb4561204 100644
+--- a/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
++++ b/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
+@@ -43,7 +43,7 @@ public class NearestVisibleLivingEntities {
+         // Lattice start - Leaf: optimize SetLookAndInteract and NearestVisibleLivingEntities
+         // Adapted from Leaf by Taiyou06 <kaandindar21@gmail.com>
+         // Original license: MIT
+-        // Source: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0195-Optimize-SetLookAndInteract-and-NearestVisibleLiving.patch
++        // Source: https://github.com/Winds-Studio/Leaf/blob/b7106326a4af7d39871b0b2710b2c38762b1cc4c/leaf-server/minecraft-patches/features/0195-Optimize-SetLookAndInteract-and-NearestVisibleLiving.patch
+         if (this.nearbyEntities.isEmpty()) {
+             return Optional.empty();
+         }
+diff --git a/net/minecraft/world/entity/ai/sensing/VillagerBabiesSensor.java b/net/minecraft/world/entity/ai/sensing/VillagerBabiesSensor.java
+index 0be8f37bd656506fd9d453856163ea854ca6a469..ddfe91f531d32f63bd29cff5ac8e7f42318313cd 100644
+--- a/net/minecraft/world/entity/ai/sensing/VillagerBabiesSensor.java
++++ b/net/minecraft/world/entity/ai/sensing/VillagerBabiesSensor.java
+@@ -22,6 +22,9 @@ public class VillagerBabiesSensor extends Sensor<LivingEntity> {
+     }
+ 
+     private List<LivingEntity> getNearestVillagerBabies(LivingEntity livingEntity) {
++        // Original author: Taiyou06 <kaandindar21@gmail.com>
++        // Original license: MIT
++        // Source: https://github.com/Winds-Studio/Leaf/blob/b7106326a4af7d39871b0b2710b2c38762b1cc4c/leaf-server/minecraft-patches/features/0181-Optimize-baby-villager-sensor.patch
+         NearestVisibleLivingEntities visibleEntities = this.getVisibleEntities(livingEntity);
+         ImmutableList.Builder<LivingEntity> babies = ImmutableList.builder();
+         for (LivingEntity target : visibleEntities.nearbyEntities()) {
+diff --git a/net/minecraft/world/entity/player/Inventory.java b/net/minecraft/world/entity/player/Inventory.java
+index c151df35c62d76160f030fe6541da8b59815b63f..1af2eba702e0ebbc54bbcb11b4658032d24549c3 100644
+--- a/net/minecraft/world/entity/player/Inventory.java
++++ b/net/minecraft/world/entity/player/Inventory.java
+@@ -519,7 +519,7 @@ public class Inventory implements Container, Nameable {
+         // Lattice start - Leaf: remove iterators from Inventory (adapted)
+         // Original author: Taiyou06 <kaandindar21@gmail.com>
+         // Original license: MIT
+-        // Source: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0183-Remove-iterators-from-Inventory.patch
++        // Source: https://github.com/Winds-Studio/Leaf/blob/b7106326a4af7d39871b0b2710b2c38762b1cc4c/leaf-server/minecraft-patches/features/0183-Remove-iterators-from-Inventory.patch
+         for (int slot = 0, size = this.items.size(); slot < size; slot++) {
+             ItemStack itemStack = this.items.get(slot);
+             if (!itemStack.isEmpty()) {
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 124157dfaed20e286688ccfe8ec098df802f9875..29134c020afed3c86b707bd65212e055928c8e36 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -940,6 +940,9 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+         private final T blockEntity;
+         private final BlockEntityTicker<T> ticker;
+         private boolean loggedInvalidBlockState;
++        // Original author: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
++        // Original license: MIT
++        // Source: https://github.com/Winds-Studio/Leaf/blob/b7106326a4af7d39871b0b2710b2c38762b1cc4c/leaf-server/minecraft-patches/features/0165-Cache-tile-entity-position.patch
+         private final BlockPos cachedPos; // Leaf - Cache tile entity position
+ 
+         BoundTickingBlockEntity(final T blockEntity, final BlockEntityTicker<T> ticker) {

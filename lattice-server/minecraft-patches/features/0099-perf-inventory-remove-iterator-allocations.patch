@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 14 Aug 2026 10:51:29 +0800
+Subject: [PATCH] perf(inventory): remove iterator allocations
+
+Adapted from Leaf's "Remove iterators from Inventory" patch.
+
+Original author: Taiyou06 <kaandindar21@gmail.com>
+Source: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0183-Remove-iterators-from-Inventory.patch
+License: MIT
+
+diff --git a/net/minecraft/world/entity/player/Inventory.java b/net/minecraft/world/entity/player/Inventory.java
+index 41e59f3739945ca7f6ab710c993b5c0f15fcd529..c151df35c62d76160f030fe6541da8b59815b63f 100644
+--- a/net/minecraft/world/entity/player/Inventory.java
++++ b/net/minecraft/world/entity/player/Inventory.java
+@@ -516,17 +516,23 @@ public class Inventory implements Container, Nameable {
+ 
+     @Override
+     public boolean isEmpty() {
+-        for (ItemStack itemStack : this.items) {
++        // Lattice start - Leaf: remove iterators from Inventory (adapted)
++        // Original author: Taiyou06 <kaandindar21@gmail.com>
++        // Original license: MIT
++        // Source: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0183-Remove-iterators-from-Inventory.patch
++        for (int slot = 0, size = this.items.size(); slot < size; slot++) {
++            ItemStack itemStack = this.items.get(slot);
+             if (!itemStack.isEmpty()) {
+                 return false;
+             }
+         }
+ 
+-        for (EquipmentSlot equipmentSlot : EQUIPMENT_SLOT_MAPPING.values()) {
++        for (EquipmentSlot equipmentSlot : EQUIPMENT_SLOTS_SORTED_BY_INDEX) {
+             if (!this.equipment.get(equipmentSlot).isEmpty()) {
+                 return false;
+             }
+         }
++        // Lattice end - Leaf: remove iterators from Inventory (adapted)
+ 
+         return true;
+     }
+@@ -573,31 +579,61 @@ public class Inventory implements Container, Nameable {
+     }
+ 
+     public boolean contains(ItemStack stack) {
+-        for (ItemStack itemStack : this) {
++        // Lattice start - Leaf: remove iterators from Inventory (adapted)
++        for (int slot = 0, size = this.items.size(); slot < size; slot++) {
++            ItemStack itemStack = this.items.get(slot);
++            if (!itemStack.isEmpty() && ItemStack.isSameItemSameComponents(itemStack, stack)) {
++                return true;
++            }
++        }
++
++        for (EquipmentSlot equipmentSlot : EQUIPMENT_SLOTS_SORTED_BY_INDEX) {
++            ItemStack itemStack = this.equipment.get(equipmentSlot);
+             if (!itemStack.isEmpty() && ItemStack.isSameItemSameComponents(itemStack, stack)) {
+                 return true;
+             }
+         }
++        // Lattice end - Leaf: remove iterators from Inventory (adapted)
+ 
+         return false;
+     }
+ 
+     public boolean contains(TagKey<Item> tag) {
+-        for (ItemStack itemStack : this) {
++        // Lattice start - Leaf: remove iterators from Inventory (adapted)
++        for (int slot = 0, size = this.items.size(); slot < size; slot++) {
++            ItemStack itemStack = this.items.get(slot);
+             if (!itemStack.isEmpty() && itemStack.is(tag)) {
+                 return true;
+             }
+         }
+ 
++        for (EquipmentSlot equipmentSlot : EQUIPMENT_SLOTS_SORTED_BY_INDEX) {
++            ItemStack itemStack = this.equipment.get(equipmentSlot);
++            if (!itemStack.isEmpty() && itemStack.is(tag)) {
++                return true;
++            }
++        }
++        // Lattice end - Leaf: remove iterators from Inventory (adapted)
++
+         return false;
+     }
+ 
+     public boolean contains(Predicate<ItemStack> predicate) {
+-        for (ItemStack itemStack : this) {
++        // Lattice start - Leaf: remove iterators from Inventory (adapted)
++        for (int slot = 0, size = this.items.size(); slot < size; slot++) {
++            ItemStack itemStack = this.items.get(slot);
++            if (predicate.test(itemStack)) {
++                return true;
++            }
++        }
++
++        for (EquipmentSlot equipmentSlot : EQUIPMENT_SLOTS_SORTED_BY_INDEX) {
++            ItemStack itemStack = this.equipment.get(equipmentSlot);
+             if (predicate.test(itemStack)) {
+                 return true;
+             }
+         }
++        // Lattice end - Leaf: remove iterators from Inventory (adapted)
+ 
+         return false;
+     }
+@@ -617,9 +653,12 @@ public class Inventory implements Container, Nameable {
+     }
+ 
+     public void fillStackedContents(StackedItemContents contents) {
+-        for (ItemStack itemStack : this.items) {
++        // Lattice start - Leaf: remove iterators from Inventory (adapted)
++        for (int slot = 0, size = this.items.size(); slot < size; slot++) {
++            ItemStack itemStack = this.items.get(slot);
+             contents.accountSimpleStack(itemStack);
+         }
++        // Lattice end - Leaf: remove iterators from Inventory (adapted)
+     }
+ 
+     public ItemStack removeFromSelected(boolean removeStack) {

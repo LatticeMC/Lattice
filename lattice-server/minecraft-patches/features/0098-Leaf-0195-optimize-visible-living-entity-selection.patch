@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 14 Aug 2026 10:48:44 +0800
+Subject: [PATCH] Leaf 0195: optimize visible living entity selection
+
+Adapted from Leaf 0195 by Taiyou06 <kaandindar21@gmail.com>.
+
+Source: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0195-Optimize-SetLookAndInteract-and-NearestVisibleLiving.patch
+
+Leaf LICENSE: MIT. Lattice preserves entityType.equals type semantics and predicate-before-LOS behavior.
+
+diff --git a/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java b/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
+index 13359e484486a5280f408955fe2a365cd3c34a43..dbe71eab0b271e492df0a420ec196d27fac80c6f 100644
+--- a/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
++++ b/net/minecraft/world/entity/ai/behavior/SetLookAndInteract.java
+@@ -19,8 +19,13 @@ public class SetLookAndInteract {
+                 .apply(
+                     instance,
+                     (lookTarget, interactionTarget, nearestVisibleLivingEntities) -> (level, entity, gameTime) -> {
++                        // Lattice start - Leaf: optimize SetLookAndInteract and NearestVisibleLivingEntities
++                        // Adapted from Leaf by Taiyou06 <kaandindar21@gmail.com>
++                        // Original license: MIT
++                        // Source: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0195-Optimize-SetLookAndInteract-and-NearestVisibleLiving.patch
+                         Optional<LivingEntity> optional = instance.<NearestVisibleLivingEntities>get(nearestVisibleLivingEntities)
+-                            .findClosest(nearEntity -> nearEntity.distanceToSqr(entity) <= i && entityType.equals(nearEntity.getType()));
++                            .findClosest(nearEntity -> entityType.equals(nearEntity.getType()) && nearEntity.distanceToSqr(entity) <= i);
++                        // Lattice end - Leaf: optimize SetLookAndInteract and NearestVisibleLivingEntities
+                         if (optional.isEmpty()) {
+                             return false;
+                         } else {
+diff --git a/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java b/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
+index 5dad830b6d0bcd517ee6abb725b8cfc7e93c92bf..3e1176bdddde62a56ed24755306978ec0296ff26 100644
+--- a/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
++++ b/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
+@@ -40,11 +40,21 @@ public class NearestVisibleLivingEntities {
+     }
+ 
+     public Optional<LivingEntity> findClosest(Predicate<LivingEntity> predicate) {
+-        for (LivingEntity livingEntity : this.nearbyEntities) {
++        // Lattice start - Leaf: optimize SetLookAndInteract and NearestVisibleLivingEntities
++        // Adapted from Leaf by Taiyou06 <kaandindar21@gmail.com>
++        // Original license: MIT
++        // Source: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0195-Optimize-SetLookAndInteract-and-NearestVisibleLiving.patch
++        if (this.nearbyEntities.isEmpty()) {
++            return Optional.empty();
++        }
++
++        for (int index = 0, size = this.nearbyEntities.size(); index < size; index++) {
++            LivingEntity livingEntity = this.nearbyEntities.get(index);
+             if (predicate.test(livingEntity) && this.lineOfSightTest.test(livingEntity)) {
+                 return Optional.of(livingEntity);
+             }
+         }
++        // Lattice end - Leaf: optimize SetLookAndInteract and NearestVisibleLivingEntities
+ 
+         return Optional.empty();
+     }
