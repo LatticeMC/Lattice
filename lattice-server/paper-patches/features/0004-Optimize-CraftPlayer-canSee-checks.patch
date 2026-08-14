@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 14 Aug 2026 19:11:15 +0800
+Subject: [PATCH] Optimize CraftPlayer canSee checks
+
+Adapted from Leaf 0112 / Paper0033 and SparklyPaper by MrPowerGamerBR. Preserve visibleByDefault semantics while avoiding the public self-check in ChunkMap's already non-self update path.
+
+diff --git a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
+index 225a88c6976de91b9115471e7942e5585e392ec4..71085e056a5838ac97878055577a19096adcaf63 100644
+--- a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
++++ b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
+@@ -2138,13 +2138,17 @@ public class CraftPlayer extends CraftHumanEntity implements Player, PluginMessa
+     public boolean canSee(org.bukkit.entity.Entity entity) {
+         return this.equals(entity) || entity.isVisibleByDefault() ^ this.invertedVisibilityEntities.containsKey(entity.getUniqueId()); // SPIGOT-7312: Can always see self
+     }
+-
++    // Leaf start - 0112 / Paper0033 - SparklyPaper optimize canSee checks
++    // Original author: MrPowerGamerBR <git@mrpowergamerbr.com>
++    // Original project: SparklyPaper (https://github.com/SparklyPower/SparklyPaper)
++    public boolean canSeeChunkMapUpdatePlayer(org.bukkit.entity.Entity entity) {
++        return entity.isVisibleByDefault() ^ (!this.invertedVisibilityEntities.isEmpty() && this.invertedVisibilityEntities.containsKey(entity.getUniqueId()));
++    }
++    // Leaf end - 0112 / Paper0033 - SparklyPaper optimize canSee checks
+     public boolean canSeePlayer(UUID uuid) {
+         org.bukkit.entity.Entity entity = this.getServer().getPlayer(uuid);
+-
+         return (entity != null) ? this.canSee(entity) : false; // If we can't find it, we can't see it
+     }
+-
+     // Paper start - Add Listing API for Player
+     @Override
+     public boolean isListed(Player other) {
