@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 14 Aug 2026 08:33:37 +0800
+Subject: [PATCH] Leaf 0165/0181: cache positions and optimize villager sensor
+
+Leaf 0165 source: Dreeam <61569423+Dreeam-qwq@users.noreply.github.com>
+
+Leaf 0165 patch: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0165-Cache-tile-entity-position.patch
+
+Leaf 0181 source: Taiyou06 <kaandindar21@gmail.com>
+
+Leaf 0181 patch: https://github.com/Winds-Studio/Leaf/blob/ver/26.2/leaf-server/minecraft-patches/features/0181-Optimize-baby-villager-sensor.patch
+
+Leaf LICENSE: MIT. Lattice independent adaptation; target filtering follows Lattice contract and checks each target type before LOS.
+
+diff --git a/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java b/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
+index 814b02a3ab21d4a40cd3f0928ff5c257aff10357..5dad830b6d0bcd517ee6abb725b8cfc7e93c92bf 100644
+--- a/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
++++ b/net/minecraft/world/entity/ai/memory/NearestVisibleLivingEntities.java
+@@ -31,6 +31,14 @@ public class NearestVisibleLivingEntities {
+         return EMPTY;
+     }
+ 
++    public Iterable<LivingEntity> nearbyEntities() {
++        return this.nearbyEntities;
++    }
++
++    public boolean isVisible(LivingEntity entity) {
++        return this.lineOfSightTest.test(entity);
++    }
++
+     public Optional<LivingEntity> findClosest(Predicate<LivingEntity> predicate) {
+         for (LivingEntity livingEntity : this.nearbyEntities) {
+             if (predicate.test(livingEntity) && this.lineOfSightTest.test(livingEntity)) {
+diff --git a/net/minecraft/world/entity/ai/sensing/VillagerBabiesSensor.java b/net/minecraft/world/entity/ai/sensing/VillagerBabiesSensor.java
+index 24d1928445b5571e040a2b12d5c82e77a880d9bd..0be8f37bd656506fd9d453856163ea854ca6a469 100644
+--- a/net/minecraft/world/entity/ai/sensing/VillagerBabiesSensor.java
++++ b/net/minecraft/world/entity/ai/sensing/VillagerBabiesSensor.java
+@@ -22,7 +22,14 @@ public class VillagerBabiesSensor extends Sensor<LivingEntity> {
+     }
+ 
+     private List<LivingEntity> getNearestVillagerBabies(LivingEntity livingEntity) {
+-        return ImmutableList.copyOf(this.getVisibleEntities(livingEntity).findAll(this::isVillagerBaby));
++        NearestVisibleLivingEntities visibleEntities = this.getVisibleEntities(livingEntity);
++        ImmutableList.Builder<LivingEntity> babies = ImmutableList.builder();
++        for (LivingEntity target : visibleEntities.nearbyEntities()) {
++            if (target.getType() == EntityType.VILLAGER && target.isBaby() && visibleEntities.isVisible(target)) {
++                babies.add(target);
++            }
++        }
++        return babies.build();
+     }
+ 
+     private boolean isVillagerBaby(LivingEntity livingEntity) {
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 3acc1374a7ef968d88e9f566ce7b812fb8d580af..124157dfaed20e286688ccfe8ec098df802f9875 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -940,23 +940,25 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+         private final T blockEntity;
+         private final BlockEntityTicker<T> ticker;
+         private boolean loggedInvalidBlockState;
++        private final BlockPos cachedPos; // Leaf - Cache tile entity position
+ 
+         BoundTickingBlockEntity(final T blockEntity, final BlockEntityTicker<T> ticker) {
+             this.blockEntity = blockEntity;
+             this.ticker = ticker;
++            this.cachedPos = this.blockEntity.getBlockPos(); // Leaf - Cache tile entity position
+         }
+ 
+         @Override
+         public void tick() {
+             if (!this.blockEntity.isRemoved() && this.blockEntity.hasLevel()) {
+-                BlockPos blockPos = this.blockEntity.getBlockPos();
++                BlockPos blockPos = this.cachedPos;
+                 if (LevelChunk.this.isTicking(blockPos)) {
+                     try {
+                         ProfilerFiller profilerFiller = Profiler.get();
+                         profilerFiller.push(this::getType);
+                         BlockState blockState = LevelChunk.this.getBlockState(blockPos);
+                         if (this.blockEntity.getType().isValid(blockState)) {
+-                            this.ticker.tick(LevelChunk.this.level, this.blockEntity.getBlockPos(), blockState, this.blockEntity);
++                            this.ticker.tick(LevelChunk.this.level, this.cachedPos, blockState, this.blockEntity);
+                             this.loggedInvalidBlockState = false;
+                         // Paper start - Remove the Block Entity if it's invalid
+                         } else {
+@@ -988,7 +990,7 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+ 
+         @Override
+         public BlockPos getPos() {
+-            return this.blockEntity.getBlockPos();
++            return this.cachedPos; // Leaf - Cache tile entity position
+         }
+ 
+         @Override
+@@ -1015,13 +1017,16 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+ 
+     static class RebindableTickingBlockEntityWrapper implements TickingBlockEntity {
+         private TickingBlockEntity ticker;
++        private BlockPos cachedPos; // Leaf - Cache tile entity position
+ 
+         RebindableTickingBlockEntityWrapper(TickingBlockEntity ticker) {
+             this.ticker = ticker;
++            this.cachedPos = this.ticker.getPos(); // Leaf - Cache tile entity position
+         }
+ 
+         void rebind(TickingBlockEntity ticker) {
+             this.ticker = ticker;
++            this.cachedPos = this.ticker.getPos(); // Leaf - Cache tile entity position
+         }
+ 
+         @Override
+@@ -1036,7 +1041,7 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+ 
+         @Override
+         public BlockPos getPos() {
+-            return this.ticker.getPos();
++            return this.cachedPos; // Leaf - Cache tile entity position
+         }
+ 
+         @Override
