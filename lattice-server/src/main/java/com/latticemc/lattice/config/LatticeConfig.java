@@ -40,6 +40,7 @@ public final class LatticeConfig {
             bool("native.io.iocp", "lattice.nativeIocp", false, "Reserve the Windows IOCP native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
             bool("native.io.io-uring", "lattice.nativeIoUring", false, "Reserve the Linux io_uring native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
             bool("native.io.kqueue", "lattice.nativeKqueue", false, "Reserve the macOS kqueue native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
+            bool("native.io.positioned-read", "lattice.nativeRegionFileRead", false, "Experimental synchronous native positioned reads for large internal RegionFile payloads. This is not an IOCP, io_uring, or kqueue backend."),
 
             bool("entity.activation-kd-tree", "lattice.entityActivationKdTree", false, "Use the entity-activation KD-tree accelerator."),
             bool("entity.spatial-aabb-query", "lattice.spatialAabbQuery", true, "Use the spatial AABB-query cache."),
