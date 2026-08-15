@@ -330,6 +330,41 @@ lattice_add_test(interpolated_noise
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
              ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp)
 
+# Manual performance benchmark. This target is intentionally excluded from the
+# default build and CTest: timings are diagnostic evidence, while parity remains
+# the only pass/fail condition when the executable is run explicitly.
+add_executable(lattice_benchmark_noise EXCLUDE_FROM_ALL
+    benchmark_noise.cpp
+    ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
+    ${_perlin_simd_srcs}
+    ${_perlin_avx512_srcs}
+    ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
+    ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
+    ${_double_perlin_simd_srcs}
+    ${_double_perlin_avx512_srcs}
+    ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
+    ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
+    ${_simplex_simd_srcs}
+    ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+target_include_directories(lattice_benchmark_noise PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/jni)
+target_link_libraries(lattice_benchmark_noise PRIVATE lattice_baseline_flags)
+if(NOT MSVC)
+    target_compile_options(lattice_benchmark_noise PRIVATE -Wall -Wextra -Wpedantic -O3 -ffp-contract=off)
+else()
+    target_compile_options(lattice_benchmark_noise PRIVATE /W4 /permissive- /utf-8 /O2 /fp:strict)
+endif()
+if(LATTICE_ARCH_X86)
+    target_compile_definitions(lattice_benchmark_noise PRIVATE
+        LATTICE_HAS_PERLIN_AVX2=1
+        LATTICE_HAS_PERLIN_AVX512=1
+        LATTICE_HAS_DOUBLE_PERLIN_AVX2=1
+        LATTICE_HAS_DOUBLE_PERLIN_AVX512=1
+        LATTICE_HAS_SIMPLEX_AVX2=1)
+endif()
+
 lattice_add_test(chunk_noise_sampler
     SOURCES  test_chunk_noise_sampler.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
