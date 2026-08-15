@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 15 Aug 2026 09:28:51 +0800
+Subject: [PATCH] perf(item): cache max stack size component
+
+
+diff --git a/net/minecraft/core/component/PatchedDataComponentMap.java b/net/minecraft/core/component/PatchedDataComponentMap.java
+index 4276819c6143b41886e26d359a562beb3b277afc..6b5b38a0a77c4b95a9ac79b17f681e27811e95dd 100644
+--- a/net/minecraft/core/component/PatchedDataComponentMap.java
++++ b/net/minecraft/core/component/PatchedDataComponentMap.java
+@@ -18,6 +18,11 @@ public final class PatchedDataComponentMap implements DataComponentMap {
+     private final DataComponentMap prototype;
+     private Reference2ObjectMap<DataComponentType<?>, Optional<?>> patch;
+     private boolean copyOnWrite;
++    // Lattice start - cache item max stack size
++    // Based on Leaf 0322 (Lumine1909, Leaves_Fork, GPL-3.0-only):
++    // https://github.com/Winds-Studio/Leaf/commit/f645ed8a86261ada62dcc7c8f2206bb64b78e9b0
++    private int maxStackSize;
++    // Lattice end - cache item max stack size
+ 
+     public PatchedDataComponentMap(DataComponentMap prototype) {
+         this(prototype, Reference2ObjectMaps.emptyMap(), true);
+@@ -27,6 +32,7 @@ public final class PatchedDataComponentMap implements DataComponentMap {
+         this.prototype = prototype;
+         this.patch = patch;
+         this.copyOnWrite = copyOnWrite;
++        this.maxStackSize = this.getOrDefault(DataComponents.MAX_STACK_SIZE, 1); // Lattice - cache item max stack size
+     }
+ 
+     public static PatchedDataComponentMap fromPatch(DataComponentMap prototype, DataComponentPatch patch) {
+@@ -75,6 +81,8 @@ public final class PatchedDataComponentMap implements DataComponentMap {
+             optional = (Optional<T>)this.patch.put(component, Optional.ofNullable(value));
+         }
+ 
++        this.updateMaxStackSize(component); // Lattice - cache item max stack size
++
+         return optional != null ? optional.orElse(object) : object;
+     }
+ 
+@@ -92,6 +100,8 @@ public final class PatchedDataComponentMap implements DataComponentMap {
+             optional = (Optional<? extends T>)this.patch.remove(component);
+         }
+ 
++        this.updateMaxStackSize(component); // Lattice - cache item max stack size
++
+         return (T)(optional != null ? optional.orElse(null) : object);
+     }
+ 
+@@ -116,17 +126,21 @@ public final class PatchedDataComponentMap implements DataComponentMap {
+         } else {
+             this.patch.remove(component);
+         }
++
++        this.updateMaxStackSize(component); // Lattice - cache item max stack size
+     }
+ 
+     public void restorePatch(DataComponentPatch patch) {
+         this.ensureMapOwnership();
+         this.patch.clear();
+         this.patch.putAll(patch.map);
++        this.updateMaxStackSize(null); // Lattice - cache item max stack size
+     }
+ 
+     public void clearPatch() {
+         this.ensureMapOwnership();
+         this.patch.clear();
++        this.updateMaxStackSize(null); // Lattice - cache item max stack size
+     }
+ 
+     public void setAll(DataComponentMap map) {
+@@ -222,6 +236,18 @@ public final class PatchedDataComponentMap implements DataComponentMap {
+         return (DataComponentMap)(this.patch.isEmpty() ? this.prototype : this.copy());
+     }
+ 
++    // Lattice start - cache item max stack size
++    public int getMaxStackSize() {
++        return this.maxStackSize;
++    }
++
++    private void updateMaxStackSize(@Nullable DataComponentType<?> component) {
++        if (component == null || component == DataComponents.MAX_STACK_SIZE) {
++            this.maxStackSize = this.getOrDefault(DataComponents.MAX_STACK_SIZE, 1);
++        }
++    }
++    // Lattice end - cache item max stack size
++
+     @Override
+     public boolean equals(Object other) {
+         return this == other
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index 3e31abbca1426c9332ecb02613648383c8b27cce..c3fbfa6a143611cbb3e98b5b82637b9eb959e080 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -586,7 +586,7 @@ public final class ItemStack implements DataComponentHolder {
+     }
+ 
+     public int getMaxStackSize() {
+-        return this.getOrDefault(DataComponents.MAX_STACK_SIZE, 1);
++        return this.components.getMaxStackSize(); // Lattice - cache item max stack size
+     }
+ 
+     public boolean isStackable() {
