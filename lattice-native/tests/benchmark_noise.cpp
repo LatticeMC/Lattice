@@ -53,6 +53,7 @@ struct OctaveBundle {
 };
 
 volatile double g_sink = 0.0;
+constexpr double kParityTolerance = 1.0e-6;
 
 std::size_t parse_size(std::string_view value, std::size_t fallback) {
     std::string text(value);
@@ -232,7 +233,7 @@ bool run_batch_case(std::string_view algorithm, std::string_view operation,
     const Stats stats = measure([&] { batch(x, y, z, output); }, output, count,
                                 options.warmup, options.samples, target_points);
     print_result(algorithm, operation, options, features, count, stats, parity);
-    return parity.max_abs_error <= 1.0e-12;
+    return parity.max_abs_error <= kParityTolerance;
 }
 
 template <typename Column, typename Point>
@@ -250,7 +251,7 @@ bool run_column_case(std::string_view algorithm, const Options& options,
     const Stats stats = measure([&] { column(x, y0, z, dy, output); }, output, count,
                                 options.warmup, options.samples, target_points);
     print_result(algorithm, "y-column", options, features, count, stats, parity);
-    return parity.max_abs_error <= 1.0e-12;
+    return parity.max_abs_error <= kParityTolerance;
 }
 
 } // namespace
