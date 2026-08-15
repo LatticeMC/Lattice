@@ -5,12 +5,9 @@ import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.component.DataComponentPatch;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.component.PatchedDataComponentMap;
-import net.minecraft.core.registries.Registries;
-import net.minecraft.resources.Identifier;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -55,14 +52,13 @@ class PatchedDataComponentMapMaxStackSizeTestSuite {
 
     @Test
     void maxStackSizeCacheInitializesForSanitizedAndUnsanitizedPatchesAndCopies() {
-        final Item item = itemWithPrototypeMaxStackSize(64);
         final DataComponentPatch sanitizedPatch = DataComponentPatch.builder().set(DataComponents.MAX_STACK_SIZE, 12).build();
-        final ItemStack sanitized = new ItemStack(Holder.direct(item), 1, sanitizedPatch);
+        final ItemStack sanitized = new ItemStack(Items.STONE.builtInRegistryHolder(), 1, sanitizedPatch);
         assertStackState(sanitized);
 
         // A value equal to the prototype is intentionally not sanitized; fromPatch must still initialize the cache.
         final DataComponentPatch unsanitizedPatch = DataComponentPatch.builder().set(DataComponents.MAX_STACK_SIZE, 64).build();
-        final ItemStack unsanitized = new ItemStack(Holder.direct(item), 1, unsanitizedPatch);
+        final ItemStack unsanitized = new ItemStack(Items.STONE.builtInRegistryHolder(), 1, unsanitizedPatch);
         assertStackState(unsanitized);
 
         final ItemStack original = sanitized.copy();
@@ -76,15 +72,8 @@ class PatchedDataComponentMapMaxStackSizeTestSuite {
     }
 
     private static ItemStack stackWithPrototypeMaxStackSize(final int maxStackSize) {
-        return new ItemStack(itemWithPrototypeMaxStackSize(maxStackSize));
-    }
-
-    private static Item itemWithPrototypeMaxStackSize(final int maxStackSize) {
-        return new Item(
-            new Item.Properties()
-                .setId(ResourceKey.create(Registries.ITEM, Identifier.fromNamespaceAndPath("lattice", "max_stack_cache_" + maxStackSize)))
-                .stacksTo(maxStackSize)
-        );
+        assertEquals(64, maxStackSize);
+        return new ItemStack(Items.STONE);
     }
 
     private static PatchedDataComponentMap components(final ItemStack stack) {
