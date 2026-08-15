@@ -30,11 +30,24 @@ public final class EntityDistanceRadixSort {
         double x = target.x();
         double y = target.y();
         double z = target.z();
+        long firstKey = 0L;
+        long differingBits = 0L;
         for (int i = 0; i < size; i++) {
-            this.keys[i] = Double.doubleToRawLongBits(((Entity) entities[i]).distanceToSqr(x, y, z));
+            long key = Double.doubleToRawLongBits(((Entity) entities[i]).distanceToSqr(x, y, z));
+            this.keys[i] = key;
+            if (i == 0) {
+                firstKey = key;
+            } else {
+                differingBits |= key ^ firstKey;
+            }
         }
 
-        sort(entities, this.keys, 0, size - 1, 62);
+        if (differingBits == 0L) {
+            return;
+        }
+        long sortableDifference = differingBits & Long.MAX_VALUE;
+        int startingBit = sortableDifference == 0L ? 62 : 63 - Long.numberOfLeadingZeros(sortableDifference);
+        sort(entities, this.keys, 0, size - 1, startingBit);
     }
 
     private static void sort(Object[] entities, long[] keys, int low, int high, int bit) {
