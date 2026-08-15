@@ -12,8 +12,8 @@ import java.util.Locale;
  * entities from the world or change production tracking behaviour.</p>
  */
 public final class NativeEntityVisibilityBenchmark {
-    private static final int[] ENTITY_COUNTS = {1, 2, 4, 8, 16, 32, 64, 128};
-    private static final int[] PLAYER_COUNTS = {1, 2, 4, 8, 15, 16, 31, 32, 63, 64, 65, 128, 256};
+    private static final int[] ENTITY_COUNTS = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
+    private static final int[] PLAYER_COUNTS = {1, 2, 4, 8, 16, 32, 64};
     private static final SpatialCase[] SPATIAL_CASES = SpatialCase.values();
     private static final SeenCase[] SEEN_CASES = SeenCase.values();
     private static volatile int blackhole;
