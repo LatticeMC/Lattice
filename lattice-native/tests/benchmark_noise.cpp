@@ -207,11 +207,36 @@ std::string expected_path(std::string_view algorithm, std::string_view operation
     return "scalar";
 }
 
+std::string effective_tier(const lattice::cpu::Features& features) {
+    if (features.forced_scalar) return "scalar";
+    if (features.requested_tier == lattice::cpu::RequestedTier::Avx512
+        && features.avx512f && features.avx512dq && features.avx512vl) {
+        return "avx512";
+    }
+    if (features.avx2) return "avx2";
+    return "scalar";
+}
+
+bool requested_tier_supported(const lattice::cpu::Features& features) {
+    switch (features.requested_tier) {
+        case lattice::cpu::RequestedTier::Auto:
+        case lattice::cpu::RequestedTier::Scalar:
+            return true;
+        case lattice::cpu::RequestedTier::Avx2:
+            return features.avx2;
+        case lattice::cpu::RequestedTier::Avx512:
+            return features.avx512f && features.avx512dq && features.avx512vl;
+    }
+    return false;
+}
+
 void print_result(std::string_view algorithm, std::string_view operation,
                   const Options& options, const lattice::cpu::Features& features,
                   std::size_t count, const Stats& stats, const Parity& parity) {
     const double points_per_second = 1.0e9 / stats.p50_ns_per_point;
     std::cout << algorithm << ',' << operation << ',' << options.tier << ','
+              << effective_tier(features) << ','
+              << (requested_tier_supported(features) ? "yes" : "no") << ','
               << expected_path(algorithm, operation, count, features) << ','
               << count << ',' << options.warmup << ',' << options.samples << ','
               << std::fixed << std::setprecision(3)
@@ -264,7 +289,7 @@ int main(int argc, char** argv) {
     }
     const lattice::cpu::Features& features = lattice::cpu::initialize();
     std::cout << "cpu," << lattice::cpu::summary() << '\n';
-    std::cout << "algorithm,operation,requested-tier,expected-path,count,warmup,samples,p50-ns/point,p95-ns/point,points/s,checksum,bitwise,max-abs-error\n";
+    std::cout << "algorithm,operation,requested-tier,effective-tier,requested-supported,expected-path,count,warmup,samples,p50-ns/point,p95-ns/point,points/s,checksum,bitwise,max-abs-error\n";
 
     const noise::PerlinNoiseSampler perlin = make_perlin(0x47, 12.5);
     OctaveBundle octave = make_octaves(8, 0x31);
