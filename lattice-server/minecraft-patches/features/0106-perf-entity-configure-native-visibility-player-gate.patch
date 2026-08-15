@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 15 Aug 2026 12:29:59 +0800
+Subject: [PATCH] perf(entity): configure native visibility player gate
+
+
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+index 2b2d5dfc781e76f074e04c56be9cea260c7395ee..d73c15f4b61009f39255f28f74f87c169b58451b 100644
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -1244,7 +1244,11 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+             final int playerCount = players.size();
+ 
+             // Lattice start - native horizontal-distance prefilter for large player sets
+-            if (playerCount >= 16) {
++            // Lattice: keep the historical default (16), but allow operators to tune this
++            // startup-only gate through lattice.yml -> entity.visibility.minimum-players.
++            final int nativeVisibilityMinimumPlayers = Math.max(0,
++                Integer.getInteger("lattice.nativeEntityVisibilityMinPlayers", 16));
++            if (playerCount >= nativeVisibilityMinimumPlayers) {
+                 if (NativeEntityVisibility.isAvailable()) {
+                     try {
+                         final double[] entityXyz = {this.entity.getX(), 0.0, this.entity.getZ()};
