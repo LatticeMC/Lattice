@@ -324,6 +324,21 @@ tasks.test {
     jvmArgumentProviders.add(provider)
 }
 
+val entityVisibilityBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Benchmark the complete Java and JNI tracked-entity visibility wrappers"
+    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.nativelib.NativeEntityVisibilityBenchmark")
+    workingDir = rootProject.layout.projectDirectory.asFile
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    args(
+        "--warmup=" + providers.gradleProperty("entityVisibilityBenchmarkWarmup").getOrElse("4"),
+        "--samples=" + providers.gradleProperty("entityVisibilityBenchmarkSamples").getOrElse("9"),
+        "--iterations=" + providers.gradleProperty("entityVisibilityBenchmarkIterations").getOrElse("0"),
+    )
+}
+
 val generatedDir: java.nio.file.Path = layout.projectDirectory.dir("../paper-server/src/generated/java").asFile.toPath() // Purpur
 idea {
     module {
