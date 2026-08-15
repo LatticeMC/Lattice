@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 15 Aug 2026 11:52:43 +0800
+Subject: [PATCH] perf(entity): shortcut sparse visibility replay
+
+
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+index 88771e7db09bbd456a2a77704104432f60f5a352..2b2d5dfc781e76f074e04c56be9cea260c7395ee 100644
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -1262,13 +1262,32 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+                         final long[] visibility = new long[NativeEntityVisibility.rowLongs(playerCount)];
+                         NativeEntityVisibility.scan(entityXyz, entityRangeSq, 1, playerXyz, playerCount, visibility);
+ 
+-                        for (int i = 0; i < playerCount; ++i) {
+-                            final ServerPlayer player = playersRaw[i];
+-                            final boolean inCoarseRange = ((visibility[i >>> 6] >>> (i & 63)) & 1L) != 0L;
+-                            if (inCoarseRange) {
+-                                this.updatePlayer(player);
+-                            } else if (this.seenBy.contains(player.connection)) {
+-                                this.removePlayer(player);
++                        boolean allZero = true;
++                        boolean allOne = true;
++                        final int rowLongs = visibility.length;
++                        for (int row = 0; row < rowLongs; ++row) {
++                            final int remaining = playerCount - (row << 6);
++                            final long validMask = remaining >= 64 ? -1L : (1L << remaining) - 1L;
++                            final long bits = visibility[row] & validMask;
++                            allZero &= bits == 0L;
++                            allOne &= bits == validMask;
++                        }
++
++                        if (!(allZero && this.seenBy.isEmpty())) {
++                            if (allOne) {
++                                for (int i = 0; i < playerCount; ++i) {
++                                    this.updatePlayer(playersRaw[i]);
++                                }
++                            } else {
++                                for (int i = 0; i < playerCount; ++i) {
++                                    final ServerPlayer player = playersRaw[i];
++                                    final boolean inCoarseRange = ((visibility[i >>> 6] >>> (i & 63)) & 1L) != 0L;
++                                    if (inCoarseRange) {
++                                        this.updatePlayer(player);
++                                    } else if (this.seenBy.contains(player.connection)) {
++                                        this.removePlayer(player);
++                                    }
++                                }
+                             }
+                         }
+                     } catch (Exception exception) {
