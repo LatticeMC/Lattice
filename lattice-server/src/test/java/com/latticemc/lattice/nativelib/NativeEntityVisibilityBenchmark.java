@@ -6,7 +6,7 @@ import java.util.Locale;
 /**
  * Measures the complete tracked-entity coarse-visibility wrapper, not merely the native SIMD loop.
  *
- * <p>The three timed paths model the current tracker order: every entity visits every player in
+ * <p>The four timed paths model the current tracker order: every entity visits every player in
  * index order and either updates an unseen player or removes a no-longer-visible tracked player.
  * The local-batch variant intentionally only models one {@code TrackedChunk}; it does not gather
  * entities from the world or change production tracking behaviour.</p>
@@ -33,11 +33,12 @@ public final class NativeEntityVisibilityBenchmark {
             config.warmupRounds, config.sampleCount,
             config.iterations > 0 ? Integer.toString(config.iterations) : "adaptive");
         System.out.println("java-direct performs the tracker distance/replay loop without JNI arrays; "
-            + "single-jni exactly models the current N=1 wrapper; batch-jni models one local TrackedChunk.");
+            + "single-jni exactly models the current N=1 wrapper; batch-jni models one local TrackedChunk; "
+            + "reused-batch-jni reuses per-fixture scratch arrays after one-time capacity allocation.");
         System.out.println("For java-direct, scan-p50 is the combined scalar distance/replay loop because the original path has no bitmap phase.");
-        System.out.printf("%-4s %-4s %-14s %-12s %-7s %-9s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-8s%n",
+        System.out.printf("%-4s %-4s %-14s %-12s %-7s %-17s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-8s%n",
             "N", "P", "space", "seen", "iters", "path", "p50-ns", "p95-ns", "pair-p50", "pair-p95",
-            "prep-p50", "scan-p50", "replay-p50", "jni/call", "temp-B", "speed-p50", "speed-p95", "gate");
+            "prep-p50", "scan-p50", "replay-p50", "jni/call", "array/call", "temp-B", "speed-p50", "speed-p95", "gate");
 
         for (final int entityCount : ENTITY_COUNTS) {
             for (final int playerCount : PLAYER_COUNTS) {
@@ -51,16 +52,19 @@ public final class NativeEntityVisibilityBenchmark {
                         final int iterations = config.iterations > 0 ? config.iterations : adaptiveIterations(entityCount, playerCount);
                         final Result result = measure(fixture, config.warmupRounds, config.sampleCount, iterations);
                         printRow(fixture, iterations, "java-direct", result.javaDirect, result.javaDirect,
-                            0, 0L, entityCount * playerCount, "baseline");
+                            0, 0, 0L, entityCount * playerCount, "baseline");
                         final boolean singleCandidate = isCandidate(result.singleJni, result.javaDirect);
                         final boolean batchCandidate = isCandidate(result.batchJni, result.javaDirect);
-                        gates.record(singleCandidate, batchCandidate);
+                        final boolean reusedCandidate = isCandidate(result.reusedBatchJni, result.javaDirect);
+                        gates.record(singleCandidate, batchCandidate, reusedCandidate);
                         printRow(fixture, iterations, "single-jni", result.singleJni, result.javaDirect,
-                            entityCount, singleTemporaryPayloadBytes(entityCount, playerCount), entityCount * playerCount,
+                            entityCount, entityCount * 4, singleTemporaryPayloadBytes(entityCount, playerCount), entityCount * playerCount,
                             singleCandidate ? "yes" : "no");
                         printRow(fixture, iterations, "batch-jni", result.batchJni, result.javaDirect,
-                            1, batchTemporaryPayloadBytes(entityCount, playerCount), entityCount * playerCount,
+                            1, 4, batchTemporaryPayloadBytes(entityCount, playerCount), entityCount * playerCount,
                             batchCandidate ? "yes" : "no");
+                        printRow(fixture, iterations, "reused-batch-jni", result.reusedBatchJni, result.javaDirect,
+                            1, 0, 0L, entityCount * playerCount, reusedCandidate ? "yes" : "no");
                     }
                 }
                 gates.printRecommendation();
@@ -68,7 +72,7 @@ public final class NativeEntityVisibilityBenchmark {
         }
         System.out.printf("blackhole=%d%n", blackhole);
         System.out.println("result=gate recommendations require every spatial/seenBy case to be at least 10% faster at p50 and no slower at p95; "
-            + "this benchmark deliberately makes no production-path change.");
+            + "reused-batch candidates are emitted as stable (N,P) lines; this benchmark deliberately makes no production-path change.");
     }
 
     private static void assertParity(final Fixture fixture) {
@@ -89,9 +93,15 @@ public final class NativeEntityVisibilityBenchmark {
         final ReplayState batchState = fixture.newState();
         final long[] batchBits = new long[javaBits.length];
         final int batchChecksum = localBatchJni(fixture, batchState, null, batchBits);
+        final ReplayState reusedBatchState = fixture.newState();
+        final long[] reusedBatchBits = new long[javaBits.length];
+        final int reusedBatchChecksum = reusedBatchJni(fixture, reusedBatchState, new ReusableBatchScratch(fixture), null, reusedBatchBits);
         if (directChecksum != javaScanChecksum || directChecksum != singleChecksum || directChecksum != batchChecksum
-            || !Arrays.equals(directBits, javaBits) || !Arrays.equals(javaBits, singleBits) || !Arrays.equals(javaBits, batchBits)
-            || !directState.matches(javaScanState) || !directState.matches(singleState) || !directState.matches(batchState)) {
+            || directChecksum != reusedBatchChecksum || !Arrays.equals(directBits, javaBits)
+            || !Arrays.equals(javaBits, singleBits) || !Arrays.equals(javaBits, batchBits)
+            || !Arrays.equals(javaBits, reusedBatchBits) || !directState.matches(javaScanState)
+            || !directState.matches(singleState) || !directState.matches(batchState)
+            || !directState.matches(reusedBatchState)) {
             throw new AssertionError("visibility replay mismatch N=" + fixture.entityCount + " P=" + fixture.playerCount
                 + " spatial=" + fixture.spatialCase + " seen=" + fixture.seenCase);
         }
@@ -101,40 +111,54 @@ public final class NativeEntityVisibilityBenchmark {
         final ReplayState directState = fixture.newState();
         final ReplayState singleState = fixture.newState();
         final ReplayState batchState = fixture.newState();
-        warmup(fixture, directState, singleState, batchState, warmupRounds, iterations);
+        final ReplayState reusedBatchState = fixture.newState();
+        final ReusableBatchScratch reusedScratch = new ReusableBatchScratch(fixture);
+        warmup(fixture, directState, singleState, batchState, reusedBatchState, reusedScratch, warmupRounds, iterations);
 
         final SampleSet direct = new SampleSet(samples);
         final SampleSet single = new SampleSet(samples);
         final SampleSet batch = new SampleSet(samples);
+        final SampleSet reusedBatch = new SampleSet(samples);
         for (int sample = 0; sample < samples; ++sample) {
-            switch (sample % 3) {
+            switch (sample % 4) {
                 case 0 -> {
                     direct.add(measureJavaDirect(fixture, directState, iterations));
                     single.add(measureSingle(fixture, singleState, iterations));
                     batch.add(measureBatch(fixture, batchState, iterations));
+                    reusedBatch.add(measureReusedBatch(fixture, reusedBatchState, reusedScratch, iterations));
                 }
                 case 1 -> {
+                    single.add(measureSingle(fixture, singleState, iterations));
                     batch.add(measureBatch(fixture, batchState, iterations));
+                    reusedBatch.add(measureReusedBatch(fixture, reusedBatchState, reusedScratch, iterations));
+                    direct.add(measureJavaDirect(fixture, directState, iterations));
+                }
+                case 2 -> {
+                    batch.add(measureBatch(fixture, batchState, iterations));
+                    reusedBatch.add(measureReusedBatch(fixture, reusedBatchState, reusedScratch, iterations));
                     direct.add(measureJavaDirect(fixture, directState, iterations));
                     single.add(measureSingle(fixture, singleState, iterations));
                 }
                 default -> {
+                    reusedBatch.add(measureReusedBatch(fixture, reusedBatchState, reusedScratch, iterations));
+                    direct.add(measureJavaDirect(fixture, directState, iterations));
                     single.add(measureSingle(fixture, singleState, iterations));
                     batch.add(measureBatch(fixture, batchState, iterations));
-                    direct.add(measureJavaDirect(fixture, directState, iterations));
                 }
             }
         }
-        return new Result(direct.result(), single.result(), batch.result());
+        return new Result(direct.result(), single.result(), batch.result(), reusedBatch.result());
     }
 
     private static void warmup(final Fixture fixture, final ReplayState directState, final ReplayState singleState,
-                               final ReplayState batchState, final int rounds, final int iterations) {
+                               final ReplayState batchState, final ReplayState reusedBatchState,
+                               final ReusableBatchScratch reusedScratch, final int rounds, final int iterations) {
         final int warmupIterations = Math.max(8, iterations / 5);
         for (int round = 0; round < rounds; ++round) {
             measureJavaDirect(fixture, directState, warmupIterations);
             measureSingle(fixture, singleState, warmupIterations);
             measureBatch(fixture, batchState, warmupIterations);
+            measureReusedBatch(fixture, reusedBatchState, reusedScratch, warmupIterations);
         }
     }
 
@@ -181,6 +205,21 @@ public final class NativeEntityVisibilityBenchmark {
         return times.dividePhases(iterations);
     }
 
+    private static PhaseTimes measureReusedBatch(final Fixture fixture, final ReplayState state,
+                                                 final ReusableBatchScratch scratch, final int iterations) {
+        int checksum = blackhole;
+        final long start = System.nanoTime();
+        for (int iteration = 0; iteration < iterations; ++iteration) {
+            state.reset();
+            checksum = 31 * checksum + reusedBatchJni(fixture, state, scratch, null, null);
+        }
+        final long totalElapsed = System.nanoTime() - start;
+        final PhaseTimes times = profileReusedBatchPhases(fixture, state, scratch, iterations);
+        times.total = totalElapsed / iterations;
+        blackhole = checksum;
+        return times.dividePhases(iterations);
+    }
+
     private static PhaseTimes profileSinglePhases(final Fixture fixture, final ReplayState state, final int iterations) {
         final PhaseTimes times = new PhaseTimes();
         int checksum = blackhole;
@@ -198,6 +237,18 @@ public final class NativeEntityVisibilityBenchmark {
         for (int iteration = 0; iteration < iterations; ++iteration) {
             state.reset();
             checksum = 31 * checksum + localBatchJni(fixture, state, times, null);
+        }
+        blackhole = checksum;
+        return times;
+    }
+
+    private static PhaseTimes profileReusedBatchPhases(final Fixture fixture, final ReplayState state,
+                                                       final ReusableBatchScratch scratch, final int iterations) {
+        final PhaseTimes times = new PhaseTimes();
+        int checksum = blackhole;
+        for (int iteration = 0; iteration < iterations; ++iteration) {
+            state.reset();
+            checksum = 31 * checksum + reusedBatchJni(fixture, state, scratch, times, null);
         }
         blackhole = checksum;
         return times;
@@ -286,6 +337,26 @@ public final class NativeEntityVisibilityBenchmark {
         return checksum;
     }
 
+    /** Reuses one per-fixture scratch allocation; only logical ranges are filled and cleared per call. */
+    private static int reusedBatchJni(final Fixture fixture, final ReplayState state,
+                                      final ReusableBatchScratch scratch, final PhaseTimes times,
+                                      final long[] parityVisibility) {
+        final long prepareStart = times == null ? 0L : System.nanoTime();
+        scratch.fill(fixture);
+        if (times != null) times.prepare += System.nanoTime() - prepareStart;
+        final long scanStart = times == null ? 0L : System.nanoTime();
+        NativeEntityVisibility.scan(scratch.entityXyz, scratch.entityRangeSq, fixture.entityCount,
+            scratch.playerXyz, fixture.playerCount, scratch.visibility);
+        if (times != null) times.scan += System.nanoTime() - scanStart;
+        if (parityVisibility != null) {
+            System.arraycopy(scratch.visibility, 0, parityVisibility, 0, fixture.entityCount * fixture.rowLongs);
+        }
+        final long replayStart = times == null ? 0L : System.nanoTime();
+        final int checksum = replayBitmap(fixture, scratch.visibility, state);
+        if (times != null) times.replay += System.nanoTime() - replayStart;
+        return checksum;
+    }
+
     private static BatchInput materializeBatch(final Fixture fixture) {
         final double[] entityXyz = new double[fixture.entityCount * 3];
         final double[] entityRangeSq = new double[fixture.entityCount];
@@ -324,12 +395,13 @@ public final class NativeEntityVisibilityBenchmark {
 
     private static void printRow(final Fixture fixture, final int iterations, final String path,
                                  final PathResult result, final PathResult javaDirect, final int jniCalls,
-                                 final long temporaryPayloadBytes, final int pairs, final String gate) {
+                                 final int steadyArrayAllocations, final long temporaryPayloadBytes,
+                                 final int pairs, final String gate) {
         System.out.printf(Locale.ROOT,
-            "%-4d %-4d %-14s %-12s %-7d %-9s %-10.1f %-10.1f %-10.3f %-10.3f %-10.1f %-10.1f %-10.1f %-10d %-10d %-10.3f %-10.3f %-8s%n",
+            "%-4d %-4d %-14s %-12s %-7d %-17s %-10.1f %-10.1f %-10.3f %-10.3f %-10.1f %-10.1f %-10.1f %-10d %-10d %-10d %-10.3f %-10.3f %-8s%n",
             fixture.entityCount, fixture.playerCount, fixture.spatialCase.label, fixture.seenCase.label, iterations,
             path, result.totalP50, result.totalP95, result.totalP50 / pairs, result.totalP95 / pairs,
-            result.prepareP50, result.scanP50, result.replayP50, jniCalls, temporaryPayloadBytes,
+            result.prepareP50, result.scanP50, result.replayP50, jniCalls, steadyArrayAllocations, temporaryPayloadBytes,
             javaDirect.totalP50 / result.totalP50, javaDirect.totalP95 / result.totalP95,
             gate);
     }
@@ -497,6 +569,37 @@ public final class NativeEntityVisibilityBenchmark {
 
     private record BatchInput(double[] entityXyz, double[] entityRangeSq, double[] playerXyz) {}
 
+    private static final class ReusableBatchScratch {
+        private final double[] entityXyz;
+        private final double[] entityRangeSq;
+        private final double[] playerXyz;
+        private final long[] visibility;
+
+        private ReusableBatchScratch(final Fixture fixture) {
+            this.entityXyz = new double[fixture.entityCount * 3];
+            this.entityRangeSq = new double[fixture.entityCount];
+            this.playerXyz = new double[fixture.playerCount * 3];
+            this.visibility = new long[fixture.entityCount * fixture.rowLongs];
+        }
+
+        private void fill(final Fixture fixture) {
+            for (int entity = 0; entity < fixture.entityCount; ++entity) {
+                final int index = entity * 3;
+                this.entityXyz[index] = fixture.entityX[entity];
+                this.entityXyz[index + 1] = 0.0D;
+                this.entityXyz[index + 2] = fixture.entityZ[entity];
+                this.entityRangeSq[entity] = fixture.rangeSq[entity];
+            }
+            for (int player = 0; player < fixture.playerCount; ++player) {
+                final int index = player * 3;
+                this.playerXyz[index] = fixture.playerX[player];
+                this.playerXyz[index + 1] = 0.0D;
+                this.playerXyz[index + 2] = fixture.playerZ[player];
+            }
+            Arrays.fill(this.visibility, 0, fixture.entityCount * fixture.rowLongs, 0L);
+        }
+    }
+
     private static final class PhaseTimes {
         private long total;
         private long prepare;
@@ -560,15 +663,18 @@ public final class NativeEntityVisibilityBenchmark {
         private final int playerCount;
         private boolean allSingle = true;
         private boolean allBatch = true;
+        private boolean allReusedBatch = true;
 
         private GateSummary(final int entityCount, final int playerCount) {
             this.entityCount = entityCount;
             this.playerCount = playerCount;
         }
 
-        private void record(final boolean singleCandidate, final boolean batchCandidate) {
+        private void record(final boolean singleCandidate, final boolean batchCandidate,
+                            final boolean reusedBatchCandidate) {
             allSingle &= singleCandidate;
             allBatch &= batchCandidate;
+            allReusedBatch &= reusedBatchCandidate;
         }
 
         private void printRecommendation() {
@@ -578,12 +684,15 @@ public final class NativeEntityVisibilityBenchmark {
             }
             System.out.printf("gate-summary local-batch N*P=%d (%d*%d) recommendation=%s%n",
                 entityCount * playerCount, entityCount, playerCount, allBatch ? "candidate" : "no-gate");
+            System.out.printf("reused-gate-%s N=%d P=%d%n",
+                allReusedBatch ? "candidate" : "no-gate", entityCount, playerCount);
         }
     }
 
     private record PathResult(double totalP50, double totalP95, double prepareP50, double scanP50, double replayP50) {}
 
-    private record Result(PathResult javaDirect, PathResult singleJni, PathResult batchJni) {}
+    private record Result(PathResult javaDirect, PathResult singleJni, PathResult batchJni,
+                          PathResult reusedBatchJni) {}
 
     private record Config(int warmupRounds, int sampleCount, int iterations) {
         private static Config parse(final String[] args) {
