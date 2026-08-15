@@ -356,6 +356,23 @@ val nativeDensityWorldgenBenchmark by tasks.registering(JavaExec::class) {
     )
 }
 
+val nativeNoiseJniBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Benchmark Java scalar noise against existing single-point JNI wrappers"
+    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("net.minecraft.world.level.levelgen.synth.NativeNoiseJniBenchmark")
+    workingDir = rootProject.layout.projectDirectory.asFile
+    jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dlattice.nativeScalarPerlin=false")
+    args(
+        "--warmup=" + providers.gradleProperty("nativeNoiseJniBenchmarkWarmup").getOrElse("5"),
+        "--samples=" + providers.gradleProperty("nativeNoiseJniBenchmarkSamples").getOrElse("15"),
+        "--target-points=" + providers.gradleProperty("nativeNoiseJniBenchmarkTargetPoints").getOrElse("100000"),
+        "--heavy-target-points=" + providers.gradleProperty("nativeNoiseJniBenchmarkHeavyTargetPoints").getOrElse("5000"),
+        "--counts=" + providers.gradleProperty("nativeNoiseJniBenchmarkCounts").getOrElse("1,8,49,245,2048"),
+    )
+}
+
 val generatedDir: java.nio.file.Path = layout.projectDirectory.dir("../paper-server/src/generated/java").asFile.toPath() // Purpur
 idea {
     module {
