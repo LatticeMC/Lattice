@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.levelgen.DensityFunction;
 
@@ -24,6 +26,8 @@ public final class NativeNoiseJniBenchmark {
 
     public static void main(String[] args) {
         Options options = Options.parse(args);
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
         LatticeNative.ensureLoaded();
         if (!LatticeNative.isLoaded()) {
             throw new IllegalStateException("Lattice native library is unavailable");
