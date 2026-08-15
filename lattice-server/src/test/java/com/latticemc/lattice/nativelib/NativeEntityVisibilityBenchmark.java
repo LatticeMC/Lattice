@@ -28,6 +28,7 @@ public final class NativeEntityVisibilityBenchmark {
         }
 
         System.out.println("Entity visibility complete-wrapper benchmark");
+        System.out.println("matrix=measure only P<=N combinations");
         System.out.printf("cpu=%s warmup=%d samples=%d iterations=%s%n", LatticeNative.cpuSummary(),
             config.warmupRounds, config.sampleCount,
             config.iterations > 0 ? Integer.toString(config.iterations) : "adaptive");
@@ -40,6 +41,8 @@ public final class NativeEntityVisibilityBenchmark {
 
         for (final int entityCount : ENTITY_COUNTS) {
             for (final int playerCount : PLAYER_COUNTS) {
+                // Keep only matrix cells where the player count does not exceed the entity count.
+                if (playerCount > entityCount) continue;
                 final GateSummary gates = new GateSummary(entityCount, playerCount);
                 for (final SpatialCase spatialCase : SPATIAL_CASES) {
                     for (final SeenCase seenCase : SEEN_CASES) {
