@@ -233,7 +233,7 @@ else()
     # Portable baseline ISA (avoid -march=native: produced .so wouldn't run on
     # users' CPUs lacking AVX/AVX-512). Specialised TUs opt in via -m<flag>.
     if(LATTICE_ARCH_X86)
-        target_compile_options(lattice_baseline_flags INTERFACE -msse2)
+        target_compile_options(lattice_baseline_flags INTERFACE -msse4.2 -mpopcnt)
     endif()
     if(LATTICE_WARNINGS_AS_ERRORS)
         target_compile_options(lattice_baseline_flags INTERFACE -Werror)
