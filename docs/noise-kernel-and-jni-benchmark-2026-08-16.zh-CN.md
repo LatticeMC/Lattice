@@ -14,11 +14,13 @@
 - CPU：AMD Ryzen 5 9600X，family `0x1A`，model `0x44`
 - Java：Java 25.0.3
 - Native baseline：x86-64 `SSE4.2 + POPCNT`，`-O3`，`-ffp-contract=off`
-- 禁止 FMA 与 fast-math
+- 禁止浮点收缩，未启用 fast-math，代码未使用 FMA intrinsic
 - Native 正确性：Perlin、Octave、Double-Perlin、Interpolated、Simplex 共 5 个测试全部通过
 - Java JNI 基准：所有操作均通过 parity；输出与 Java reference 逐位一致
 
-测试期间发现并修复了一个独立正确性问题：Native Simplex 3D 错误地使用了对象保存的 `xo/yo/zo`，而 Minecraft 的 `SimplexNoise.getValue(x, y, z)` 不使用这些偏移。修复后增加了“保存的 origin 不影响 2D/3D”回归测试。
+测试期间发现并修复了一个独立正确性问题：Native Simplex 3D 错误地使用了对象保存的 `xo/yo/zo`，而当前 Vanilla 源码 `lattice-server/src/minecraft/java/net/minecraft/world/level/levelgen/synth/SimplexNoise.java:106` 的 `getValue(x, y, z)` 直接使用调用坐标，不读取这些偏移。修复后增加了“保存的 origin 不影响 2D/3D”回归测试。
+
+下文数字是本次命令输出的实测记录。仓库保存了可复测基准、命令与汇总，没有提交完整 stdout/CSV；因此 Git 本身可以复跑验证方向，但不能单独证明每一个转录数字。
 
 ## 纯 Native 内核结果
 
@@ -74,7 +76,7 @@
 
 在只支持 SSE4.2 的机器上：
 
-- AVX2/AVX-512 必须报告为 unsupported/skip，不能回退后仍标成 SIMD 结果。
+- AVX2/AVX-512 必须检查 CSV 的 `effective-tier` 与 `requested-supported`；不支持时结果会明确标成 fallback，不能按请求的 tier 统计为 SIMD 成绩。
 - 应重点测 Java reference 与 Native scalar 的交叉点，以及绝对 `ns/point`。
 - 如果老 E5 的 Java JIT 对复杂 Octave/Normal 路径优化较弱，Native scalar 可能比本机更有价值；反之，Improved Perlin 和 Simplex 2D 的 JNI 固定成本仍可能占主导。
 - 在取得真实 SSE4.2-only 数据前，不修改自动门禁和默认值。已有显式配置可用于实机 A/B。
