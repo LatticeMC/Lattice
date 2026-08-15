@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 15 Aug 2026 12:46:27 +0800
+Subject: [PATCH] perf(entity): resolve visibility gate at startup
+
+
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+index d73c15f4b61009f39255f28f74f87c169b58451b..ac43eb203439a3a79312f3d646486575d19fa668 100644
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -123,6 +123,10 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+     private static final int CHUNK_SAVED_EAGERLY_PER_TICK = 20;
+     private static final int EAGER_CHUNK_SAVE_COOLDOWN_IN_MILLIS = 10000;
+     private static final int MAX_ACTIVE_CHUNK_WRITES = 128;
++    // Lattice: startup-only property read; the historical default remains 16. LatticeBootstrap
++    // preloads lattice.yml before ChunkMap/native consumers are initialized.
++    private static final int LATTICE_NATIVE_VISIBILITY_MIN_PLAYERS = Math.max(0,
++        Integer.getInteger("lattice.nativeEntityVisibilityMinPlayers", 16));
+     public static final int MIN_VIEW_DISTANCE = 2;
+     public static final int MAX_VIEW_DISTANCE = 32;
+     public static final int FORCED_TICKET_LEVEL = ChunkLevel.byStatus(FullChunkStatus.ENTITY_TICKING);
+@@ -1246,9 +1250,7 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+             // Lattice start - native horizontal-distance prefilter for large player sets
+             // Lattice: keep the historical default (16), but allow operators to tune this
+             // startup-only gate through lattice.yml -> entity.visibility.minimum-players.
+-            final int nativeVisibilityMinimumPlayers = Math.max(0,
+-                Integer.getInteger("lattice.nativeEntityVisibilityMinPlayers", 16));
+-            if (playerCount >= nativeVisibilityMinimumPlayers) {
++            if (playerCount >= LATTICE_NATIVE_VISIBILITY_MIN_PLAYERS) {
+                 if (NativeEntityVisibility.isAvailable()) {
+                     try {
+                         final double[] entityXyz = {this.entity.getX(), 0.0, this.entity.getZ()};
