@@ -339,6 +339,23 @@ val entityVisibilityBenchmark by tasks.registering(JavaExec::class) {
     )
 }
 
+val nativeDensityWorldgenBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Benchmark real Overworld NoiseChunk Java and native density wrappers"
+    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("net.minecraft.world.level.levelgen.NativeDensityFunctionWorldgenBenchmark")
+    workingDir = rootProject.layout.projectDirectory.asFile
+    jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dlattice.nativeDensityFunctionGrid=true")
+    args(
+        "--warmup=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkWarmup").getOrElse("4"),
+        "--samples=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkSamples").getOrElse("9"),
+        "--cold-samples=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkColdSamples").getOrElse("3"),
+        "--work-items=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkWorkItems").getOrElse("1,2,4,6,8,16,32"),
+        "--workers=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkWorkers").getOrElse("1,2,4,6,8"),
+    )
+}
+
 val generatedDir: java.nio.file.Path = layout.projectDirectory.dir("../paper-server/src/generated/java").asFile.toPath() // Purpur
 idea {
     module {
