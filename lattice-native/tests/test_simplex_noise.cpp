@@ -50,6 +50,17 @@ TEST_CASE("simplex: 3D sample is finite and bounded") {
     }
 }
 
+TEST_CASE("simplex: stored origins do not affect 2D or 3D samples") {
+    auto baseline = make_shuffled();
+    auto shifted = baseline;
+    shifted.origin_x = 17.25;
+    shifted.origin_y = -31.5;
+    shifted.origin_z = 63.75;
+
+    CHECK(sample_2d(shifted, 1.25, -3.5) == sample_2d(baseline, 1.25, -3.5));
+    CHECK(sample_3d(shifted, 1.25, -3.5, 7.75) == sample_3d(baseline, 1.25, -3.5, 7.75));
+}
+
 TEST_CASE("simplex: 2D is continuous over small steps") {
     auto s = make_shuffled();
     const double x = 1.3, y = -0.7;

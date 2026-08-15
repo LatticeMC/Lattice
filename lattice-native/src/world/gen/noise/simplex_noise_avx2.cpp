@@ -111,9 +111,9 @@ inline void sample4_3d(const SimplexNoiseSampler& s,
                        double* out) noexcept {
     constexpr double F3 = 1.0 / 3.0;
     constexpr double G3 = 1.0 / 6.0;
-    const __m256d vx = _mm256_add_pd(_mm256_loadu_pd(x), _mm256_set1_pd(s.origin_x));
-    const __m256d vy = _mm256_add_pd(_mm256_loadu_pd(y), _mm256_set1_pd(s.origin_y));
-    const __m256d vz = _mm256_add_pd(_mm256_loadu_pd(z), _mm256_set1_pd(s.origin_z));
+    const __m256d vx = _mm256_loadu_pd(x);
+    const __m256d vy = _mm256_loadu_pd(y);
+    const __m256d vz = _mm256_loadu_pd(z);
     const __m256d skew = _mm256_mul_pd(_mm256_add_pd(_mm256_add_pd(vx, vy), vz), _mm256_set1_pd(F3));
 
     const __m256d sx = _mm256_add_pd(vx, skew);

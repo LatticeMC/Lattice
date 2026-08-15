@@ -144,11 +144,6 @@ void sample_2d_batch(const SimplexNoiseSampler& s,
 }
 
 double sample_3d(const SimplexNoiseSampler& s, double x, double y, double z) noexcept {
-    // Apply per-sampler origin offsets first.
-    x += s.origin_x;
-    y += s.origin_y;
-    z += s.origin_z;
-
     // Skew factors for 3D: F3 = 1/3, G3 = 1/6.
     constexpr double F3 = 1.0 / 3.0;
     constexpr double G3 = 1.0 / 6.0;

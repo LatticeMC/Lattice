@@ -11,8 +11,8 @@
  * (`sample(x, y, z)`) appears in a few other contexts.
  *
  * Same RNG-boundary policy as PerlinNoiseSampler: the 256-int
- * permutation and the 3 origin offsets are computed Java-side and
- * handed off; we don't reimplement the RNG.
+ * permutation and the 3 stored origin offsets are computed Java-side and
+ * handed off; Mojang's 2D and 3D sample methods do not apply those offsets.
  */
 
 #pragma once
@@ -32,7 +32,7 @@ struct SimplexNoiseSampler {
     std::int32_t permutation[256];
 };
 
-/// 2D Simplex sample. `originZ` is unused.
+/// 2D Simplex sample. Stored origin offsets are unused.
 [[nodiscard]] double sample_2d(const SimplexNoiseSampler& s,
                                double x, double y) noexcept;
 
@@ -48,7 +48,7 @@ void sample_2d_batch_avx2(const SimplexNoiseSampler& s,
                           const double* x, const double* y,
                           std::size_t count, double* out) noexcept;
 
-/// 3D Simplex sample.
+/// 3D Simplex sample. Stored origin offsets are unused.
 [[nodiscard]] double sample_3d(const SimplexNoiseSampler& s,
                                double x, double y, double z) noexcept;
 
