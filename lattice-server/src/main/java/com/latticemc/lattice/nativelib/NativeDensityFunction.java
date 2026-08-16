@@ -37,6 +37,7 @@ public final class NativeDensityFunction {
     private static volatile boolean SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionSpline", "true"));
     private static volatile boolean MULTIPOINT_SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionMultipointSpline", "true"));
     private static volatile boolean CLIMATE_BATCH_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionClimateBatch", "true"));
+    private static volatile boolean LAZY_MIXED_RANGE_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionLazyMixedRange");
     private static volatile boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
     private static volatile boolean EXECUTION_STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionExecutionStats");
     private static volatile boolean PROFILING_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionProfiling");
@@ -53,6 +54,7 @@ public final class NativeDensityFunction {
     private static volatile boolean INTERPOLATED_COLUMN_NATIVE_AVAILABLE = true;
     private static volatile boolean INTERPOLATED_COLUMNS_NATIVE_AVAILABLE = true;
     private static volatile boolean EXECUTION_STATS_NATIVE_AVAILABLE = true;
+    private static volatile boolean LAZY_MIXED_RANGE_NATIVE_AVAILABLE = true;
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, NativeDensityFunction> DIRECT_CACHE = new WeakHashMap<>();
@@ -1359,6 +1361,9 @@ public final class NativeDensityFunction {
 
     private static long createCache(long handle) {
         long cacheHandle = nativeCreateCache(handle);
+        if (cacheHandle != 0L && LAZY_MIXED_RANGE_ENABLED) {
+            enableLazyMixedRange(cacheHandle);
+        }
         if (cacheHandle != 0L && EXECUTION_STATS_ENABLED && enableExecutionStats(cacheHandle)) {
             trackExecutionStatsCache(cacheHandle);
         }
@@ -1374,6 +1379,16 @@ public final class NativeDensityFunction {
             EXECUTION_STATS_NATIVE_AVAILABLE = false;
             LatticeNative.logFallbackOnce("density_function_execution_stats_symbol", error.getMessage());
             return false;
+        }
+    }
+
+    private static void enableLazyMixedRange(long cacheHandle) {
+        if (!LAZY_MIXED_RANGE_NATIVE_AVAILABLE) return;
+        try {
+            nativeSetLazyMixedRangeEnabled(cacheHandle, true);
+        } catch (UnsatisfiedLinkError | NoSuchMethodError error) {
+            LAZY_MIXED_RANGE_NATIVE_AVAILABLE = false;
+            LatticeNative.logFallbackOnce("density_function_lazy_mixed_range_symbol", error.getMessage());
         }
     }
 
@@ -1569,6 +1584,7 @@ public final class NativeDensityFunction {
             case "spline" -> SPLINE_ENABLED = value;
             case "multipointSpline" -> MULTIPOINT_SPLINE_ENABLED = value;
             case "climateBatch" -> CLIMATE_BATCH_ENABLED = value;
+            case "lazyMixedRange" -> LAZY_MIXED_RANGE_ENABLED = value;
             case "stats" -> STATS_ENABLED = value;
             case "executionStats" -> EXECUTION_STATS_ENABLED = value;
             case "profiling" -> PROFILING_ENABLED = value;
@@ -1601,6 +1617,8 @@ public final class NativeDensityFunction {
                 + " spline=" + SPLINE_ENABLED
                 + " multipointSpline=" + MULTIPOINT_SPLINE_ENABLED
                 + " climateBatch=" + CLIMATE_BATCH_ENABLED
+                + " lazyMixedRange=" + LAZY_MIXED_RANGE_ENABLED
+                + " lazyMixedRangeNative=" + LAZY_MIXED_RANGE_NATIVE_AVAILABLE
                 + " stats=" + STATS_ENABLED
                 + " executionStats=" + EXECUTION_STATS_ENABLED
                 + " profiling=" + PROFILING_ENABLED
@@ -2775,6 +2793,7 @@ public final class NativeDensityFunction {
     private static native void nativeBindCacheAllInCellArrays(long cacheHandle, double[][] arrays);
     private static native void nativeClearCache(long cacheHandle);
     private static native void nativeSetExecutionStatsEnabled(long cacheHandle, boolean enabled);
+    private static native void nativeSetLazyMixedRangeEnabled(long cacheHandle, boolean enabled);
     private static native void nativeResetExecutionStats(long cacheHandle);
     private static native long[] nativeGetExecutionStats(long cacheHandle);
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);

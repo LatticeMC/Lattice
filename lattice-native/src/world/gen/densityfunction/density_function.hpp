@@ -554,6 +554,10 @@ struct CacheState {
     std::vector<double> scratch_value;
     std::vector<std::vector<double>> scratch_columns;
     std::size_t scratch_column_depth = 0;
+    /// Benchmark-only experiment: for a mixed RangeChoice column, evaluate
+    /// only the selected branch per Y sample. The default retains the eager
+    /// column evaluation of both branches.
+    bool lazy_mixed_range = false;
     /// Allocated only when Java enables execution diagnostics. The hot path
     /// otherwise sees a single null-pointer branch and performs no counting.
     std::unique_ptr<ExecutionStats> execution_stats;
@@ -719,6 +723,14 @@ struct Context {
 /// Evaluate a specific sub-tree.
 [[nodiscard]] double evaluate(const NodeArena& arena, NodeRef root,
                               const Context& ctx) noexcept;
+
+/// Scalar branch selection for an already-evaluated mixed RangeChoice input
+/// column. This follows the same per-Y context and comparison as point
+/// evaluation, and is only selected by the opt-in experimental path.
+void evaluate_mixed_range_choice_lazily(const NodeArena& arena, const Node& node,
+                                        const Context& base,
+                                        double y0, double dy, int ny,
+                                        const double* input, double* out) noexcept;
 
 /// Batched cell-grid evaluation. Computes
 ///

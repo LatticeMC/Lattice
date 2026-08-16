@@ -95,10 +95,15 @@ inline double squeeze(double v) noexcept {
     return clamped * 0.5 - clamped * clamped * clamped / 24.0;
 }
 
-inline void record_range_choice_shape(CacheState* cache, const double* values,
-                                      int ny, double min_inclusive,
-                                      double max_exclusive) noexcept {
-    if (!cache || !cache->execution_stats) return;
+enum class RangeChoiceShape : std::uint8_t {
+    kAllIn,
+    kAllOut,
+    kMixed,
+};
+
+inline RangeChoiceShape range_choice_shape(const double* values, int ny,
+                                           double min_inclusive,
+                                           double max_exclusive) noexcept {
     bool any_in = false;
     bool any_out = false;
     for (int i = 0; i < ny; ++i) {
@@ -106,13 +111,18 @@ inline void record_range_choice_shape(CacheState* cache, const double* values,
             && values[static_cast<std::size_t>(i)] < max_exclusive;
         any_in = any_in || in_range;
         any_out = any_out || !in_range;
-        if (any_in && any_out) {
-            ++cache->execution_stats->range_mixed;
-            return;
-        }
+        if (any_in && any_out) return RangeChoiceShape::kMixed;
     }
-    if (any_in) ++cache->execution_stats->range_all_in;
-    else ++cache->execution_stats->range_all_out;
+    return any_in ? RangeChoiceShape::kAllIn : RangeChoiceShape::kAllOut;
+}
+
+inline void record_range_choice_shape(CacheState* cache, RangeChoiceShape shape) noexcept {
+    if (!cache || !cache->execution_stats) return;
+    switch (shape) {
+        case RangeChoiceShape::kAllIn: ++cache->execution_stats->range_all_in; break;
+        case RangeChoiceShape::kAllOut: ++cache->execution_stats->range_all_out; break;
+        case RangeChoiceShape::kMixed: ++cache->execution_stats->range_mixed; break;
+    }
 }
 
 inline double evaluate_end_islands(const Node& n, double x, double z) noexcept {
@@ -392,10 +402,19 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
 
         case NodeKind::kRangeChoice: {
             ColumnScratchLease input(base.cache, ny);
+            if (!eval_child(n.a, input.data())) return false;
+            const bool inspect_shape = base.cache
+                && (base.cache->lazy_mixed_range || base.cache->execution_stats);
+            if (inspect_shape) {
+                const RangeChoiceShape shape = range_choice_shape(input.data(), ny, n.d0, n.d1);
+                record_range_choice_shape(base.cache, shape);
+                if (base.cache->lazy_mixed_range && shape == RangeChoiceShape::kMixed) {
+                    evaluate_mixed_range_choice_lazily(arena, n, base, y0, dy, ny, input.data(), out);
+                    return true;
+                }
+            }
             ColumnScratchLease in_values(base.cache, ny);
             ColumnScratchLease out_values(base.cache, ny);
-            if (!eval_child(n.a, input.data())) return false;
-            record_range_choice_shape(base.cache, input.data(), ny, n.d0, n.d1);
             if (!eval_child(n.b, in_values.data())) return false;
             if (!eval_child(n.c, out_values.data())) return false;
             for (int i = 0; i < ny; ++i) {
@@ -1036,6 +1055,21 @@ void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
     for (int iy = 0; iy < ny; ++iy) {
         ctx.y = y0 + static_cast<double>(iy) * dy;
         out[iy] = evaluate(arena, root, ctx);
+    }
+}
+
+void evaluate_mixed_range_choice_lazily(const NodeArena& arena, const Node& node,
+                                        const Context& base,
+                                        double y0, double dy, int ny,
+                                        const double* input, double* out) noexcept {
+    if (!input || !out || ny <= 0) return;
+    Context ctx = base;
+    for (int iy = 0; iy < ny; ++iy) {
+        const double value = input[iy];
+        ctx.y = y0 + static_cast<double>(iy) * dy;
+        out[iy] = value >= node.d0 && value < node.d1
+            ? evaluate(arena, node.b, ctx)
+            : evaluate(arena, node.c, ctx);
     }
 }
 
