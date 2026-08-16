@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 16 Aug 2026 18:14:14 +0800
+Subject: [PATCH] fix(worldgen): expose xoroshiro positional seeds
+
+
+diff --git a/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java b/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java
+index 49c2470ad2c9ed8aed44c5e014520345fb16cf8c..9573ca0910b6f16b696c7573633da0493224f908 100644
+--- a/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java
++++ b/net/minecraft/world/level/levelgen/XoroshiroRandomSource.java
+@@ -115,6 +115,25 @@ public class XoroshiroRandomSource implements RandomSource {
+             this.seedHi = seedHi;
+         }
+ 
++        /**
++         * Returns the low 64 bits used by {@link #at(int, int, int)}.
++         *
++         * <p>This is a read-only Lattice bridge for native surface-rule
++         * compilation.  Keep the values in the same order as the factory
++         * constructor; callers must not derive or advance the random stream.</p>
++         */
++        public long lattice$seedLo() {
++            return this.seedLo;
++        }
++
++        /**
++         * Returns the high 64 bits used by {@link #at(int, int, int)}.
++         * See {@link #lattice$seedLo()} for the native bridge contract.
++         */
++        public long lattice$seedHi() {
++            return this.seedHi;
++        }
++
+         @Override
+         public RandomSource at(int x, int y, int z) {
+             long seed = Mth.getSeed(x, y, z);
