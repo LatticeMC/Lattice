@@ -192,6 +192,8 @@ struct ExecutionStats {
     std::uint64_t range_all_in = 0;
     std::uint64_t range_all_out = 0;
     std::uint64_t range_mixed = 0;
+    std::uint64_t segmented_range_runs = 0;
+    std::uint64_t segmented_range_points = 0;
     std::array<std::uint64_t, kNodeKindCount> avx2_rejects{};
     std::array<std::uint64_t, kNodeKindCount> generic_rejects{};
 
@@ -200,7 +202,7 @@ struct ExecutionStats {
     }
 };
 
-inline constexpr std::size_t kExecutionStatsHeaderLongs = 11u;
+inline constexpr std::size_t kExecutionStatsHeaderLongs = 13u;
 inline constexpr std::size_t kExecutionStatsLongCount =
     kExecutionStatsHeaderLongs + kNodeKindCount * 2u;
 // Java decodes this fixed layout by NodeKind ordinal. Keep an explicit guard
@@ -558,6 +560,10 @@ struct CacheState {
     /// only the selected branch per Y sample. The default retains the eager
     /// column evaluation of both branches.
     bool lazy_mixed_range = false;
+    /// Benchmark-only experiment: for a mixed RangeChoice column, split the
+    /// selected branches into contiguous Y runs so long runs retain column
+    /// evaluation. The default retains eager evaluation of both branches.
+    bool segmented_mixed_range = false;
     /// Allocated only when Java enables execution diagnostics. The hot path
     /// otherwise sees a single null-pointer branch and performs no counting.
     std::unique_ptr<ExecutionStats> execution_stats;
@@ -686,6 +692,8 @@ inline void snapshot_execution_stats(const CacheState& cache, std::int64_t* outp
     output[8] = static_cast<std::int64_t>(stats.range_all_in);
     output[9] = static_cast<std::int64_t>(stats.range_all_out);
     output[10] = static_cast<std::int64_t>(stats.range_mixed);
+    output[11] = static_cast<std::int64_t>(stats.segmented_range_runs);
+    output[12] = static_cast<std::int64_t>(stats.segmented_range_points);
     for (std::size_t i = 0; i < kNodeKindCount; ++i) {
         output[kExecutionStatsHeaderLongs + i] = static_cast<std::int64_t>(stats.avx2_rejects[i]);
         output[kExecutionStatsHeaderLongs + kNodeKindCount + i] = static_cast<std::int64_t>(stats.generic_rejects[i]);
