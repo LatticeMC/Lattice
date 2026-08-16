@@ -97,6 +97,34 @@ inline bool evaluate_child_column(const NodeArena& arena, NodeRef child,
     return true;
 }
 
+inline bool evaluate_mixed_range_choice_segmented(const NodeArena& arena, const Node& node,
+                                                  double x, double y0, double z, double dy,
+                                                  int cellX, int cellZ, int ny,
+                                                  CacheState* cache, const double* input,
+                                                  double* out) noexcept {
+    std::uint64_t runs = 0;
+    int start = 0;
+    while (start < ny) {
+        const bool in_range = input[start] >= node.d0 && input[start] < node.d1;
+        int end = start + 1;
+        while (end < ny) {
+            const double value = input[end];
+            if ((value >= node.d0 && value < node.d1) != in_range) break;
+            ++end;
+        }
+        if (!evaluate_child_column(arena, in_range ? node.b : node.c,
+                                   x, y0 + static_cast<double>(start) * dy, z, dy,
+                                   cellX, cellZ, end - start, cache, out + start)) return false;
+        ++runs;
+        start = end;
+    }
+    if (cache && cache->execution_stats) {
+        cache->execution_stats->segmented_range_runs += runs;
+        cache->execution_stats->segmented_range_points += static_cast<std::uint64_t>(ny);
+    }
+    return true;
+}
+
 inline SharedLeafColumnEntry* shared_leaf_entry(const Node& node, CacheState* cache) noexcept {
     if (!node.shared_batch_leaf || !cache || node.cache_slot_id < 0
         || static_cast<std::size_t>(node.cache_slot_id) >= cache->shared_leaf_columns.size()) return nullptr;
@@ -528,6 +556,11 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                 return evaluate_child_column(arena, n.c, x, y0, z, dy, cellX, cellZ, ny, cache, out);
             }
             if (cache && cache->execution_stats) ++cache->execution_stats->range_mixed;
+            if (cache && cache->segmented_mixed_range) {
+                return evaluate_mixed_range_choice_segmented(arena, n, x, y0, z, dy,
+                                                             cellX, cellZ, ny, cache,
+                                                             input.data(), out);
+            }
             if (cache && cache->lazy_mixed_range) {
                 Context base{};
                 base.cache = cache;

@@ -239,6 +239,7 @@ TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state"
     std::array<double, count> scalar{};
     std::array<double, count> eager{};
     std::array<double, count> lazy{};
+    std::array<double, count> segmented{};
 
     CacheState scalar_cache;
     scalar_cache.resize_for(arena);
@@ -264,9 +265,16 @@ TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state"
     evaluate_y_column(arena, arena.root, x, y0, z, dy, cell_x, cell_z, count,
                       &lazy_cache, lazy.data());
 
+    CacheState segmented_cache;
+    segmented_cache.resize_for(arena);
+    segmented_cache.segmented_mixed_range = true;
+    evaluate_y_column(arena, arena.root, x, y0, z, dy, cell_x, cell_z, count,
+                      &segmented_cache, segmented.data());
+
     for (std::size_t i = 0; i < scalar.size(); ++i) {
         CHECK(std::bit_cast<std::uint64_t>(lazy[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
         CHECK(std::bit_cast<std::uint64_t>(eager[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
+        CHECK(std::bit_cast<std::uint64_t>(segmented[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
     }
     REQUIRE(lazy_cache.cache_once.size() == scalar_cache.cache_once.size());
     for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
@@ -291,6 +299,36 @@ TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state"
         CHECK(std::bit_cast<std::uint64_t>(generic_lazy[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
     }
 
+    CacheState generic_segmented_cache;
+    generic_segmented_cache.resize_for(arena);
+    generic_segmented_cache.segmented_mixed_range = true;
+    std::array<double, count> generic_segmented{};
+    evaluate_y_column_fallback(arena, arena.root, x, y0, z, dy, cell_x, cell_z, count,
+                               &generic_segmented_cache, generic_segmented.data());
+    for (std::size_t i = 0; i < scalar.size(); ++i) {
+        CHECK(std::bit_cast<std::uint64_t>(generic_segmented[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
+    }
+    REQUIRE(generic_segmented_cache.cache_once.size() == scalar_cache.cache_once.size());
+    for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
+        const CacheOnceEntry& expected = scalar_cache.cache_once[i];
+        const CacheOnceEntry& actual = generic_segmented_cache.cache_once[i];
+        CHECK(actual.valid == expected.valid);
+        CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
+        CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
+        CHECK(std::bit_cast<std::uint64_t>(actual.z) == std::bit_cast<std::uint64_t>(expected.z));
+        CHECK(std::bit_cast<std::uint64_t>(actual.value) == std::bit_cast<std::uint64_t>(expected.value));
+    }
+    REQUIRE(segmented_cache.cache_once.size() == scalar_cache.cache_once.size());
+    for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
+        const CacheOnceEntry& expected = scalar_cache.cache_once[i];
+        const CacheOnceEntry& actual = segmented_cache.cache_once[i];
+        CHECK(actual.valid == expected.valid);
+        CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
+        CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
+        CHECK(std::bit_cast<std::uint64_t>(actual.z) == std::bit_cast<std::uint64_t>(expected.z));
+        CHECK(std::bit_cast<std::uint64_t>(actual.value) == std::bit_cast<std::uint64_t>(expected.value));
+    }
+
 #if defined(LATTICE_TEST_HAS_DENSITY_AVX2)
     if (lattice::cpu::initialize().avx2) {
         CacheState avx2_lazy_cache;
@@ -312,8 +350,122 @@ TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state"
             CHECK(std::bit_cast<std::uint64_t>(actual.z) == std::bit_cast<std::uint64_t>(expected.z));
             CHECK(std::bit_cast<std::uint64_t>(actual.value) == std::bit_cast<std::uint64_t>(expected.value));
         }
+
+        CacheState avx2_segmented_cache;
+        avx2_segmented_cache.resize_for(arena);
+        avx2_segmented_cache.segmented_mixed_range = true;
+        avx2_segmented_cache.set_execution_stats_enabled(true);
+        std::array<double, count> avx2_segmented{};
+        REQUIRE(evaluate_y_column_avx2(arena, arena.root, x, y0, z, dy, cell_x, cell_z, count,
+                                       &avx2_segmented_cache, avx2_segmented.data()));
+        for (std::size_t i = 0; i < scalar.size(); ++i) {
+            CHECK(std::bit_cast<std::uint64_t>(avx2_segmented[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
+        }
+        REQUIRE(avx2_segmented_cache.execution_stats != nullptr);
+        CHECK(avx2_segmented_cache.execution_stats->segmented_range_runs == 3);
+        CHECK(avx2_segmented_cache.execution_stats->segmented_range_points == count);
+        REQUIRE(avx2_segmented_cache.cache_once.size() == scalar_cache.cache_once.size());
+        for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
+            const CacheOnceEntry& expected = scalar_cache.cache_once[i];
+            const CacheOnceEntry& actual = avx2_segmented_cache.cache_once[i];
+            CHECK(actual.valid == expected.valid);
+            CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
+            CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
+            CHECK(std::bit_cast<std::uint64_t>(actual.z) == std::bit_cast<std::uint64_t>(expected.z));
+            CHECK(std::bit_cast<std::uint64_t>(actual.value) == std::bit_cast<std::uint64_t>(expected.value));
+        }
     }
 #endif
+}
+
+TEST_CASE("density: segmented mixed range choice preserves nested fallback columns") {
+    NodeArena arena;
+
+    // The outer choice yields [out, in, in, in, out], while the nested
+    // choice receives y=1..3 and yields [out, in, out]. This requires the
+    // fallback column evaluator to restart each selected child at its exact
+    // run y0, rather than treating every run as a column starting at y=0.
+    Node input{};
+    input.kind = NodeKind::kYClampedGradient;
+    input.i0 = 0;
+    input.i1 = 4;
+    input.d0 = 0.0;
+    input.d1 = 4.0;
+    const NodeRef input_ref = arena.push(input);
+
+    Node nested_in{};
+    nested_in.kind = NodeKind::kYClampedGradient;
+    nested_in.i0 = 0;
+    nested_in.i1 = 4;
+    nested_in.d0 = 20.0;
+    nested_in.d1 = 24.0;
+    const NodeRef nested_in_ref = arena.push(nested_in);
+    Node nested_out{};
+    nested_out.kind = NodeKind::kYClampedGradient;
+    nested_out.i0 = 0;
+    nested_out.i1 = 4;
+    nested_out.d0 = -20.0;
+    nested_out.d1 = -16.0;
+    const NodeRef nested_out_ref = arena.push(nested_out);
+    Node nested{};
+    nested.kind = NodeKind::kRangeChoice;
+    nested.a = input_ref;
+    nested.b = nested_in_ref;
+    nested.c = nested_out_ref;
+    nested.d0 = 2.0;
+    nested.d1 = 3.0;
+    const NodeRef nested_ref = arena.push(nested);
+
+    Node outer_out{};
+    outer_out.kind = NodeKind::kYClampedGradient;
+    outer_out.i0 = 0;
+    outer_out.i1 = 4;
+    outer_out.d0 = -100.0;
+    outer_out.d1 = -96.0;
+    const NodeRef outer_out_ref = arena.push(outer_out);
+    Node outer{};
+    outer.kind = NodeKind::kRangeChoice;
+    outer.a = input_ref;
+    outer.b = nested_ref;
+    outer.c = outer_out_ref;
+    outer.d0 = 1.0;
+    outer.d1 = 4.0;
+    arena.root = arena.push(outer);
+
+    constexpr int count = 5;
+    constexpr double x = 1.25;
+    constexpr double y0 = 0.0;
+    constexpr double z = -2.5;
+    constexpr double dy = 1.0;
+    std::array<double, count> scalar{};
+    std::array<double, count> segmented{};
+    for (int i = 0; i < count; ++i) {
+        Context ctx{};
+        ctx.x = x;
+        ctx.y = y0 + static_cast<double>(i) * dy;
+        ctx.z = z;
+        scalar[static_cast<std::size_t>(i)] = evaluate(arena, arena.root, ctx);
+    }
+
+    CacheState cache;
+    cache.resize_for(arena);
+    cache.segmented_mixed_range = true;
+    REQUIRE(cache.set_execution_stats_enabled(true));
+    evaluate_y_column_fallback(arena, arena.root, x, y0, z, dy, 0, 0, count,
+                               &cache, segmented.data());
+
+    for (std::size_t i = 0; i < scalar.size(); ++i) {
+        CHECK(std::bit_cast<std::uint64_t>(segmented[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
+    }
+    REQUIRE(cache.execution_stats != nullptr);
+    CHECK(cache.execution_stats->generic_success == 1);
+    CHECK(cache.execution_stats->range_mixed == 2);
+    CHECK(cache.execution_stats->segmented_range_runs == 6);
+    CHECK(cache.execution_stats->segmented_range_points == 8);
+    std::array<std::int64_t, kExecutionStatsLongCount> snapshot{};
+    snapshot_execution_stats(cache, snapshot.data(), snapshot.size());
+    CHECK(snapshot[11] == 6);
+    CHECK(snapshot[12] == 8);
 }
 
 TEST_CASE("density: Cache* nodes pass through (phase-1)") {

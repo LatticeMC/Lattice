@@ -404,10 +404,35 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
             ColumnScratchLease input(base.cache, ny);
             if (!eval_child(n.a, input.data())) return false;
             const bool inspect_shape = base.cache
-                && (base.cache->lazy_mixed_range || base.cache->execution_stats);
+                && (base.cache->lazy_mixed_range || base.cache->segmented_mixed_range
+                    || base.cache->execution_stats);
             if (inspect_shape) {
                 const RangeChoiceShape shape = range_choice_shape(input.data(), ny, n.d0, n.d1);
                 record_range_choice_shape(base.cache, shape);
+                if (base.cache->segmented_mixed_range && shape == RangeChoiceShape::kMixed) {
+                    std::uint64_t runs = 0;
+                    int start = 0;
+                    while (start < ny) {
+                        const bool in_range = input.data()[static_cast<std::size_t>(start)] >= n.d0
+                            && input.data()[static_cast<std::size_t>(start)] < n.d1;
+                        int end = start + 1;
+                        while (end < ny) {
+                            const double value = input.data()[static_cast<std::size_t>(end)];
+                            if ((value >= n.d0 && value < n.d1) != in_range) break;
+                            ++end;
+                        }
+                        if (!evaluate_y_column_fast(arena, in_range ? n.b : n.c, base,
+                                                    y0 + static_cast<double>(start) * dy, dy,
+                                                    end - start, out + start)) return false;
+                        ++runs;
+                        start = end;
+                    }
+                    if (base.cache->execution_stats) {
+                        base.cache->execution_stats->segmented_range_runs += runs;
+                        base.cache->execution_stats->segmented_range_points += static_cast<std::uint64_t>(ny);
+                    }
+                    return true;
+                }
                 if (base.cache->lazy_mixed_range && shape == RangeChoiceShape::kMixed) {
                     evaluate_mixed_range_choice_lazily(arena, n, base, y0, dy, ny, input.data(), out);
                     return true;
