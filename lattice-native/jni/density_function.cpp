@@ -836,6 +836,52 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeClearCache(
     if (c) c->clear();
 }
 
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetExecutionStatsEnabled(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle, jboolean enabled) {
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!cache) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null execution stats cache");
+        return;
+    }
+    if (!cache->set_execution_stats_enabled(enabled == JNI_TRUE)) {
+        lattice::jni::throw_oom(env, "lattice density: execution stats alloc");
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeResetExecutionStats(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle) {
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!cache) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null execution stats cache");
+        return;
+    }
+    cache->reset_execution_stats();
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeGetExecutionStats(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle) {
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!cache) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null execution stats cache");
+        return nullptr;
+    }
+    auto* output = env->NewLongArray(static_cast<jsize>(df::kExecutionStatsLongCount));
+    if (!output) {
+        lattice::jni::throw_oom(env, "lattice density: execution stats array alloc");
+        return nullptr;
+    }
+    std::array<std::int64_t, df::kExecutionStatsLongCount> values{};
+    df::snapshot_execution_stats(*cache, values.data(), values.size());
+    std::array<jlong, df::kExecutionStatsLongCount> snapshot{};
+    std::copy(values.begin(), values.end(), snapshot.begin());
+    env->SetLongArrayRegion(output, 0, static_cast<jsize>(snapshot.size()), snapshot.data());
+    if (env->ExceptionCheck()) return nullptr;
+    return output;
+}
+
 // ---- Node builders --------------------------------------------------------
 
 // Each `add*` returns the NodeRef (>= 0) of the newly-pushed node, or

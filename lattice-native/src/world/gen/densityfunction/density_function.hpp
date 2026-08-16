@@ -45,8 +45,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <new>
 #include <vector>
 
 #include "world/gen/noise/double_perlin_noise.hpp"
@@ -170,6 +173,39 @@ enum class NodeKind : std::uint8_t {
     // Java Beardifier instance. Used by final-density trees.
     kBeardifier,
 };
+
+inline constexpr std::size_t kNodeKindCount = static_cast<std::size_t>(NodeKind::kBeardifier) + 1u;
+
+/// Opt-in, per-CacheState diagnostics for column evaluation. These counters
+/// deliberately live beside the evaluation cache instead of in global atomics:
+/// a NoiseChunk owns its cache and benchmark workers can therefore snapshot
+/// their work without synchronising with other chunks.
+struct ExecutionStats {
+    std::uint64_t column_calls = 0;
+    std::uint64_t avx2_success = 0;
+    std::uint64_t generic_success = 0;
+    std::uint64_t point_fallback = 0;
+    std::uint64_t cache_clears = 0;
+    std::uint64_t scratch_column_leases = 0;
+    std::uint64_t scratch_peak_depth = 0;
+    std::uint64_t scratch_peak_bytes = 0;
+    std::uint64_t range_all_in = 0;
+    std::uint64_t range_all_out = 0;
+    std::uint64_t range_mixed = 0;
+    std::array<std::uint64_t, kNodeKindCount> avx2_rejects{};
+    std::array<std::uint64_t, kNodeKindCount> generic_rejects{};
+
+    void reset() noexcept {
+        *this = {};
+    }
+};
+
+inline constexpr std::size_t kExecutionStatsHeaderLongs = 11u;
+inline constexpr std::size_t kExecutionStatsLongCount =
+    kExecutionStatsHeaderLongs + kNodeKindCount * 2u;
+// Java decodes this fixed layout by NodeKind ordinal. Keep an explicit guard
+// here so adding a node cannot silently relabel diagnostics.
+static_assert(kNodeKindCount == 36u, "update the Java execution-stats NodeKind layout");
 
 /// Index into a `NodeArena::nodes` vector. -1 = null/no operand.
 using NodeRef = std::int32_t;
@@ -518,6 +554,9 @@ struct CacheState {
     std::vector<double> scratch_value;
     std::vector<std::vector<double>> scratch_columns;
     std::size_t scratch_column_depth = 0;
+    /// Allocated only when Java enables execution diagnostics. The hot path
+    /// otherwise sees a single null-pointer branch and performs no counting.
+    std::unique_ptr<ExecutionStats> execution_stats;
     /// True between sample_start_density() and stop_interpolation().
     /// When true, kInterpolated returns interpolators[slot].result;
     /// when false, it passthrough-evaluates the wrapped input.
@@ -564,6 +603,7 @@ struct CacheState {
     }
 
     void clear() noexcept {
+        if (execution_stats) ++execution_stats->cache_clears;
         clear_evaluation_caches();
         for (auto& p : cache_all_in_cell_arrays) p = nullptr;
         for (auto& n : cache_all_in_cell_array_lengths) n = 0;
@@ -576,7 +616,77 @@ struct CacheState {
         // logical loop state is reset.
         is_in_interpolation_loop = false;
     }
+
+    [[nodiscard]] bool set_execution_stats_enabled(bool enabled) noexcept {
+        if (enabled) {
+            if (!execution_stats) {
+                auto stats = std::unique_ptr<ExecutionStats>(new (std::nothrow) ExecutionStats());
+                if (!stats) return false;
+                execution_stats = std::move(stats);
+            }
+        } else {
+            execution_stats.reset();
+        }
+        return true;
+    }
+
+    void reset_execution_stats() noexcept {
+        if (execution_stats) execution_stats->reset();
+    }
 };
+
+inline void record_scratch_column_lease(CacheState* cache, int ny) noexcept {
+    if (!cache || !cache->execution_stats) return;
+    auto& stats = *cache->execution_stats;
+    ++stats.scratch_column_leases;
+    const std::uint64_t depth = static_cast<std::uint64_t>(cache->scratch_column_depth);
+    stats.scratch_peak_depth = std::max(stats.scratch_peak_depth, depth);
+    // Logical bytes of columns leased simultaneously by recursive evaluation.
+    // Reusable vector capacity is intentionally not included: it can outlive a
+    // sample and is not attributable to this lease.
+    const std::uint64_t bytes = depth * static_cast<std::uint64_t>(std::max(ny, 0)) * sizeof(double);
+    stats.scratch_peak_bytes = std::max(stats.scratch_peak_bytes, bytes);
+}
+
+inline bool execution_stats_node_kind_index(NodeKind kind, std::size_t& index) noexcept {
+    index = static_cast<std::size_t>(kind);
+    return index < kNodeKindCount;
+}
+
+inline void record_avx2_reject(CacheState* cache, NodeKind kind) noexcept {
+    if (!cache || !cache->execution_stats) return;
+    std::size_t index = 0;
+    if (execution_stats_node_kind_index(kind, index)) ++cache->execution_stats->avx2_rejects[index];
+}
+
+inline void record_generic_reject(CacheState* cache, NodeKind kind) noexcept {
+    if (!cache || !cache->execution_stats) return;
+    std::size_t index = 0;
+    if (execution_stats_node_kind_index(kind, index)) ++cache->execution_stats->generic_rejects[index];
+}
+
+inline void snapshot_execution_stats(const CacheState& cache, std::int64_t* output,
+                                     std::size_t output_count) noexcept {
+    if (!output || output_count < kExecutionStatsLongCount) return;
+    std::fill_n(output, kExecutionStatsLongCount, std::int64_t{0});
+    if (!cache.execution_stats) return;
+    const auto& stats = *cache.execution_stats;
+    output[0] = static_cast<std::int64_t>(stats.column_calls);
+    output[1] = static_cast<std::int64_t>(stats.avx2_success);
+    output[2] = static_cast<std::int64_t>(stats.generic_success);
+    output[3] = static_cast<std::int64_t>(stats.point_fallback);
+    output[4] = static_cast<std::int64_t>(stats.cache_clears);
+    output[5] = static_cast<std::int64_t>(stats.scratch_column_leases);
+    output[6] = static_cast<std::int64_t>(stats.scratch_peak_depth);
+    output[7] = static_cast<std::int64_t>(stats.scratch_peak_bytes);
+    output[8] = static_cast<std::int64_t>(stats.range_all_in);
+    output[9] = static_cast<std::int64_t>(stats.range_all_out);
+    output[10] = static_cast<std::int64_t>(stats.range_mixed);
+    for (std::size_t i = 0; i < kNodeKindCount; ++i) {
+        output[kExecutionStatsHeaderLongs + i] = static_cast<std::int64_t>(stats.avx2_rejects[i]);
+        output[kExecutionStatsHeaderLongs + kNodeKindCount + i] = static_cast<std::int64_t>(stats.generic_rejects[i]);
+    }
+}
 
 /// Sampling context: 3D coordinates of the point being evaluated.
 struct Context {
@@ -680,7 +790,8 @@ void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
                                 int cellX, int cellZ,
                                 int ny,
                                 CacheState* cache,
-                                double* out) noexcept;
+                                double* out,
+                                bool record_result = true) noexcept;
 
 bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                             double x, double y0, double z, double dy,

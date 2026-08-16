@@ -95,6 +95,26 @@ inline double squeeze(double v) noexcept {
     return clamped * 0.5 - clamped * clamped * clamped / 24.0;
 }
 
+inline void record_range_choice_shape(CacheState* cache, const double* values,
+                                      int ny, double min_inclusive,
+                                      double max_exclusive) noexcept {
+    if (!cache || !cache->execution_stats) return;
+    bool any_in = false;
+    bool any_out = false;
+    for (int i = 0; i < ny; ++i) {
+        const bool in_range = values[static_cast<std::size_t>(i)] >= min_inclusive
+            && values[static_cast<std::size_t>(i)] < max_exclusive;
+        any_in = any_in || in_range;
+        any_out = any_out || !in_range;
+        if (any_in && any_out) {
+            ++cache->execution_stats->range_mixed;
+            return;
+        }
+    }
+    if (any_in) ++cache->execution_stats->range_all_in;
+    else ++cache->execution_stats->range_all_out;
+}
+
 inline double evaluate_end_islands(const Node& n, double x, double z) noexcept {
     if (!n.simplex_ptr) return 0.0;
     const int blockX = static_cast<int>(x);
@@ -157,6 +177,7 @@ struct ColumnScratchLease {
             return;
         }
         index = cache->scratch_column_depth++;
+        record_scratch_column_lease(cache, ny);
         if (cache->scratch_columns.size() <= index) cache->scratch_columns.resize(index + 1u);
         cache->scratch_columns[index].resize(count);
     }
@@ -374,6 +395,7 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
             ColumnScratchLease in_values(base.cache, ny);
             ColumnScratchLease out_values(base.cache, ny);
             if (!eval_child(n.a, input.data())) return false;
+            record_range_choice_shape(base.cache, input.data(), ny, n.d0, n.d1);
             if (!eval_child(n.b, in_values.data())) return false;
             if (!eval_child(n.c, out_values.data())) return false;
             for (int i = 0; i < ny; ++i) {
@@ -415,6 +437,7 @@ bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
         }
 
         default:
+            record_generic_reject(base.cache, n.kind);
             return false;
     }
 }
@@ -953,9 +976,11 @@ void evaluate_y_column(const NodeArena& arena, NodeRef root,
         for (int i = 0; i < ny; ++i) out[i] = 0.0;
         return;
     }
+    if (cache && cache->execution_stats) ++cache->execution_stats->column_calls;
 #if defined(LATTICE_HAS_DENSITY_AVX2)
     if (lattice::cpu::features().avx2) {
         if (evaluate_y_column_avx2(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) {
+            if (cache && cache->execution_stats) ++cache->execution_stats->avx2_success;
             return;
         }
     }
@@ -989,7 +1014,8 @@ void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
                                 int cellX, int cellZ,
                                 int ny,
                                 CacheState* cache,
-                                double* out) noexcept {
+                                double* out,
+                                bool record_result) noexcept {
     if (!out || ny <= 0) return;
     if (root < 0) {
         for (int i = 0; i < ny; ++i) out[i] = 0.0;
@@ -1002,7 +1028,11 @@ void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
     ctx.z = z;
     ctx.cellX = cellX;
     ctx.cellZ = cellZ;
-    if (evaluate_y_column_fast(arena, root, ctx, y0, dy, ny, out)) return;
+    if (evaluate_y_column_fast(arena, root, ctx, y0, dy, ny, out)) {
+        if (record_result && cache && cache->execution_stats) ++cache->execution_stats->generic_success;
+        return;
+    }
+    if (record_result && cache && cache->execution_stats) ++cache->execution_stats->point_fallback;
     for (int iy = 0; iy < ny; ++iy) {
         ctx.y = y0 + static_cast<double>(iy) * dy;
         out[iy] = evaluate(arena, root, ctx);

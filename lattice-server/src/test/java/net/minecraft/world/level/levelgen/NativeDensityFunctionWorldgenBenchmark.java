@@ -48,6 +48,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             Arrays.toString(config.workItems), Arrays.toString(config.workers));
         System.out.println("Each work item owns its RandomState, NoiseChunk, native cache and output buffers; workers never share mutable worldgen state.");
         System.out.println("path=grid uses preliminary surface grid; slice initializes one complete Overworld slice; column walks one X column of CacheAllInCell state.");
+        System.out.println("executionStats: full wrapper coverage means the JNI batch completed; it does not imply every tree node used AVX2.");
         System.out.printf("%-6s %-6s %-4s %-4s %-5s %-6s %-8s %-8s %-12s %-12s %-12s %-12s %-10s %-10s %-10s %-9s%n",
             "phase", "path", "N", "P", "roots", "mode", "p50-ns", "p95-ns", "wall-ns/work", "worker-ns/work",
             "points/work", "throughput/s", "speed-p50", "speed-p95", "coverage", "parity");
@@ -106,6 +107,10 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         print(phase, path, workItems, workers, shape.roots(path), "java", javaStats, 1.0D, 1.0D, "java", "n/a");
         print(phase, path, workItems, workers, shape.roots(path), "native", nativeStats, p50Speedup, p95Speedup,
             nativeStats.coverage, "pass");
+        System.out.printf(Locale.ROOT,
+            "EXECUTION phase=%s path=%s N=%d P=%d samples=%d %s%n",
+            phase, path.name().toLowerCase(Locale.ROOT), workItems, workers, samples,
+            nativeStats.executionStats.benchmarkFields());
     }
 
     private static Stats measure(final Path path, final boolean nativeEnabled, final int workItems, final int workers,
@@ -117,18 +122,27 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         final long[] wall = new long[samples];
         final long[] worker = new long[samples];
         String coverage = nativeEnabled ? "unknown" : "java";
+        NativeDensityFunction.ExecutionStatsSnapshot executionStats = nativeEnabled
+            ? NativeDensityFunction.ExecutionStatsSnapshot.empty()
+            : NativeDensityFunction.ExecutionStatsSnapshot.disabled();
         for (int sample = 0; sample < samples; sample++) {
             if (nativeEnabled) NativeDensityFunction.resetStats();
-            final ParallelResult result = runParallel(path, workItems, workers, seed + 0x100000L + sample * 7919L, shape);
+            final ParallelResult result = runParallel(path, workItems, workers, seed + 0x100000L + sample * 7919L, shape, nativeEnabled);
             wall[sample] = result.wallNanos / workItems;
             worker[sample] = result.workerNanos / workItems;
             if (nativeEnabled) coverage = coverage(path, NativeDensityFunction.status());
+            if (nativeEnabled) executionStats = executionStats.plus(result.executionStats);
         }
-        return new Stats(percentile(wall, 0.50D), percentile(wall, 0.95D), percentile(worker, 0.50D), coverage);
+        return new Stats(percentile(wall, 0.50D), percentile(wall, 0.95D), percentile(worker, 0.50D), coverage, executionStats);
     }
 
     private static ParallelResult runParallel(final Path path, final int workItems, final int workers,
                                               final long seed, final Shape shape) throws Exception {
+        return runParallel(path, workItems, workers, seed, shape, false);
+    }
+
+    private static ParallelResult runParallel(final Path path, final int workItems, final int workers,
+                                              final long seed, final Shape shape, final boolean collectExecutionStats) throws Exception {
         final ExecutorService executor = Executors.newFixedThreadPool(workers, runnable -> {
             final Thread thread = new Thread(runnable, "lattice-density-bench");
             thread.setDaemon(true);
@@ -137,23 +151,38 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         try {
             final CountDownLatch ready = new CountDownLatch(Math.min(workItems, workers));
             final CountDownLatch start = new CountDownLatch(1);
-            final List<Future<Long>> futures = new ArrayList<>(workItems);
+            final List<Future<WorkResult>> futures = new ArrayList<>(workItems);
             for (int index = 0; index < workItems; index++) {
                 final int workIndex = index;
                 futures.add(executor.submit(() -> {
                     if (workIndex < workers) ready.countDown();
                     start.await();
+                    if (collectExecutionStats) NativeDensityFunction.beginExecutionStatsSample();
                     final long started = System.nanoTime();
-                    execute(path, seed, workIndex, shape);
-                    return System.nanoTime() - started;
+                    try {
+                        execute(path, seed, workIndex, shape);
+                        return new WorkResult(System.nanoTime() - started,
+                            collectExecutionStats ? NativeDensityFunction.finishExecutionStatsSample()
+                                : NativeDensityFunction.ExecutionStatsSnapshot.disabled());
+                    } catch (Exception | Error throwable) {
+                        if (collectExecutionStats) NativeDensityFunction.finishExecutionStatsSample();
+                        throw throwable;
+                    }
                 }));
             }
             ready.await();
             final long started = System.nanoTime();
             start.countDown();
             long workerNanos = 0L;
-            for (final Future<Long> future : futures) workerNanos += future.get();
-            return new ParallelResult(System.nanoTime() - started, workerNanos);
+            NativeDensityFunction.ExecutionStatsSnapshot executionStats = collectExecutionStats
+                ? NativeDensityFunction.ExecutionStatsSnapshot.empty()
+                : NativeDensityFunction.ExecutionStatsSnapshot.disabled();
+            for (final Future<WorkResult> future : futures) {
+                final WorkResult result = future.get();
+                workerNanos += result.workerNanos;
+                if (collectExecutionStats) executionStats = executionStats.plus(result.executionStats);
+            }
+            return new ParallelResult(System.nanoTime() - started, workerNanos, executionStats);
         } finally {
             executor.shutdown();
         }
@@ -210,6 +239,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         NativeDensityFunction.setOption("multipointSpline", enabled);
         NativeDensityFunction.setOption("climateBatch", enabled);
         NativeDensityFunction.setOption("stats", enabled);
+        NativeDensityFunction.setOption("executionStats", enabled);
         NativeDensityFunction.setOption("parity", parity);
     }
 
@@ -262,10 +292,14 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         }
     }
 
-    private record ParallelResult(long wallNanos, long workerNanos) {
+    private record WorkResult(long workerNanos, NativeDensityFunction.ExecutionStatsSnapshot executionStats) {
     }
 
-    private record Stats(long p50Wall, long p95Wall, long p50Worker, String coverage) {
+    private record ParallelResult(long wallNanos, long workerNanos, NativeDensityFunction.ExecutionStatsSnapshot executionStats) {
+    }
+
+    private record Stats(long p50Wall, long p95Wall, long p50Worker, String coverage,
+                         NativeDensityFunction.ExecutionStatsSnapshot executionStats) {
     }
 
     private enum Path {

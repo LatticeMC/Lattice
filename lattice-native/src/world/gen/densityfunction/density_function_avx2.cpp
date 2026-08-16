@@ -93,7 +93,7 @@ inline bool evaluate_child_column(const NodeArena& arena, NodeRef child,
                                   int cellX, int cellZ, int ny,
                                   CacheState* cache, double* out) noexcept {
     if (evaluate_y_column_avx2(arena, child, x, y0, z, dy, cellX, cellZ, ny, cache, out)) return true;
-    evaluate_y_column_fallback(arena, child, x, y0, z, dy, cellX, cellZ, ny, cache, out);
+    evaluate_y_column_fallback(arena, child, x, y0, z, dy, cellX, cellZ, ny, cache, out, false);
     return true;
 }
 
@@ -142,6 +142,7 @@ struct ColumnScratchLease {
             return;
         }
         index = cache->scratch_column_depth++;
+        record_scratch_column_lease(cache, ny);
         if (cache->scratch_columns.size() <= index) cache->scratch_columns.resize(index + 1u);
         cache->scratch_columns[index].resize(count);
     }
@@ -518,8 +519,15 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
             bool any_in = false;
             bool any_out = false;
             scan_range_column(input.data(), ny, n.d0, n.d1, any_in, any_out);
-            if (!any_out) return evaluate_child_column(arena, n.b, x, y0, z, dy, cellX, cellZ, ny, cache, out);
-            if (!any_in) return evaluate_child_column(arena, n.c, x, y0, z, dy, cellX, cellZ, ny, cache, out);
+            if (!any_out) {
+                if (cache && cache->execution_stats) ++cache->execution_stats->range_all_in;
+                return evaluate_child_column(arena, n.b, x, y0, z, dy, cellX, cellZ, ny, cache, out);
+            }
+            if (!any_in) {
+                if (cache && cache->execution_stats) ++cache->execution_stats->range_all_out;
+                return evaluate_child_column(arena, n.c, x, y0, z, dy, cellX, cellZ, ny, cache, out);
+            }
+            if (cache && cache->execution_stats) ++cache->execution_stats->range_mixed;
 
             ColumnScratchLease in_values(cache, ny);
             ColumnScratchLease out_values(cache, ny);
@@ -816,6 +824,7 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
         }
 
         default:
+            record_avx2_reject(cache, n.kind);
             return false;
     }
 }
