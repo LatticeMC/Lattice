@@ -88,7 +88,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
 
     private static void verifyParity(final Config config, final Shape shape) throws Exception {
         for (final boolean lazyMixedRange : new boolean[] {false, true}) {
-            configureNative(true, true, lazyMixedRange, false);
+            configureNative(true, true, lazyMixedRange, false, false);
             NativeDensityFunction.setIntOption("parityInterval", 1);
             NativeDensityFunction.resetStats();
             for (final Path path : Path.values()) {
@@ -99,7 +99,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                 throw new IllegalStateException("Native worldgen parity failed or was unavailable: " + status);
             }
         }
-        configureNative(false, false, false, false);
+        configureNative(false, false, false, false, false);
     }
 
     private static void runCase(final String phase, final Path path, final int workItems, final int workers,
@@ -137,7 +137,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     private static Stats measure(final boolean freshWorkersPerSample, final Path path, final Mode mode,
                                  final int workItems, final int workers,
                                   final int warmupRounds, final int samples, final long seed, final Shape shape) throws Exception {
-        configureNative(mode.nativeEnabled, false, mode.lazyMixedRange, false);
+        configureNative(mode.nativeEnabled, false, mode.lazyMixedRange, mode.segmentedMixedRange, false);
         final long[] wall = new long[samples];
         final long[] worker = new long[samples];
         String coverage = mode.nativeEnabled ? "unknown" : "java";
@@ -177,7 +177,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     private static NativeDensityFunction.ExecutionStatsSnapshot collectExecutionStats(
         final Path path, final Mode mode, final int workItems, final int workers, final long seed, final Shape shape
     ) throws Exception {
-        configureNative(true, false, mode.lazyMixedRange, true);
+        configureNative(true, false, mode.lazyMixedRange, mode.segmentedMixedRange, true);
         NativeDensityFunction.resetStats();
         try (WorkerPool pool = new WorkerPool(workers, seed)) {
             return runParallel(pool, path, workItems, shape, true).executionStats;
@@ -276,7 +276,9 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     }
 
     private static void configureNative(final boolean enabled, final boolean parity, final boolean lazyMixedRange,
-                                        final boolean executionStats) {
+                                        final boolean segmentedMixedRange, final boolean executionStats) {
+        final boolean lazy = enabled && lazyMixedRange && !segmentedMixedRange;
+        final boolean segmented = enabled && segmentedMixedRange && !lazyMixedRange;
         NativeDensityFunction.setOption("enabled", enabled);
         NativeDensityFunction.setOption("cell", enabled);
         NativeDensityFunction.setOption("directCell", enabled);
@@ -285,7 +287,8 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         NativeDensityFunction.setOption("spline", enabled);
         NativeDensityFunction.setOption("multipointSpline", enabled);
         NativeDensityFunction.setOption("climateBatch", enabled);
-        NativeDensityFunction.setOption("lazyMixedRange", enabled && lazyMixedRange);
+        NativeDensityFunction.setOption("lazyMixedRange", lazy);
+        NativeDensityFunction.setOption("segmentedMixedRange", segmented);
         NativeDensityFunction.setOption("stats", enabled);
         NativeDensityFunction.setOption("executionStats", enabled && executionStats);
         NativeDensityFunction.setOption("parity", parity);
@@ -390,18 +393,21 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     }
 
     private enum Mode {
-        JAVA("java", false, false),
-        NATIVE_EAGER("native-eager", true, false),
-        NATIVE_LAZY("native-lazy", true, true);
+        JAVA("java", false, false, false),
+        NATIVE_EAGER("native-eager", true, false, false),
+        NATIVE_LAZY("native-lazy", true, true, false),
+        NATIVE_SEGMENTED("native-segmented", true, false, true);
 
         private final String label;
         private final boolean nativeEnabled;
         private final boolean lazyMixedRange;
+        private final boolean segmentedMixedRange;
 
-        Mode(String label, boolean nativeEnabled, boolean lazyMixedRange) {
+        Mode(String label, boolean nativeEnabled, boolean lazyMixedRange, boolean segmentedMixedRange) {
             this.label = label;
             this.nativeEnabled = nativeEnabled;
             this.lazyMixedRange = lazyMixedRange;
+            this.segmentedMixedRange = segmentedMixedRange;
         }
     }
 

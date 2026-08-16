@@ -861,6 +861,17 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetLazyMixedRan
 }
 
 JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetSegmentedMixedRangeEnabled(
+        JNIEnv* env, jclass /*cls*/, jlong cacheHandle, jboolean enabled) {
+    auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
+    if (!cache) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null segmented mixed range cache");
+        return;
+    }
+    cache->segmented_mixed_range = enabled == JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeResetExecutionStats(
         JNIEnv* env, jclass /*cls*/, jlong cacheHandle) {
     auto* cache = reinterpret_cast<df::CacheState*>(cacheHandle);
