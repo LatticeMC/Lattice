@@ -26,4 +26,24 @@ class XoroshiroAquiferOffsetsTest {
             }
         }
     }
+
+    @Test
+    void nativeSeedAccessorsPreservePositionalRandomOracle() {
+        XoroshiroRandomSource.XoroshiroPositionalRandomFactory factory =
+            new XoroshiroRandomSource.XoroshiroPositionalRandomFactory(0x0123456789ABCDEFL, 0xFEDCBA9876543210L);
+
+        assertEquals(0x0123456789ABCDEFL, factory.lattice$seedLo());
+        assertEquals(0xFEDCBA9876543210L, factory.lattice$seedHi());
+
+        int[][] coordinates = {{0, 0, 0}, {17, -31, 9}, {-2048, 73, 4096}};
+        for (int[] coordinate : coordinates) {
+            RandomSource expected = factory.at(coordinate[0], coordinate[1], coordinate[2]);
+            RandomSource reconstructed = new XoroshiroRandomSource(
+                net.minecraft.util.Mth.getSeed(coordinate[0], coordinate[1], coordinate[2]) ^ factory.lattice$seedLo(),
+                factory.lattice$seedHi());
+            for (int sample = 0; sample < 16; sample++) {
+                assertEquals(expected.nextLong(), reconstructed.nextLong());
+            }
+        }
+    }
 }

@@ -1,12 +1,12 @@
 package com.latticemc.lattice.nativelib;
 
-import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 
 public final class NativeMaterialRules implements AutoCloseable {
 
@@ -121,16 +121,19 @@ public final class NativeMaterialRules implements AutoCloseable {
     private static long[] positionalSeeds(RandomState randomState, Identifier randomName) {
         if (randomState == null || randomName == null) throw new IllegalArgumentException("randomState/randomName must be non-null");
         PositionalRandomFactory factory = randomState.getOrCreateRandomFactory(randomName);
-        try {
-            Class<?> impl = factory.getClass();
-            Field lo = impl.getDeclaredField("seedLo");
-            Field hi = impl.getDeclaredField("seedHi");
-            lo.setAccessible(true);
-            hi.setAccessible(true);
-            return new long[] { lo.getLong(factory), hi.getLong(factory) };
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new IllegalStateException("PositionalRandomFactory implementation changed shape", e);
+        long[] seeds = positionalSeeds(factory);
+        if (seeds == null) {
+            throw new IllegalStateException("Unsupported PositionalRandomFactory for native vertical gradient: "
+                    + factory.getClass().getName());
         }
+        return seeds;
+    }
+
+    static long[] positionalSeeds(PositionalRandomFactory factory) {
+        if (!(factory instanceof XoroshiroRandomSource.XoroshiroPositionalRandomFactory xoroshiro)) {
+            return null;
+        }
+        return new long[] { xoroshiro.lattice$seedLo(), xoroshiro.lattice$seedHi() };
     }
 
     private int noiseSlot(String noiseName) {
