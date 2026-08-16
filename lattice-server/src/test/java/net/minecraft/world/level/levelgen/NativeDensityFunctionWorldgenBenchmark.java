@@ -86,7 +86,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
 
     private static void verifyParity(final Config config, final Shape shape) throws Exception {
         for (final boolean lazyMixedRange : new boolean[] {false, true}) {
-            configureNative(true, true, lazyMixedRange);
+            configureNative(true, true, lazyMixedRange, false);
             NativeDensityFunction.setIntOption("parityInterval", 1);
             NativeDensityFunction.resetStats();
             for (final Path path : Path.values()) {
@@ -97,18 +97,23 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                 throw new IllegalStateException("Native worldgen parity failed or was unavailable: " + status);
             }
         }
-        configureNative(false, false, false);
+        configureNative(false, false, false, false);
     }
 
     private static void runCase(final String phase, final Path path, final int workItems, final int workers,
                                 final int warmupRounds, final int samples, final long seed, final Shape shape) throws Exception {
         final Stats[] results = new Stats[Mode.values().length];
+        final NativeDensityFunction.ExecutionStatsSnapshot[] diagnostics =
+            new NativeDensityFunction.ExecutionStatsSnapshot[Mode.values().length];
         // Rotate complete mode blocks across cases so Java/eager/lazy do not
         // always inherit the same warm-machine position.
         final int firstMode = Math.floorMod(path.ordinal() + workItems + workers + phase.hashCode(), Mode.values().length);
         for (int offset = 0; offset < Mode.values().length; offset++) {
             final Mode mode = Mode.values()[(firstMode + offset) % Mode.values().length];
             results[mode.ordinal()] = measure(path, mode, workItems, workers, warmupRounds, samples, seed, shape);
+            if (mode.nativeEnabled) {
+                diagnostics[mode.ordinal()] = collectExecutionStats(path, mode, workItems, workers, seed, shape);
+            }
         }
         final Stats javaStats = results[Mode.JAVA.ordinal()];
         for (final Mode mode : Mode.values()) {
@@ -119,34 +124,38 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                 stats.coverage, mode.nativeEnabled ? "pass" : "n/a");
             if (mode.nativeEnabled) {
                 System.out.printf(Locale.ROOT,
-                    "EXECUTION phase=%s path=%s N=%d P=%d mode=%s samples=%d %s%n",
+                    "EXECUTION phase=%s path=%s N=%d P=%d mode=%s samples=1 timed-samples=%d pass=untimed-diagnostics %s%n",
                     phase, path.name().toLowerCase(Locale.ROOT), workItems, workers, mode.label, samples,
-                    stats.executionStats.benchmarkFields());
+                    diagnostics[mode.ordinal()].benchmarkFields());
             }
         }
     }
 
     private static Stats measure(final Path path, final Mode mode, final int workItems, final int workers,
                                   final int warmupRounds, final int samples, final long seed, final Shape shape) throws Exception {
-        configureNative(mode.nativeEnabled, false, mode.lazyMixedRange);
+        configureNative(mode.nativeEnabled, false, mode.lazyMixedRange, false);
         for (int round = 0; round < warmupRounds; round++) {
             runParallel(path, workItems, workers, seed + round * 7919L, shape);
         }
         final long[] wall = new long[samples];
         final long[] worker = new long[samples];
         String coverage = mode.nativeEnabled ? "unknown" : "java";
-        NativeDensityFunction.ExecutionStatsSnapshot executionStats = mode.nativeEnabled
-            ? NativeDensityFunction.ExecutionStatsSnapshot.empty()
-            : NativeDensityFunction.ExecutionStatsSnapshot.disabled();
         for (int sample = 0; sample < samples; sample++) {
             if (mode.nativeEnabled) NativeDensityFunction.resetStats();
-            final ParallelResult result = runParallel(path, workItems, workers, seed + 0x100000L + sample * 7919L, shape, mode.nativeEnabled);
+            final ParallelResult result = runParallel(path, workItems, workers, seed + 0x100000L + sample * 7919L, shape);
             wall[sample] = result.wallNanos / workItems;
             worker[sample] = result.workerNanos / workItems;
             if (mode.nativeEnabled) coverage = coverage(path, NativeDensityFunction.status());
-            if (mode.nativeEnabled) executionStats = executionStats.plus(result.executionStats);
         }
-        return new Stats(percentile(wall, 0.50D), percentile(wall, 0.95D), percentile(worker, 0.50D), coverage, executionStats);
+        return new Stats(percentile(wall, 0.50D), percentile(wall, 0.95D), percentile(worker, 0.50D), coverage);
+    }
+
+    private static NativeDensityFunction.ExecutionStatsSnapshot collectExecutionStats(
+        final Path path, final Mode mode, final int workItems, final int workers, final long seed, final Shape shape
+    ) throws Exception {
+        configureNative(true, false, mode.lazyMixedRange, true);
+        NativeDensityFunction.resetStats();
+        return runParallel(path, workItems, workers, seed, shape, true).executionStats;
     }
 
     private static ParallelResult runParallel(final Path path, final int workItems, final int workers,
@@ -242,7 +251,8 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         return (-25565 + workIndex * 53) << 4;
     }
 
-    private static void configureNative(final boolean enabled, final boolean parity, final boolean lazyMixedRange) {
+    private static void configureNative(final boolean enabled, final boolean parity, final boolean lazyMixedRange,
+                                        final boolean executionStats) {
         NativeDensityFunction.setOption("enabled", enabled);
         NativeDensityFunction.setOption("cell", enabled);
         NativeDensityFunction.setOption("directCell", enabled);
@@ -253,7 +263,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         NativeDensityFunction.setOption("climateBatch", enabled);
         NativeDensityFunction.setOption("lazyMixedRange", enabled && lazyMixedRange);
         NativeDensityFunction.setOption("stats", enabled);
-        NativeDensityFunction.setOption("executionStats", enabled);
+        NativeDensityFunction.setOption("executionStats", enabled && executionStats);
         NativeDensityFunction.setOption("parity", parity);
     }
 
@@ -312,8 +322,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     private record ParallelResult(long wallNanos, long workerNanos, NativeDensityFunction.ExecutionStatsSnapshot executionStats) {
     }
 
-    private record Stats(long p50Wall, long p95Wall, long p50Worker, String coverage,
-                          NativeDensityFunction.ExecutionStatsSnapshot executionStats) {
+    private record Stats(long p50Wall, long p95Wall, long p50Worker, String coverage) {
     }
 
     private enum Mode {
