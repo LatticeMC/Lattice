@@ -1,0 +1,328 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 16 Aug 2026 22:49:26 +0800
+Subject: [PATCH] perf(worldgen): add SoA noise interpolation state
+
+
+diff --git a/net/minecraft/world/level/levelgen/NoiseChunk.java b/net/minecraft/world/level/levelgen/NoiseChunk.java
+index fef36e02bb684968f3887ed2aab9074b830f56d1..0dac42d09b938ee0ba20c799e5f57631850ef814 100644
+--- a/net/minecraft/world/level/levelgen/NoiseChunk.java
++++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
+@@ -27,6 +27,11 @@ import net.minecraft.world.level.levelgen.blending.Blender;
+ import org.jspecify.annotations.Nullable;
+ 
+ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunction.FunctionContext, NativeNoiseChunkAccess {
++    // Resolved once at class initialization so the hot interpolation loops retain a
++    // constant branch.  Keep the object-field path available for same-JAR A/B.
++    private static final boolean LATTICE_SOA_INTERPOLATION = Boolean.parseBoolean(
++        System.getProperty("lattice.noiseChunkSoaInterpolation", "true")
++    );
+     final int cellCountXZ;
+     final int cellCountY;
+     final int cellNoiseMinY;
+@@ -36,6 +41,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     final int firstNoiseZ;
+     final List<NoiseChunk.NoiseInterpolator> interpolators;
+     final NoiseChunk.NoiseInterpolator[] interpolatorArray;
++    private final @Nullable InterpolationState interpolationState;
+     final List<NoiseChunk.CacheAllInCell> cellCaches;
+     private final Map<DensityFunction, DensityFunction> wrapped = new HashMap<>();
+     private final Long2IntOpenHashMap preliminarySurfaceLevelCache = new Long2IntOpenHashMap();
+@@ -199,6 +205,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+         }
+ 
+         this.interpolatorArray = this.interpolators.toArray(new NoiseChunk.NoiseInterpolator[0]);
++        this.interpolationState = LATTICE_SOA_INTERPOLATION ? new InterpolationState(this.interpolatorArray.length) : null;
+         this.sliceArenaKey = noiseRouter;
+     }
+ 
+@@ -563,8 +570,15 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     public void selectCellYZ(int y, int z) {
+         long profileStart = WorldgenProfiler.hotLoopStart();
+         try {
+-            for (NoiseChunk.NoiseInterpolator interpolator : this.interpolatorArray) {
+-                interpolator.lattice$selectCellYZ(y, z);
++            if (LATTICE_SOA_INTERPOLATION) {
++                InterpolationState interpolationState = this.interpolationState;
++                for (int index = 0; index < this.interpolatorArray.length; index++) {
++                    this.interpolatorArray[index].lattice$selectCellYZInto(interpolationState, index, y, z);
++                }
++            } else {
++                for (NoiseChunk.NoiseInterpolator interpolator : this.interpolatorArray) {
++                    interpolator.lattice$selectCellYZ(y, z);
++                }
+             }
+ 
+             this.fillingCell = true;
+@@ -672,20 +686,28 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     public void updateForY(int cellEndBlockY, double y) {
+         this.inCellY = cellEndBlockY - this.cellStartBlockY;
+ 
+-        for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorArray) {
+-            noiseInterpolator.valueXZ00 = Mth.lerp(y, noiseInterpolator.noise000, noiseInterpolator.noise010);
+-            noiseInterpolator.valueXZ10 = Mth.lerp(y, noiseInterpolator.noise100, noiseInterpolator.noise110);
+-            noiseInterpolator.valueXZ01 = Mth.lerp(y, noiseInterpolator.noise001, noiseInterpolator.noise011);
+-            noiseInterpolator.valueXZ11 = Mth.lerp(y, noiseInterpolator.noise101, noiseInterpolator.noise111);
++        if (LATTICE_SOA_INTERPOLATION) {
++            this.interpolationState.updateForY(y);
++        } else {
++            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorArray) {
++                noiseInterpolator.valueXZ00 = Mth.lerp(y, noiseInterpolator.noise000, noiseInterpolator.noise010);
++                noiseInterpolator.valueXZ10 = Mth.lerp(y, noiseInterpolator.noise100, noiseInterpolator.noise110);
++                noiseInterpolator.valueXZ01 = Mth.lerp(y, noiseInterpolator.noise001, noiseInterpolator.noise011);
++                noiseInterpolator.valueXZ11 = Mth.lerp(y, noiseInterpolator.noise101, noiseInterpolator.noise111);
++            }
+         }
+     }
+ 
+     public void updateForX(int cellEndBlockX, double x) {
+         this.inCellX = cellEndBlockX - this.cellStartBlockX;
+ 
+-        for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorArray) {
+-            noiseInterpolator.valueZ0 = Mth.lerp(x, noiseInterpolator.valueXZ00, noiseInterpolator.valueXZ10);
+-            noiseInterpolator.valueZ1 = Mth.lerp(x, noiseInterpolator.valueXZ01, noiseInterpolator.valueXZ11);
++        if (LATTICE_SOA_INTERPOLATION) {
++            this.interpolationState.updateForX(x);
++        } else {
++            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorArray) {
++                noiseInterpolator.valueZ0 = Mth.lerp(x, noiseInterpolator.valueXZ00, noiseInterpolator.valueXZ10);
++                noiseInterpolator.valueZ1 = Mth.lerp(x, noiseInterpolator.valueXZ01, noiseInterpolator.valueXZ11);
++            }
+         }
+     }
+ 
+@@ -693,8 +715,12 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+         this.inCellZ = cellEndBlockZ - this.cellStartBlockZ;
+         this.interpolationCounter++;
+ 
+-        for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorArray) {
+-            noiseInterpolator.value = Mth.lerp(z, noiseInterpolator.valueZ0, noiseInterpolator.valueZ1);
++        if (LATTICE_SOA_INTERPOLATION) {
++            this.interpolationState.updateForZ(z);
++        } else {
++            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorArray) {
++                noiseInterpolator.value = Mth.lerp(z, noiseInterpolator.valueZ0, noiseInterpolator.valueZ1);
++            }
+         }
+     }
+ 
+@@ -1159,6 +1185,106 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+         }
+     }
+ 
++    /**
++     * Hot interpolation state stored by interpolator-array index rather than in
++     * scattered {@link NoiseInterpolator} objects.  Every operation deliberately
++     * keeps the vanilla {@link Mth#lerp} / {@link Mth#lerp3} call order.
++     */
++    static final class InterpolationState {
++        final double[] noise000;
++        final double[] noise001;
++        final double[] noise100;
++        final double[] noise101;
++        final double[] noise010;
++        final double[] noise011;
++        final double[] noise110;
++        final double[] noise111;
++        final double[] valueXZ00;
++        final double[] valueXZ10;
++        final double[] valueXZ01;
++        final double[] valueXZ11;
++        final double[] valueZ0;
++        final double[] valueZ1;
++        final double[] value;
++
++        InterpolationState(int interpolatorCount) {
++            this.noise000 = new double[interpolatorCount];
++            this.noise001 = new double[interpolatorCount];
++            this.noise100 = new double[interpolatorCount];
++            this.noise101 = new double[interpolatorCount];
++            this.noise010 = new double[interpolatorCount];
++            this.noise011 = new double[interpolatorCount];
++            this.noise110 = new double[interpolatorCount];
++            this.noise111 = new double[interpolatorCount];
++            this.valueXZ00 = new double[interpolatorCount];
++            this.valueXZ10 = new double[interpolatorCount];
++            this.valueXZ01 = new double[interpolatorCount];
++            this.valueXZ11 = new double[interpolatorCount];
++            this.valueZ0 = new double[interpolatorCount];
++            this.valueZ1 = new double[interpolatorCount];
++            this.value = new double[interpolatorCount];
++        }
++
++        void selectCellYZ(
++            int index,
++            double noise000,
++            double noise001,
++            double noise100,
++            double noise101,
++            double noise010,
++            double noise011,
++            double noise110,
++            double noise111
++        ) {
++            this.noise000[index] = noise000;
++            this.noise001[index] = noise001;
++            this.noise100[index] = noise100;
++            this.noise101[index] = noise101;
++            this.noise010[index] = noise010;
++            this.noise011[index] = noise011;
++            this.noise110[index] = noise110;
++            this.noise111[index] = noise111;
++        }
++
++        void updateForY(double y) {
++            for (int index = 0; index < this.value.length; index++) {
++                this.valueXZ00[index] = Mth.lerp(y, this.noise000[index], this.noise010[index]);
++                this.valueXZ10[index] = Mth.lerp(y, this.noise100[index], this.noise110[index]);
++                this.valueXZ01[index] = Mth.lerp(y, this.noise001[index], this.noise011[index]);
++                this.valueXZ11[index] = Mth.lerp(y, this.noise101[index], this.noise111[index]);
++            }
++        }
++
++        void updateForX(double x) {
++            for (int index = 0; index < this.value.length; index++) {
++                this.valueZ0[index] = Mth.lerp(x, this.valueXZ00[index], this.valueXZ10[index]);
++                this.valueZ1[index] = Mth.lerp(x, this.valueXZ01[index], this.valueXZ11[index]);
++            }
++        }
++
++        void updateForZ(double z) {
++            for (int index = 0; index < this.value.length; index++) {
++                this.value[index] = Mth.lerp(z, this.valueZ0[index], this.valueZ1[index]);
++            }
++        }
++
++        double computeFillingCell(int index, double x, double y, double z) {
++            return Mth.lerp3(
++                x,
++                y,
++                z,
++                this.noise000[index],
++                this.noise100[index],
++                this.noise010[index],
++                this.noise110[index],
++                this.noise001[index],
++                this.noise101[index],
++                this.noise011[index],
++                this.noise111[index]
++            );
++        }
++    }
++
+     public class NoiseInterpolator implements DensityFunctions.MarkerOrMarked, NoiseChunk.NoiseChunkDensityFunction, NativeNoiseInterpolatorAccess {
+         double[][] slice0;
+         double[][] slice1;
+@@ -1178,6 +1304,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+         private double valueZ0;
+         private double valueZ1;
+         private double value;
++        private final int interpolationIndex;
+         private int nativeSlot = -1;
+         private double[] flatSlice0;
+         private double[] flatSlice1;
+@@ -1187,6 +1314,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             this.noiseFiller = noiseFiller;
+             this.slice0 = this.allocateSlice(NoiseChunk.this.cellCountY, NoiseChunk.this.cellCountXZ);
+             this.slice1 = this.allocateSlice(NoiseChunk.this.cellCountY, NoiseChunk.this.cellCountXZ);
++            this.interpolationIndex = NoiseChunk.this.interpolators.size();
+             NoiseChunk.this.interpolators.add(this);
+         }
+ 
+@@ -1237,6 +1365,50 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             this.noise111 = this.slice1[z + 1][y + 1];
+         }
+ 
++        void lattice$selectCellYZInto(InterpolationState interpolationState, int index, int y, int z) {
++            if (this.interpolationIndex != index) {
++                throw new IllegalStateException("Noise interpolator index changed after construction");
++            }
++            if (this.flatReadable) {
++                int yRows = NoiseChunk.this.cellCountY + 1;
++                int zRows = NoiseChunk.this.cellCountXZ + 1;
++                double[] start = this.ensureFlatSlice(true, yRows * zRows);
++                double[] end = this.ensureFlatSlice(false, yRows * zRows);
++                int i00 = z * yRows + y;
++                int i10 = (z + 1) * yRows + y;
++                int i01 = z * yRows + y + 1;
++                int i11 = (z + 1) * yRows + y + 1;
++                if (i11 < start.length && i11 < end.length) {
++                    long profileStart = WorldgenProfiler.hotLoopStart();
++                    interpolationState.selectCellYZ(
++                        index,
++                        start[i00],
++                        start[i10],
++                        end[i00],
++                        end[i10],
++                        start[i01],
++                        start[i11],
++                        end[i01],
++                        end[i11]
++                    );
++                    WorldgenProfiler.end(WorldgenProfiler.NOISE_INTERPOLATOR_SELECT_CELL_YZ_FLAT, profileStart);
++                    return;
++                }
++            }
++
++            interpolationState.selectCellYZ(
++                index,
++                this.slice0[z][y],
++                this.slice0[z + 1][y],
++                this.slice1[z][y],
++                this.slice1[z + 1][y],
++                this.slice0[z][y + 1],
++                this.slice0[z + 1][y + 1],
++                this.slice1[z][y + 1],
++                this.slice1[z + 1][y + 1]
++            );
++        }
++
+         void updateForY(double y) {
+             this.valueXZ00 = Mth.lerp(y, this.noise000, this.noise010);
+             this.valueXZ10 = Mth.lerp(y, this.noise100, this.noise110);
+@@ -1260,6 +1432,17 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             } else if (!NoiseChunk.this.interpolating) {
+                 throw new IllegalStateException("Trying to sample interpolator outside the interpolation loop");
+             } else {
++                if (LATTICE_SOA_INTERPOLATION) {
++                    InterpolationState interpolationState = NoiseChunk.this.interpolationState;
++                    return NoiseChunk.this.fillingCell
++                        ? interpolationState.computeFillingCell(
++                            this.interpolationIndex,
++                            (double)NoiseChunk.this.inCellX / NoiseChunk.this.cellWidth,
++                            (double)NoiseChunk.this.inCellY / NoiseChunk.this.cellHeight,
++                            (double)NoiseChunk.this.inCellZ / NoiseChunk.this.cellWidth
++                        )
++                        : interpolationState.value[this.interpolationIndex];
++                }
+                 return NoiseChunk.this.fillingCell
+                     ? Mth.lerp3(
+                         (double)NoiseChunk.this.inCellX / NoiseChunk.this.cellWidth,
+@@ -1282,6 +1465,27 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+         public void fillArray(double[] array, DensityFunction.ContextProvider contextProvider) {
+             if (NoiseChunk.this.fillingCell) {
+                 if (contextProvider == NoiseChunk.this) {
++                    if (LATTICE_SOA_INTERPOLATION) {
++                        InterpolationState interpolationState = NoiseChunk.this.interpolationState;
++                        lattice$fillCellArray(
++                            array,
++                            NoiseChunk.this.cellWidth,
++                            NoiseChunk.this.cellHeight,
++                            interpolationState.noise000[this.interpolationIndex],
++                            interpolationState.noise100[this.interpolationIndex],
++                            interpolationState.noise010[this.interpolationIndex],
++                            interpolationState.noise110[this.interpolationIndex],
++                            interpolationState.noise001[this.interpolationIndex],
++                            interpolationState.noise101[this.interpolationIndex],
++                            interpolationState.noise011[this.interpolationIndex],
++                            interpolationState.noise111[this.interpolationIndex]
++                        );
++                        NoiseChunk.this.arrayIndex = NoiseChunk.this.cellWidth * NoiseChunk.this.cellWidth * NoiseChunk.this.cellHeight;
++                        NoiseChunk.this.inCellY = 0;
++                        NoiseChunk.this.inCellX = NoiseChunk.this.cellWidth - 1;
++                        NoiseChunk.this.inCellZ = NoiseChunk.this.cellWidth - 1;
++                        return;
++                    }
+                     lattice$fillCellArray(
+                         array,
+                         NoiseChunk.this.cellWidth,
