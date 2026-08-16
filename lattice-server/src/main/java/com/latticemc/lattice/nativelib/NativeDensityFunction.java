@@ -38,6 +38,7 @@ public final class NativeDensityFunction {
     private static volatile boolean MULTIPOINT_SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionMultipointSpline", "true"));
     private static volatile boolean CLIMATE_BATCH_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionClimateBatch", "true"));
     private static volatile boolean LAZY_MIXED_RANGE_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionLazyMixedRange");
+    private static volatile boolean SEGMENTED_MIXED_RANGE_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionSegmentedMixedRange");
     private static volatile boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
     private static volatile boolean EXECUTION_STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionExecutionStats");
     private static volatile boolean PROFILING_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionProfiling");
@@ -55,6 +56,7 @@ public final class NativeDensityFunction {
     private static volatile boolean INTERPOLATED_COLUMNS_NATIVE_AVAILABLE = true;
     private static volatile boolean EXECUTION_STATS_NATIVE_AVAILABLE = true;
     private static volatile boolean LAZY_MIXED_RANGE_NATIVE_AVAILABLE = true;
+    private static volatile boolean SEGMENTED_MIXED_RANGE_NATIVE_AVAILABLE = true;
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, NativeDensityFunction> DIRECT_CACHE = new WeakHashMap<>();
@@ -138,7 +140,8 @@ public final class NativeDensityFunction {
     private static final AtomicBoolean STATUS_LOGGED = new AtomicBoolean(false);
     private static final AtomicBoolean FIRST_SLICE_LOGGED = new AtomicBoolean(false);
     private static final AtomicBoolean FIRST_CELL_LOGGED = new AtomicBoolean(false);
-    private static final int EXECUTION_STATS_HEADER_LONGS = 11;
+    private static final int EXECUTION_STATS_LEGACY_HEADER_LONGS = 11;
+    private static final int EXECUTION_STATS_HEADER_LONGS = 13;
     private static final String[] EXECUTION_NODE_KINDS = {
             "Constant", "Abs", "Square", "Cube", "HalfNegative", "QuarterNegative", "Invert", "Squeeze",
             "Add", "Mul", "Min", "Max", "YClampedGradient", "MapRange", "Lerp", "RangeChoice",
@@ -1364,6 +1367,9 @@ public final class NativeDensityFunction {
         if (cacheHandle != 0L && LAZY_MIXED_RANGE_ENABLED) {
             enableLazyMixedRange(cacheHandle);
         }
+        if (cacheHandle != 0L && SEGMENTED_MIXED_RANGE_ENABLED) {
+            enableSegmentedMixedRange(cacheHandle);
+        }
         if (cacheHandle != 0L && EXECUTION_STATS_ENABLED && enableExecutionStats(cacheHandle)) {
             trackExecutionStatsCache(cacheHandle);
         }
@@ -1389,6 +1395,16 @@ public final class NativeDensityFunction {
         } catch (UnsatisfiedLinkError | NoSuchMethodError error) {
             LAZY_MIXED_RANGE_NATIVE_AVAILABLE = false;
             LatticeNative.logFallbackOnce("density_function_lazy_mixed_range_symbol", error.getMessage());
+        }
+    }
+
+    private static void enableSegmentedMixedRange(long cacheHandle) {
+        if (!SEGMENTED_MIXED_RANGE_NATIVE_AVAILABLE) return;
+        try {
+            nativeSetSegmentedMixedRangeEnabled(cacheHandle, true);
+        } catch (UnsatisfiedLinkError | NoSuchMethodError error) {
+            SEGMENTED_MIXED_RANGE_NATIVE_AVAILABLE = false;
+            LatticeNative.logFallbackOnce("density_function_segmented_mixed_range_symbol", error.getMessage());
         }
     }
 
@@ -1447,6 +1463,8 @@ public final class NativeDensityFunction {
             for (int index = 0; index < combined.length; index++) combined[index] += other.values[index];
             combined[6] = Math.max(this.values[6], other.values[6]);
             combined[7] = Math.max(this.values[7], other.values[7]);
+            combined[11] = nonNegativeCounter(combined[11]);
+            combined[12] = nonNegativeCounter(combined[12]);
             return new ExecutionStatsSnapshot(true, this.cacheCount + other.cacheCount, combined);
         }
 
@@ -1465,8 +1483,14 @@ public final class NativeDensityFunction {
                     + " executionRangeAllIn=" + values[8]
                     + " executionRangeAllOut=" + values[9]
                     + " executionRangeMixed=" + values[10]
+                    + " segmentedRangeRuns=" + values[11]
+                    + " segmentedRangePoints=" + values[12]
                     + " executionAvx2Rejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS)
                     + " executionGenericRejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length);
+        }
+
+        private static long nonNegativeCounter(long value) {
+            return value < 0L ? 0L : value;
         }
 
         private String nodeKindCounts(int offset) {
@@ -1508,12 +1532,38 @@ public final class NativeDensityFunction {
             try {
                 for (int index = 0; index < size; index++) {
                     long[] values = nativeGetExecutionStats(cacheHandles[index]);
-                    if (values == null || values.length != EXECUTION_STATS_LONGS) {
-                        throw new IllegalStateException("Unexpected native density execution stats layout");
+                    if (values == null || (values.length != EXECUTION_STATS_LONGS
+                            && values.length != EXECUTION_STATS_LEGACY_HEADER_LONGS
+                                + EXECUTION_NODE_KINDS.length * 2)) {
+                        return ExecutionStatsSnapshot.disabled();
                     }
+                    // Only the exact legacy (83-long) and current (85-long) layouts
+                    // are safe to interpret; unknown lengths must not shift node data.
+                    final boolean hasSegmentedRangeCounters = values.length == EXECUTION_STATS_LONGS;
+                    final int sourceNodeOffset = hasSegmentedRangeCounters
+                        ? EXECUTION_STATS_HEADER_LONGS : EXECUTION_STATS_LEGACY_HEADER_LONGS;
                     long priorDepth = totals[6];
                     long priorBytes = totals[7];
-                    for (int field = 0; field < totals.length; field++) totals[field] += values[field];
+                    for (int field = 0; field < EXECUTION_STATS_LEGACY_HEADER_LONGS; field++) {
+                        totals[field] += values[field];
+                    }
+                    if (hasSegmentedRangeCounters) {
+                        totals[11] = ExecutionStatsSnapshot.nonNegativeCounter(
+                            totals[11] + ExecutionStatsSnapshot.nonNegativeCounter(values[11]));
+                        totals[12] = ExecutionStatsSnapshot.nonNegativeCounter(
+                            totals[12] + ExecutionStatsSnapshot.nonNegativeCounter(values[12]));
+                    }
+                    final int nodeValues = Math.min(EXECUTION_NODE_KINDS.length * 2,
+                        values.length - sourceNodeOffset);
+                    final int avx2Values = Math.min(EXECUTION_NODE_KINDS.length, nodeValues);
+                    for (int field = 0; field < avx2Values; field++) {
+                        totals[EXECUTION_STATS_HEADER_LONGS + field] += values[sourceNodeOffset + field];
+                    }
+                    final int genericValues = Math.max(0, nodeValues - EXECUTION_NODE_KINDS.length);
+                    for (int field = 0; field < genericValues; field++) {
+                        totals[EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length + field]
+                            += values[sourceNodeOffset + EXECUTION_NODE_KINDS.length + field];
+                    }
                     totals[6] = Math.max(priorDepth, values[6]);
                     totals[7] = Math.max(priorBytes, values[7]);
                     countedCaches++;
@@ -1585,6 +1635,7 @@ public final class NativeDensityFunction {
             case "multipointSpline" -> MULTIPOINT_SPLINE_ENABLED = value;
             case "climateBatch" -> CLIMATE_BATCH_ENABLED = value;
             case "lazyMixedRange" -> LAZY_MIXED_RANGE_ENABLED = value;
+            case "segmentedMixedRange" -> SEGMENTED_MIXED_RANGE_ENABLED = value;
             case "stats" -> STATS_ENABLED = value;
             case "executionStats" -> EXECUTION_STATS_ENABLED = value;
             case "profiling" -> PROFILING_ENABLED = value;
@@ -1619,6 +1670,8 @@ public final class NativeDensityFunction {
                 + " climateBatch=" + CLIMATE_BATCH_ENABLED
                 + " lazyMixedRange=" + LAZY_MIXED_RANGE_ENABLED
                 + " lazyMixedRangeNative=" + LAZY_MIXED_RANGE_NATIVE_AVAILABLE
+                + " segmentedMixedRange=" + SEGMENTED_MIXED_RANGE_ENABLED
+                + " segmentedMixedRangeNative=" + SEGMENTED_MIXED_RANGE_NATIVE_AVAILABLE
                 + " stats=" + STATS_ENABLED
                 + " executionStats=" + EXECUTION_STATS_ENABLED
                 + " profiling=" + PROFILING_ENABLED
@@ -2794,6 +2847,7 @@ public final class NativeDensityFunction {
     private static native void nativeClearCache(long cacheHandle);
     private static native void nativeSetExecutionStatsEnabled(long cacheHandle, boolean enabled);
     private static native void nativeSetLazyMixedRangeEnabled(long cacheHandle, boolean enabled);
+    private static native void nativeSetSegmentedMixedRangeEnabled(long cacheHandle, boolean enabled);
     private static native void nativeResetExecutionStats(long cacheHandle);
     private static native long[] nativeGetExecutionStats(long cacheHandle);
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
