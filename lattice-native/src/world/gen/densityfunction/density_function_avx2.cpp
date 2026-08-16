@@ -528,6 +528,16 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
                 return evaluate_child_column(arena, n.c, x, y0, z, dy, cellX, cellZ, ny, cache, out);
             }
             if (cache && cache->execution_stats) ++cache->execution_stats->range_mixed;
+            if (cache && cache->lazy_mixed_range) {
+                Context base{};
+                base.cache = cache;
+                base.x = x;
+                base.z = z;
+                base.cellX = cellX;
+                base.cellZ = cellZ;
+                evaluate_mixed_range_choice_lazily(arena, n, base, y0, dy, ny, input.data(), out);
+                return true;
+            }
 
             ColumnScratchLease in_values(cache, ny);
             ColumnScratchLease out_values(cache, ny);

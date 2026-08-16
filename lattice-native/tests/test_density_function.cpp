@@ -183,6 +183,139 @@ TEST_CASE("density: range_choice picks correct branch") {
     CHECK(evaluate(a, {0, 0, 0}) == -100.0);
 }
 
+TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state") {
+    NodeArena arena;
+
+    // Y = 0, 1, 2, 3, 4. Bounds [1, 3) make the column mixed and exercise
+    // both exact boundaries: min is in, max is out.
+    Node input{};
+    input.kind = NodeKind::kYClampedGradient;
+    input.i0 = 0;
+    input.i1 = 4;
+    input.d0 = 0.0;
+    input.d1 = 4.0;
+    const NodeRef input_ref = arena.push(input);
+
+    Node in_leaf{};
+    in_leaf.kind = NodeKind::kYClampedGradient;
+    in_leaf.i0 = 0;
+    in_leaf.i1 = 4;
+    in_leaf.d0 = 100.0;
+    in_leaf.d1 = 104.0;
+    const NodeRef in_leaf_ref = arena.push(in_leaf);
+    Node in_cached{};
+    in_cached.kind = NodeKind::kCacheOnce;
+    in_cached.a = in_leaf_ref;
+    const NodeRef in_ref = arena.push(in_cached);
+
+    Node out_leaf{};
+    out_leaf.kind = NodeKind::kYClampedGradient;
+    out_leaf.i0 = 0;
+    out_leaf.i1 = 4;
+    out_leaf.d0 = -100.0;
+    out_leaf.d1 = -96.0;
+    const NodeRef out_leaf_ref = arena.push(out_leaf);
+    Node out_cached{};
+    out_cached.kind = NodeKind::kCacheOnce;
+    out_cached.a = out_leaf_ref;
+    const NodeRef out_ref = arena.push(out_cached);
+
+    Node choice{};
+    choice.kind = NodeKind::kRangeChoice;
+    choice.a = input_ref;
+    choice.b = in_ref;
+    choice.c = out_ref;
+    choice.d0 = 1.0;
+    choice.d1 = 3.0;
+    arena.root = arena.push(choice);
+
+    constexpr int count = 5;
+    constexpr double x = 12.0;
+    constexpr double y0 = 0.0;
+    constexpr double z = -8.0;
+    constexpr double dy = 1.0;
+    constexpr int cell_x = 3;
+    constexpr int cell_z = -2;
+    std::array<double, count> scalar{};
+    std::array<double, count> eager{};
+    std::array<double, count> lazy{};
+
+    CacheState scalar_cache;
+    scalar_cache.resize_for(arena);
+    for (int i = 0; i < count; ++i) {
+        Context ctx{};
+        ctx.cache = &scalar_cache;
+        ctx.x = x;
+        ctx.y = y0 + static_cast<double>(i) * dy;
+        ctx.z = z;
+        ctx.cellX = cell_x;
+        ctx.cellZ = cell_z;
+        scalar[static_cast<std::size_t>(i)] = evaluate(arena, arena.root, ctx);
+    }
+
+    CacheState eager_cache;
+    eager_cache.resize_for(arena);
+    evaluate_y_column(arena, arena.root, x, y0, z, dy, cell_x, cell_z, count,
+                      &eager_cache, eager.data());
+
+    CacheState lazy_cache;
+    lazy_cache.resize_for(arena);
+    lazy_cache.lazy_mixed_range = true;
+    evaluate_y_column(arena, arena.root, x, y0, z, dy, cell_x, cell_z, count,
+                      &lazy_cache, lazy.data());
+
+    for (std::size_t i = 0; i < scalar.size(); ++i) {
+        CHECK(std::bit_cast<std::uint64_t>(lazy[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
+        CHECK(std::bit_cast<std::uint64_t>(eager[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
+    }
+    REQUIRE(lazy_cache.cache_once.size() == scalar_cache.cache_once.size());
+    for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
+        const CacheOnceEntry& expected = scalar_cache.cache_once[i];
+        const CacheOnceEntry& actual = lazy_cache.cache_once[i];
+        CHECK(actual.valid == expected.valid);
+        CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
+        CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
+        CHECK(std::bit_cast<std::uint64_t>(actual.z) == std::bit_cast<std::uint64_t>(expected.z));
+        CHECK(std::bit_cast<std::uint64_t>(actual.value) == std::bit_cast<std::uint64_t>(expected.value));
+    }
+
+    // Force the generic column evaluator as well; it must use the same lazy
+    // scalar branch semantics as the AVX2 path.
+    CacheState generic_lazy_cache;
+    generic_lazy_cache.resize_for(arena);
+    generic_lazy_cache.lazy_mixed_range = true;
+    std::array<double, count> generic_lazy{};
+    evaluate_y_column_fallback(arena, arena.root, x, y0, z, dy, cell_x, cell_z, count,
+                               &generic_lazy_cache, generic_lazy.data());
+    for (std::size_t i = 0; i < scalar.size(); ++i) {
+        CHECK(std::bit_cast<std::uint64_t>(generic_lazy[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
+    }
+
+#if defined(LATTICE_TEST_HAS_DENSITY_AVX2)
+    if (lattice::cpu::initialize().avx2) {
+        CacheState avx2_lazy_cache;
+        avx2_lazy_cache.resize_for(arena);
+        avx2_lazy_cache.lazy_mixed_range = true;
+        std::array<double, count> avx2_lazy{};
+        REQUIRE(evaluate_y_column_avx2(arena, arena.root, x, y0, z, dy, cell_x, cell_z, count,
+                                       &avx2_lazy_cache, avx2_lazy.data()));
+        for (std::size_t i = 0; i < scalar.size(); ++i) {
+            CHECK(std::bit_cast<std::uint64_t>(avx2_lazy[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
+        }
+        REQUIRE(avx2_lazy_cache.cache_once.size() == scalar_cache.cache_once.size());
+        for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
+            const CacheOnceEntry& expected = scalar_cache.cache_once[i];
+            const CacheOnceEntry& actual = avx2_lazy_cache.cache_once[i];
+            CHECK(actual.valid == expected.valid);
+            CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
+            CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
+            CHECK(std::bit_cast<std::uint64_t>(actual.z) == std::bit_cast<std::uint64_t>(expected.z));
+            CHECK(std::bit_cast<std::uint64_t>(actual.value) == std::bit_cast<std::uint64_t>(expected.value));
+        }
+    }
+#endif
+}
+
 TEST_CASE("density: Cache* nodes pass through (phase-1)") {
     NodeArena a;
     Node c{}; c.kind = NodeKind::kConstant; c.d0 = 7.0;

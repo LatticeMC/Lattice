@@ -85,53 +85,66 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     }
 
     private static void verifyParity(final Config config, final Shape shape) throws Exception {
-        configureNative(true, true);
-        NativeDensityFunction.setIntOption("parityInterval", 1);
-        NativeDensityFunction.resetStats();
-        for (final Path path : Path.values()) {
-            execute(path, config.seed, 0, shape);
+        for (final boolean lazyMixedRange : new boolean[] {false, true}) {
+            configureNative(true, true, lazyMixedRange);
+            NativeDensityFunction.setIntOption("parityInterval", 1);
+            NativeDensityFunction.resetStats();
+            for (final Path path : Path.values()) {
+                execute(path, config.seed, 0, shape);
+            }
+            final String status = NativeDensityFunction.status();
+            if (!status.contains("parity={checks=") || !status.contains("failures=0")) {
+                throw new IllegalStateException("Native worldgen parity failed or was unavailable: " + status);
+            }
         }
-        final String status = NativeDensityFunction.status();
-        if (!status.contains("parity={checks=") || !status.contains("failures=0")) {
-            throw new IllegalStateException("Native worldgen parity failed or was unavailable: " + status);
-        }
-        configureNative(false, false);
+        configureNative(false, false, false);
     }
 
     private static void runCase(final String phase, final Path path, final int workItems, final int workers,
                                 final int warmupRounds, final int samples, final long seed, final Shape shape) throws Exception {
-        final Stats javaStats = measure(path, false, workItems, workers, warmupRounds, samples, seed, shape);
-        final Stats nativeStats = measure(path, true, workItems, workers, warmupRounds, samples, seed, shape);
-        final double p50Speedup = (double)javaStats.p50Wall / nativeStats.p50Wall;
-        final double p95Speedup = (double)javaStats.p95Wall / nativeStats.p95Wall;
-        print(phase, path, workItems, workers, shape.roots(path), "java", javaStats, 1.0D, 1.0D, "java", "n/a");
-        print(phase, path, workItems, workers, shape.roots(path), "native", nativeStats, p50Speedup, p95Speedup,
-            nativeStats.coverage, "pass");
-        System.out.printf(Locale.ROOT,
-            "EXECUTION phase=%s path=%s N=%d P=%d samples=%d %s%n",
-            phase, path.name().toLowerCase(Locale.ROOT), workItems, workers, samples,
-            nativeStats.executionStats.benchmarkFields());
+        final Stats[] results = new Stats[Mode.values().length];
+        // Rotate complete mode blocks across cases so Java/eager/lazy do not
+        // always inherit the same warm-machine position.
+        final int firstMode = Math.floorMod(path.ordinal() + workItems + workers + phase.hashCode(), Mode.values().length);
+        for (int offset = 0; offset < Mode.values().length; offset++) {
+            final Mode mode = Mode.values()[(firstMode + offset) % Mode.values().length];
+            results[mode.ordinal()] = measure(path, mode, workItems, workers, warmupRounds, samples, seed, shape);
+        }
+        final Stats javaStats = results[Mode.JAVA.ordinal()];
+        for (final Mode mode : Mode.values()) {
+            final Stats stats = results[mode.ordinal()];
+            final double p50Speedup = mode.nativeEnabled ? (double)javaStats.p50Wall / stats.p50Wall : 1.0D;
+            final double p95Speedup = mode.nativeEnabled ? (double)javaStats.p95Wall / stats.p95Wall : 1.0D;
+            print(phase, path, workItems, workers, shape.roots(path), mode.label, stats, p50Speedup, p95Speedup,
+                stats.coverage, mode.nativeEnabled ? "pass" : "n/a");
+            if (mode.nativeEnabled) {
+                System.out.printf(Locale.ROOT,
+                    "EXECUTION phase=%s path=%s N=%d P=%d mode=%s samples=%d %s%n",
+                    phase, path.name().toLowerCase(Locale.ROOT), workItems, workers, mode.label, samples,
+                    stats.executionStats.benchmarkFields());
+            }
+        }
     }
 
-    private static Stats measure(final Path path, final boolean nativeEnabled, final int workItems, final int workers,
-                                 final int warmupRounds, final int samples, final long seed, final Shape shape) throws Exception {
-        configureNative(nativeEnabled, false);
+    private static Stats measure(final Path path, final Mode mode, final int workItems, final int workers,
+                                  final int warmupRounds, final int samples, final long seed, final Shape shape) throws Exception {
+        configureNative(mode.nativeEnabled, false, mode.lazyMixedRange);
         for (int round = 0; round < warmupRounds; round++) {
             runParallel(path, workItems, workers, seed + round * 7919L, shape);
         }
         final long[] wall = new long[samples];
         final long[] worker = new long[samples];
-        String coverage = nativeEnabled ? "unknown" : "java";
-        NativeDensityFunction.ExecutionStatsSnapshot executionStats = nativeEnabled
+        String coverage = mode.nativeEnabled ? "unknown" : "java";
+        NativeDensityFunction.ExecutionStatsSnapshot executionStats = mode.nativeEnabled
             ? NativeDensityFunction.ExecutionStatsSnapshot.empty()
             : NativeDensityFunction.ExecutionStatsSnapshot.disabled();
         for (int sample = 0; sample < samples; sample++) {
-            if (nativeEnabled) NativeDensityFunction.resetStats();
-            final ParallelResult result = runParallel(path, workItems, workers, seed + 0x100000L + sample * 7919L, shape, nativeEnabled);
+            if (mode.nativeEnabled) NativeDensityFunction.resetStats();
+            final ParallelResult result = runParallel(path, workItems, workers, seed + 0x100000L + sample * 7919L, shape, mode.nativeEnabled);
             wall[sample] = result.wallNanos / workItems;
             worker[sample] = result.workerNanos / workItems;
-            if (nativeEnabled) coverage = coverage(path, NativeDensityFunction.status());
-            if (nativeEnabled) executionStats = executionStats.plus(result.executionStats);
+            if (mode.nativeEnabled) coverage = coverage(path, NativeDensityFunction.status());
+            if (mode.nativeEnabled) executionStats = executionStats.plus(result.executionStats);
         }
         return new Stats(percentile(wall, 0.50D), percentile(wall, 0.95D), percentile(worker, 0.50D), coverage, executionStats);
     }
@@ -229,7 +242,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         return (-25565 + workIndex * 53) << 4;
     }
 
-    private static void configureNative(final boolean enabled, final boolean parity) {
+    private static void configureNative(final boolean enabled, final boolean parity, final boolean lazyMixedRange) {
         NativeDensityFunction.setOption("enabled", enabled);
         NativeDensityFunction.setOption("cell", enabled);
         NativeDensityFunction.setOption("directCell", enabled);
@@ -238,6 +251,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         NativeDensityFunction.setOption("spline", enabled);
         NativeDensityFunction.setOption("multipointSpline", enabled);
         NativeDensityFunction.setOption("climateBatch", enabled);
+        NativeDensityFunction.setOption("lazyMixedRange", enabled && lazyMixedRange);
         NativeDensityFunction.setOption("stats", enabled);
         NativeDensityFunction.setOption("executionStats", enabled);
         NativeDensityFunction.setOption("parity", parity);
@@ -299,7 +313,23 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     }
 
     private record Stats(long p50Wall, long p95Wall, long p50Worker, String coverage,
-                         NativeDensityFunction.ExecutionStatsSnapshot executionStats) {
+                          NativeDensityFunction.ExecutionStatsSnapshot executionStats) {
+    }
+
+    private enum Mode {
+        JAVA("java", false, false),
+        NATIVE_EAGER("native-eager", true, false),
+        NATIVE_LAZY("native-lazy", true, true);
+
+        private final String label;
+        private final boolean nativeEnabled;
+        private final boolean lazyMixedRange;
+
+        Mode(String label, boolean nativeEnabled, boolean lazyMixedRange) {
+            this.label = label;
+            this.nativeEnabled = nativeEnabled;
+            this.lazyMixedRange = lazyMixedRange;
+        }
     }
 
     private enum Path {
