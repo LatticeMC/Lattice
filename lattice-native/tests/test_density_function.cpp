@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -279,7 +280,36 @@ TEST_CASE("density: AVX2 weird_scaled uniform rarity column matches scalar") {
         CHECK(column[static_cast<std::size_t>(i)] == doctest::Approx(evaluate(a, ctx)).epsilon(1e-12));
     }
 }
+
 #endif
+
+TEST_CASE("density: execution stats are opt-in and preserve column output") {
+    auto arena = make_constant(-0.0);
+    std::array<double, 5> baseline{};
+    std::array<double, 5> instrumented{};
+    CacheState plain;
+    CacheState traced;
+
+    evaluate_y_column(arena, arena.root, 11.0, -64.0, -7.0, 4.0, 2, -3,
+                      static_cast<int>(baseline.size()), &plain, baseline.data());
+    REQUIRE(traced.set_execution_stats_enabled(true));
+    evaluate_y_column(arena, arena.root, 11.0, -64.0, -7.0, 4.0, 2, -3,
+                      static_cast<int>(instrumented.size()), &traced, instrumented.data());
+
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        CHECK(std::bit_cast<std::uint64_t>(baseline[i]) == std::bit_cast<std::uint64_t>(instrumented[i]));
+    }
+    REQUIRE(traced.execution_stats != nullptr);
+    CHECK(traced.execution_stats->column_calls == 1);
+    CHECK(traced.execution_stats->avx2_success + traced.execution_stats->generic_success == 1);
+    CHECK(traced.execution_stats->point_fallback == 0);
+    traced.clear();
+    CHECK(traced.execution_stats->cache_clears == 1);
+    std::array<std::int64_t, kExecutionStatsLongCount> snapshot{};
+    snapshot_execution_stats(traced, snapshot.data(), snapshot.size());
+    CHECK(snapshot[0] == 1);
+    CHECK(snapshot[4] == 1);
+}
 
 TEST_CASE("density: dispatched y column matches scalar") {
     NodeArena arena;

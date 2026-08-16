@@ -38,6 +38,7 @@ public final class NativeDensityFunction {
     private static volatile boolean MULTIPOINT_SPLINE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionMultipointSpline", "true"));
     private static volatile boolean CLIMATE_BATCH_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionClimateBatch", "true"));
     private static volatile boolean STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionStats");
+    private static volatile boolean EXECUTION_STATS_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionExecutionStats");
     private static volatile boolean PROFILING_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionProfiling");
     private static volatile boolean PARITY_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionParity");
     private static volatile int PARITY_INTERVAL = Integer.getInteger("lattice.nativeDensityFunctionParityInterval", 1024);
@@ -51,6 +52,7 @@ public final class NativeDensityFunction {
     private static volatile boolean Y_COLUMNS_PACKED_NATIVE_AVAILABLE = true;
     private static volatile boolean INTERPOLATED_COLUMN_NATIVE_AVAILABLE = true;
     private static volatile boolean INTERPOLATED_COLUMNS_NATIVE_AVAILABLE = true;
+    private static volatile boolean EXECUTION_STATS_NATIVE_AVAILABLE = true;
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Map<DensityFunction, NativeDensityFunction> CACHE = new WeakHashMap<>();
     private static final Map<DensityFunction, NativeDensityFunction> DIRECT_CACHE = new WeakHashMap<>();
@@ -78,6 +80,7 @@ public final class NativeDensityFunction {
     private static final ThreadLocal<SliceBatchBuffers> SLICE_BATCH_BUFFERS = ThreadLocal.withInitial(SliceBatchBuffers::new);
     private static final ThreadLocal<ColumnBatchBuffers> COLUMN_BATCH_BUFFERS = ThreadLocal.withInitial(ColumnBatchBuffers::new);
     private static final ThreadLocal<ClimateBatchBuffers> CLIMATE_BATCH_BUFFERS = ThreadLocal.withInitial(ClimateBatchBuffers::new);
+    private static final ThreadLocal<ExecutionStatsSample> EXECUTION_STATS_SAMPLE = new ThreadLocal<>();
     private static final ThreadLocal<Integer> THREAD_COMPILE_CACHE_EPOCH = ThreadLocal.withInitial(() -> -1);
     private static final ThreadLocal<Integer> THREAD_DIRECT_COMPILE_CACHE_EPOCH = ThreadLocal.withInitial(() -> -1);
     private static volatile int COMPILE_CACHE_EPOCH = 0;
@@ -133,6 +136,15 @@ public final class NativeDensityFunction {
     private static final AtomicBoolean STATUS_LOGGED = new AtomicBoolean(false);
     private static final AtomicBoolean FIRST_SLICE_LOGGED = new AtomicBoolean(false);
     private static final AtomicBoolean FIRST_CELL_LOGGED = new AtomicBoolean(false);
+    private static final int EXECUTION_STATS_HEADER_LONGS = 11;
+    private static final String[] EXECUTION_NODE_KINDS = {
+            "Constant", "Abs", "Square", "Cube", "HalfNegative", "QuarterNegative", "Invert", "Squeeze",
+            "Add", "Mul", "Min", "Max", "YClampedGradient", "MapRange", "Lerp", "RangeChoice",
+            "Noise", "ShiftedNoise", "ShiftA", "ShiftB", "Shift", "Cache2D", "CacheOnce", "CacheAllInCell",
+            "FlatCache", "Interpolated", "WeirdScaledSampler", "EndIslands", "Clamp", "BlendAlpha",
+            "BlendOffset", "BlendDensity", "Spline", "FindTopSurface", "InterpolatedNoise", "Beardifier"
+    };
+    private static final int EXECUTION_STATS_LONGS = EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length * 2;
 
     private final long handle;
     private final long cacheHandle;
@@ -193,6 +205,7 @@ public final class NativeDensityFunction {
         long start = profiling ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompile(function);
         if (compiled == null) return false;
+        trackExecutionStatsCache(compiled.cacheHandle);
         try {
             evaluateYColumn(compiled.handle, compiled.cacheHandle, x, y0, z, dy, cellX, cellZ, values.length, values);
             if (stats) SLICE_SUCCESS.increment();
@@ -232,6 +245,7 @@ public final class NativeDensityFunction {
             rejectSliceRows(interpolators);
             return false;
         }
+        trackExecutionStatsCache(batch.cacheHandle);
         int count = interpolators.size();
         int required = yRows * zRows;
         int index = 0;
@@ -293,6 +307,7 @@ public final class NativeDensityFunction {
         if (stats) GRID_ATTEMPTS.increment();
         long start = profiling ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = tryCompile(function);
+        if (compiled != null) trackExecutionStatsCache(compiled.cacheHandle);
         // Grid evaluation supplies complete coordinates and advances cell X/Z for
         // every sample, so CacheOnce/Cache2D/FlatCache remain correctly keyed.
         // Interpolators still require NoiseChunk's live interpolation state.
@@ -335,6 +350,7 @@ public final class NativeDensityFunction {
         long start = profiling ? System.nanoTime() : 0L;
         ClimateBatchCompilation batch = CLIMATE_BATCH_BUFFERS.get().compilation(functions, arenaKey);
         if (batch == null) return false;
+        trackExecutionStatsCache(batch.cacheHandle);
         try {
             nativeEvaluateGridRoots(
                     batch.handle, batch.cacheHandle, batch.roots, functions.length,
@@ -407,6 +423,7 @@ public final class NativeDensityFunction {
                 javaCount++;
                 continue;
             }
+            trackExecutionStatsCache(compiled.cacheHandle);
             handles[count] = compiled.handle;
             cacheHandles[count] = compiled.cacheHandle;
             double[] flat = isSlice0 ? access.lattice$flatSlice0() : access.lattice$flatSlice1();
@@ -735,6 +752,7 @@ public final class NativeDensityFunction {
         long start = profiling ? System.nanoTime() : 0L;
         NativeDensityFunction compiled = direct ? tryCompileDirect(function) : tryCompileCell(function);
         if (compiled == null) return false;
+        trackExecutionStatsCache(compiled.cacheHandle);
         if (compiled.clearsCachePerCell && !direct) return false;
         int cellValueCount = cellWidth * cellHeight * cellWidth;
         int expected = cellCountXZ * cellCountY * cellValueCount;
@@ -824,6 +842,7 @@ public final class NativeDensityFunction {
                 javaAccesses[javaCount++] = access;
                 continue;
             }
+            trackExecutionStatsCache(compiled.cacheHandle);
             if (column == null || column.length < columnValueCount) {
                 releaseDirectCellColumnBuffer(column);
                 column = acquireDirectCellColumnBuffer(columnValueCount);
@@ -997,6 +1016,7 @@ public final class NativeDensityFunction {
             if (stats) CELL_SKIP_COMPILE_NULL.increment();
             return false;
         }
+        trackExecutionStatsCache(compiled.cacheHandle);
         if (stats) {
             CELL_ATTEMPTS.increment();
             if (highLevel) CELL_HIGH_ATTEMPTS.increment();
@@ -1338,7 +1358,158 @@ public final class NativeDensityFunction {
     }
 
     private static long createCache(long handle) {
-        return nativeCreateCache(handle);
+        long cacheHandle = nativeCreateCache(handle);
+        if (cacheHandle != 0L && EXECUTION_STATS_ENABLED && enableExecutionStats(cacheHandle)) {
+            trackExecutionStatsCache(cacheHandle);
+        }
+        return cacheHandle;
+    }
+
+    private static boolean enableExecutionStats(long cacheHandle) {
+        if (!EXECUTION_STATS_NATIVE_AVAILABLE) return false;
+        try {
+            nativeSetExecutionStatsEnabled(cacheHandle, true);
+            return true;
+        } catch (UnsatisfiedLinkError | NoSuchMethodError error) {
+            EXECUTION_STATS_NATIVE_AVAILABLE = false;
+            LatticeNative.logFallbackOnce("density_function_execution_stats_symbol", error.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Starts one benchmark-owned aggregation window for the current worker.
+     * Production evaluation never calls this method, so enabling diagnostics
+     * alone does not allocate Java-side aggregation state on the hot path.
+     */
+    public static void beginExecutionStatsSample() {
+        if (!EXECUTION_STATS_ENABLED) return;
+        EXECUTION_STATS_SAMPLE.set(new ExecutionStatsSample());
+    }
+
+    /**
+     * Returns and clears the current worker's aggregation window. Each cache
+     * is reset on first observation, so the result describes only this sample.
+     */
+    public static ExecutionStatsSnapshot finishExecutionStatsSample() {
+        if (!EXECUTION_STATS_ENABLED) return ExecutionStatsSnapshot.disabled();
+        ExecutionStatsSample sample = EXECUTION_STATS_SAMPLE.get();
+        EXECUTION_STATS_SAMPLE.remove();
+        return sample == null ? ExecutionStatsSnapshot.empty() : sample.snapshot();
+    }
+
+    private static void trackExecutionStatsCache(long cacheHandle) {
+        if (!EXECUTION_STATS_ENABLED || !EXECUTION_STATS_NATIVE_AVAILABLE || cacheHandle == 0L) return;
+        ExecutionStatsSample sample = EXECUTION_STATS_SAMPLE.get();
+        if (sample != null) sample.track(cacheHandle);
+    }
+
+    public static final class ExecutionStatsSnapshot {
+        private static final ExecutionStatsSnapshot DISABLED = new ExecutionStatsSnapshot(false, 0L, new long[EXECUTION_STATS_LONGS]);
+        private static final ExecutionStatsSnapshot EMPTY = new ExecutionStatsSnapshot(true, 0L, new long[EXECUTION_STATS_LONGS]);
+        private final boolean enabled;
+        private final long cacheCount;
+        private final long[] values;
+
+        private ExecutionStatsSnapshot(boolean enabled, long cacheCount, long[] values) {
+            this.enabled = enabled;
+            this.cacheCount = cacheCount;
+            this.values = values;
+        }
+
+        public static ExecutionStatsSnapshot disabled() {
+            return DISABLED;
+        }
+
+        public static ExecutionStatsSnapshot empty() {
+            return EMPTY;
+        }
+
+        public ExecutionStatsSnapshot plus(ExecutionStatsSnapshot other) {
+            if (!this.enabled) return other;
+            if (!other.enabled) return this;
+            long[] combined = this.values.clone();
+            for (int index = 0; index < combined.length; index++) combined[index] += other.values[index];
+            combined[6] = Math.max(this.values[6], other.values[6]);
+            combined[7] = Math.max(this.values[7], other.values[7]);
+            return new ExecutionStatsSnapshot(true, this.cacheCount + other.cacheCount, combined);
+        }
+
+        public String benchmarkFields() {
+            if (!enabled) return "executionStats=disabled";
+            return "executionStats=enabled"
+                    + " executionCaches=" + cacheCount
+                    + " executionColumnCalls=" + values[0]
+                    + " executionAvx2Success=" + values[1]
+                    + " executionGenericSuccess=" + values[2]
+                    + " executionPointFallback=" + values[3]
+                    + " executionCacheClears=" + values[4]
+                    + " executionScratchLeases=" + values[5]
+                    + " executionScratchPeakDepth=" + values[6]
+                    + " executionScratchPeakLeaseBytes=" + values[7]
+                    + " executionRangeAllIn=" + values[8]
+                    + " executionRangeAllOut=" + values[9]
+                    + " executionRangeMixed=" + values[10]
+                    + " executionAvx2Rejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS)
+                    + " executionGenericRejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length);
+        }
+
+        private String nodeKindCounts(int offset) {
+            StringBuilder result = new StringBuilder("{");
+            boolean first = true;
+            for (int index = 0; index < EXECUTION_NODE_KINDS.length; index++) {
+                long count = values[offset + index];
+                if (count == 0L) continue;
+                if (!first) result.append(',');
+                result.append(EXECUTION_NODE_KINDS[index]).append('=').append(count);
+                first = false;
+            }
+            return result.append('}').toString();
+        }
+    }
+
+    private static final class ExecutionStatsSample {
+        private long[] cacheHandles = new long[4];
+        private int size;
+
+        private void track(long cacheHandle) {
+            for (int index = 0; index < size; index++) {
+                if (cacheHandles[index] == cacheHandle) return;
+            }
+            if (size == cacheHandles.length) cacheHandles = Arrays.copyOf(cacheHandles, size * 2);
+            try {
+                nativeResetExecutionStats(cacheHandle);
+                cacheHandles[size++] = cacheHandle;
+            } catch (UnsatisfiedLinkError | NoSuchMethodError error) {
+                EXECUTION_STATS_NATIVE_AVAILABLE = false;
+                LatticeNative.logFallbackOnce("density_function_execution_stats_symbol", error.getMessage());
+            }
+        }
+
+        private ExecutionStatsSnapshot snapshot() {
+            if (!EXECUTION_STATS_NATIVE_AVAILABLE) return ExecutionStatsSnapshot.disabled();
+            long[] totals = new long[EXECUTION_STATS_LONGS];
+            long countedCaches = 0L;
+            try {
+                for (int index = 0; index < size; index++) {
+                    long[] values = nativeGetExecutionStats(cacheHandles[index]);
+                    if (values == null || values.length != EXECUTION_STATS_LONGS) {
+                        throw new IllegalStateException("Unexpected native density execution stats layout");
+                    }
+                    long priorDepth = totals[6];
+                    long priorBytes = totals[7];
+                    for (int field = 0; field < totals.length; field++) totals[field] += values[field];
+                    totals[6] = Math.max(priorDepth, values[6]);
+                    totals[7] = Math.max(priorBytes, values[7]);
+                    countedCaches++;
+                }
+                return new ExecutionStatsSnapshot(true, countedCaches, totals);
+            } catch (UnsatisfiedLinkError | NoSuchMethodError error) {
+                EXECUTION_STATS_NATIVE_AVAILABLE = false;
+                LatticeNative.logFallbackOnce("density_function_execution_stats_symbol", error.getMessage());
+                return ExecutionStatsSnapshot.disabled();
+            }
+        }
     }
 
     private record LastCompile(DensityFunction function, NativeDensityFunction compiled) {}
@@ -1399,6 +1570,7 @@ public final class NativeDensityFunction {
             case "multipointSpline" -> MULTIPOINT_SPLINE_ENABLED = value;
             case "climateBatch" -> CLIMATE_BATCH_ENABLED = value;
             case "stats" -> STATS_ENABLED = value;
+            case "executionStats" -> EXECUTION_STATS_ENABLED = value;
             case "profiling" -> PROFILING_ENABLED = value;
             case "parity" -> PARITY_ENABLED = value;
             default -> {
@@ -1430,6 +1602,7 @@ public final class NativeDensityFunction {
                 + " multipointSpline=" + MULTIPOINT_SPLINE_ENABLED
                 + " climateBatch=" + CLIMATE_BATCH_ENABLED
                 + " stats=" + STATS_ENABLED
+                + " executionStats=" + EXECUTION_STATS_ENABLED
                 + " profiling=" + PROFILING_ENABLED
                 + " parity=" + PARITY_ENABLED
                 + " parityInterval=" + PARITY_INTERVAL
@@ -2601,6 +2774,9 @@ public final class NativeDensityFunction {
     private static native void nativeDestroyCache(long cacheHandle);
     private static native void nativeBindCacheAllInCellArrays(long cacheHandle, double[][] arrays);
     private static native void nativeClearCache(long cacheHandle);
+    private static native void nativeSetExecutionStatsEnabled(long cacheHandle, boolean enabled);
+    private static native void nativeResetExecutionStats(long cacheHandle);
+    private static native long[] nativeGetExecutionStats(long cacheHandle);
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateGridRoots(long handle, long cacheHandle, int[] roots, int count, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateYColumn(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] out);
