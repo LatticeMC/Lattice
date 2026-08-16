@@ -1761,7 +1761,10 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumn
     }
 
     for (jint z_row = 0; z_row < zRows; ++z_row) {
-        cache->clear();
+        // This CacheState belongs exclusively to SliceBatchCompilation. It
+        // never has CacheAllInCell Java arrays bound, while the column
+        // evaluators overwrite every retained scratch element before use.
+        cache->clear_bound_slice_row();
         const double z = static_cast<double>(z0) + static_cast<double>(z_row * cellWidth);
         const int cell_z = static_cast<int>(firstCellZ + z_row);
         const std::size_t offset = static_cast<std::size_t>(z_row) * static_cast<std::size_t>(yRows);

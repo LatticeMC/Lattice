@@ -627,6 +627,16 @@ struct CacheState {
         is_in_interpolation_loop = false;
     }
 
+    /// Reset the state that can affect one bound slice-batch Z row. Bound
+    /// slice caches never bind CacheAllInCell Java arrays, so retaining the
+    /// logical size of the private SoA scratch vectors avoids reinitializing
+    /// values that every column evaluator overwrites before reading.
+    void clear_bound_slice_row() noexcept {
+        if (execution_stats) ++execution_stats->cache_clears;
+        clear_evaluation_caches();
+        is_in_interpolation_loop = false;
+    }
+
     [[nodiscard]] bool set_execution_stats_enabled(bool enabled) noexcept {
         if (enabled) {
             if (!execution_stats) {
