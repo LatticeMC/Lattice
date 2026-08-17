@@ -1,0 +1,200 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 17 Aug 2026 09:34:23 +0800
+Subject: [PATCH] perf(worldgen): cache stable ore tag matches
+
+
+diff --git a/net/minecraft/core/MappedRegistry.java b/net/minecraft/core/MappedRegistry.java
+index ad1558693564ebd18f5e16b85ae552d2af95efef..7ebb18b92868e9950d5ff08de640283b060b6db3 100644
+--- a/net/minecraft/core/MappedRegistry.java
++++ b/net/minecraft/core/MappedRegistry.java
+@@ -19,6 +19,7 @@ import java.util.Objects;
+ import java.util.Optional;
+ import java.util.Set;
+ import java.util.Map.Entry;
++import java.util.concurrent.atomic.AtomicLong;
+ import java.util.function.BiConsumer;
+ import java.util.stream.Stream;
+ import net.minecraft.resources.Identifier;
+@@ -30,6 +31,35 @@ import net.minecraft.util.Util;
+ import org.jspecify.annotations.Nullable;
+ 
+ public class MappedRegistry<T> implements WritableRegistry<T> {
++    // Lattice start - invalidate direct-mapped BlockState tag caches across datapack reloads
++    // An odd value means the block tag bindings are currently being replaced. Readers must
++    // not cache memberships during that window because Holder.Reference tags are updated one
++    // state at a time. The even values before and after the window are distinct generations.
++    private static final AtomicLong BLOCK_TAG_UPDATE_EPOCH = new AtomicLong();
++    private static final Object BLOCK_TAG_UPDATE_LOCK = new Object();
++    private static int blockTagUpdateDepth;
++
++    public static long blockTagUpdateEpoch() {
++        return BLOCK_TAG_UPDATE_EPOCH.get();
++    }
++
++    private static void beginBlockTagUpdate() {
++        synchronized (BLOCK_TAG_UPDATE_LOCK) {
++            if (blockTagUpdateDepth++ == 0) {
++                BLOCK_TAG_UPDATE_EPOCH.incrementAndGet();
++            }
++        }
++    }
++
++    private static void endBlockTagUpdate() {
++        synchronized (BLOCK_TAG_UPDATE_LOCK) {
++            if (--blockTagUpdateDepth == 0) {
++                BLOCK_TAG_UPDATE_EPOCH.incrementAndGet();
++            }
++        }
++    }
++    // Lattice end - invalidate direct-mapped BlockState tag caches across datapack reloads
++
+     private final ResourceKey<? extends Registry<T>> key;
+     private final ObjectList<Holder.Reference<T>> byId = new ObjectArrayList<>(256);
+     private final Reference2IntMap<T> toId = Util.make(new Reference2IntOpenHashMap<>(2048), map -> map.defaultReturnValue(-1)); // Paper - Perf: Use bigger expected size to reduce collisions
+@@ -365,15 +395,29 @@ public class MappedRegistry<T> implements WritableRegistry<T> {
+     }
+ 
+     void refreshTagsInHolders() {
+-        Map<Holder.Reference<T>, List<TagKey<T>>> map = new IdentityHashMap<>();
+-        this.byKey.values().forEach(reference -> map.put((Holder.Reference<T>)reference, new ArrayList<>()));
+-        this.allTags.forEach((tagKey, named) -> {
+-            for (Holder<T> holder : named) {
+-                Holder.Reference<T> reference = this.validateAndUnwrapTagElement((TagKey<T>)tagKey, holder);
+-                map.get(reference).add((TagKey<T>)tagKey);
++        // Lattice start - invalidate direct-mapped BlockState tag caches across datapack reloads
++        final boolean updatingBlockTags = this.key == (Object)net.minecraft.core.registries.Registries.BLOCK;
++        if (updatingBlockTags) {
++            beginBlockTagUpdate();
++        }
++        try {
++            // Lattice end - invalidate direct-mapped BlockState tag caches across datapack reloads
++            Map<Holder.Reference<T>, List<TagKey<T>>> map = new IdentityHashMap<>();
++            this.byKey.values().forEach(reference -> map.put((Holder.Reference<T>)reference, new ArrayList<>()));
++            this.allTags.forEach((tagKey, named) -> {
++                for (Holder<T> holder : named) {
++                    Holder.Reference<T> reference = this.validateAndUnwrapTagElement((TagKey<T>)tagKey, holder);
++                    map.get(reference).add((TagKey<T>)tagKey);
++                }
++            });
++            map.forEach(Holder.Reference::bindTags);
++        // Lattice start - invalidate direct-mapped BlockState tag caches across datapack reloads
++        } finally {
++            if (updatingBlockTags) {
++                endBlockTagUpdate();
+             }
+-        });
+-        map.forEach(Holder.Reference::bindTags);
++        }
++        // Lattice end - invalidate direct-mapped BlockState tag caches across datapack reloads
+     }
+ 
+     public void bindAllTagsToEmpty() {
+diff --git a/net/minecraft/world/level/levelgen/feature/OreFeature.java b/net/minecraft/world/level/levelgen/feature/OreFeature.java
+index ca95fa3b6e480b4f6ae5443605d0dd66ca5c37f4..4b5fe83b6f853ae3a2b36f4bed7a8a9e8cc67bca 100644
+--- a/net/minecraft/world/level/levelgen/feature/OreFeature.java
++++ b/net/minecraft/world/level/levelgen/feature/OreFeature.java
+@@ -12,6 +12,8 @@ import net.minecraft.world.level.chunk.BulkSectionAccess;
+ import net.minecraft.world.level.chunk.LevelChunkSection;
+ import net.minecraft.world.level.levelgen.Heightmap;
+ import net.minecraft.world.level.levelgen.feature.configurations.OreConfiguration;
++import net.minecraft.world.level.levelgen.structure.templatesystem.RuleTest;
++import net.minecraft.world.level.levelgen.structure.templatesystem.TagMatchTest;
+ 
+ public class OreFeature extends Feature<OreConfiguration> {
+     public OreFeature(Codec<OreConfiguration> codec) {
+@@ -188,8 +190,16 @@ public class OreFeature extends Feature<OreConfiguration> {
+         OreConfiguration.TargetBlockState targetState,
+         BlockPos.MutableBlockPos mutablePos
+     ) {
+-        return targetState.target.test(state, random)
++        // Lattice start - cache exact TagMatchTest memberships during ore placement
++        // RuleTest is extensible. Only the unmodified vanilla TagMatchTest is specialised so
++        // subclasses retain their own predicate and RandomSource semantics.
++        final RuleTest target = targetState.target;
++        final boolean targetMatches = target.getClass() == TagMatchTest.class
++            ? ((TagMatchTest)target).lattice$testCachedForOre(state)
++            : target.test(state, random);
++        return targetMatches
+             && (shouldSkipAirCheck(random, config.discardChanceOnAirExposure) || !isAdjacentToAir(adjacentStateAccessor, mutablePos));
++        // Lattice end - cache exact TagMatchTest memberships during ore placement
+     }
+ 
+     protected static boolean shouldSkipAirCheck(RandomSource random, float chance) {
+diff --git a/net/minecraft/world/level/levelgen/structure/templatesystem/TagMatchTest.java b/net/minecraft/world/level/levelgen/structure/templatesystem/TagMatchTest.java
+index 4b63df282c89716604fa72b5a4e7d2077d3678e3..91a5f7dbf80f9ed38f8cd29e7f610998a915cb3c 100644
+--- a/net/minecraft/world/level/levelgen/structure/templatesystem/TagMatchTest.java
++++ b/net/minecraft/world/level/levelgen/structure/templatesystem/TagMatchTest.java
+@@ -1,6 +1,8 @@
+ package net.minecraft.world.level.levelgen.structure.templatesystem;
+ 
+ import com.mojang.serialization.MapCodec;
++import java.util.concurrent.atomic.AtomicReferenceArray;
++import net.minecraft.core.MappedRegistry;
+ import net.minecraft.core.registries.Registries;
+ import net.minecraft.tags.TagKey;
+ import net.minecraft.util.RandomSource;
+@@ -9,7 +11,12 @@ import net.minecraft.world.level.block.state.BlockState;
+ 
+ public class TagMatchTest extends RuleTest {
+     public static final MapCodec<TagMatchTest> CODEC = TagKey.codec(Registries.BLOCK).fieldOf("tag").xmap(TagMatchTest::new, tagMatchTest -> tagMatchTest.tag);
++    // Ore generation repeatedly checks a small set of immutable block states against the same
++    // tag. A direct-mapped table avoids a ReferenceOpenHashSet probe on a hit while keeping
++    // memory bounded for every data-pack supplied RuleTest instance.
++    private static final int LATTICE_STATE_CACHE_MASK = 31;
+     private final TagKey<Block> tag;
++    private volatile AtomicReferenceArray<CacheEntry> lattice$oreStateMatches;
+ 
+     public TagMatchTest(TagKey<Block> tag) {
+         this.tag = tag;
+@@ -20,6 +27,50 @@ public class TagMatchTest extends RuleTest {
+         return state.is(this.tag);
+     }
+ 
++    /**
++     * OreFeature only calls this for an exact TagMatchTest, never a subclass that could have
++     * changed {@link #test(BlockState, RandomSource)} semantics or random consumption.
++     */
++    public boolean lattice$testCachedForOre(BlockState state) {
++        // Lattice start - cache stable block tag memberships for ore placement
++        final long tagEpoch = MappedRegistry.blockTagUpdateEpoch();
++        if ((tagEpoch & 1L) != 0L) {
++            return state.is(this.tag);
++        }
++
++        final int slot = System.identityHashCode(state) & LATTICE_STATE_CACHE_MASK;
++        AtomicReferenceArray<CacheEntry> cache = this.lattice$oreStateMatches;
++        if (cache == null) {
++            cache = new AtomicReferenceArray<>(LATTICE_STATE_CACHE_MASK + 1);
++            this.lattice$oreStateMatches = cache;
++        }
++        final CacheEntry cached = cache.get(slot);
++        if (cached != null && cached.epoch == tagEpoch && cached.state == state) {
++            return cached.matches;
++        }
++
++        final boolean matches = state.is(this.tag);
++        // Do not publish a result that could have been observed while a datapack reload was
++        // replacing holder tags. The test result itself remains the vanilla result.
++        if (MappedRegistry.blockTagUpdateEpoch() == tagEpoch) {
++            cache.lazySet(slot, new CacheEntry(tagEpoch, state, matches));
++        }
++        return matches;
++        // Lattice end - cache stable block tag memberships for ore placement
++    }
++
++    private static final class CacheEntry {
++        private final long epoch;
++        private final BlockState state;
++        private final boolean matches;
++
++        private CacheEntry(long epoch, BlockState state, boolean matches) {
++            this.epoch = epoch;
++            this.state = state;
++            this.matches = matches;
++        }
++    }
++
+     @Override
+     protected RuleTestType<?> getType() {
+         return RuleTestType.TAG_TEST;
