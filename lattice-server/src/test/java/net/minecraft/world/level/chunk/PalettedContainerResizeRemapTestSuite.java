@@ -12,7 +12,7 @@ import net.minecraft.util.BitStorage;
 import net.minecraft.util.SimpleBitStorage;
 import org.junit.jupiter.api.Test;
 
-class PalettedContainerResizeRemapTest {
+class PalettedContainerResizeRemapTestSuite {
     @Test
     void paletteResizesPreserveRepeatedAndDefaultValues() {
         IdMapper<Object> registry = new IdMapper<>(64);
