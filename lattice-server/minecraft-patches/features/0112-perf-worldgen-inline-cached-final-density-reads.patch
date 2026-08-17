@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 17 Aug 2026 17:03:43 +0800
+Subject: [PATCH] perf(worldgen): inline cached final density reads
+
+
+diff --git a/net/minecraft/world/level/levelgen/NoiseChunk.java b/net/minecraft/world/level/levelgen/NoiseChunk.java
+index 0dac42d09b938ee0ba20c799e5f57631850ef814..2d31e1984853b8c5bcb4fb76e2c02fa39803f496 100644
+--- a/net/minecraft/world/level/levelgen/NoiseChunk.java
++++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
+@@ -47,7 +47,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     private final Long2IntOpenHashMap preliminarySurfaceLevelCache = new Long2IntOpenHashMap();
+     private final Aquifer aquifer;
+     private final DensityFunction preliminarySurfaceLevel;
+-    private final DensityFunction finalDensity;
++    private final NoiseChunk.CacheAllInCell finalDensity;
+     private final DensityFunctions.@Nullable BeardifierOrMarker activeBeardifier;
+     private final NoiseChunk.@Nullable BlockStateFiller oreVeinifier;
+     private final Blender blender;
+@@ -243,7 +243,7 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+     }
+ 
+     protected @Nullable BlockState getInterpolatedState() {
+-        double density = this.finalDensity.compute(this);
++        double density = this.finalDensity.computeCurrentCell();
+         if (this.activeBeardifier != null) {
+             density += this.activeBeardifier.compute(this);
+         }
+@@ -1006,6 +1006,19 @@ public class NoiseChunk implements DensityFunction.ContextProvider, DensityFunct
+             }
+         }
+ 
++        double computeCurrentCell() {
++            if (!NoiseChunk.this.interpolating) {
++                throw new IllegalStateException("Trying to sample interpolator outside the interpolation loop");
++            }
++
++            int i = NoiseChunk.this.inCellX;
++            int i1 = NoiseChunk.this.inCellY;
++            int i2 = NoiseChunk.this.inCellZ;
++            return i >= 0 && i1 >= 0 && i2 >= 0 && i < NoiseChunk.this.cellWidth && i1 < NoiseChunk.this.cellHeight && i2 < NoiseChunk.this.cellWidth
++                ? this.values[((NoiseChunk.this.cellHeight - 1 - i1) * NoiseChunk.this.cellWidth + i) * NoiseChunk.this.cellWidth + i2]
++                : this.noiseFiller.compute(NoiseChunk.this);
++        }
++
+         @Override
+         public void fillArray(double[] array, DensityFunction.ContextProvider contextProvider) {
+             contextProvider.fillAllDirectly(array, this);
