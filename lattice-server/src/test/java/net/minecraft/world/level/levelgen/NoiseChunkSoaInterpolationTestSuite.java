@@ -6,7 +6,7 @@ import java.util.Random;
 import net.minecraft.util.Mth;
 import org.junit.jupiter.api.Test;
 
-class NoiseChunkSoaInterpolationTest {
+class NoiseChunkSoaInterpolationTestSuite {
     private static final double[] BOUNDARY_DELTAS = {
         -0.0D, 0.0D, Double.MIN_VALUE, Math.nextDown(1.0D), 1.0D
     };
