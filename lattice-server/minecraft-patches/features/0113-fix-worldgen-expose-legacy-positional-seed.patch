@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Tue, 18 Aug 2026 16:44:02 +0800
+Subject: [PATCH] fix(worldgen): expose legacy positional seed
+
+
+diff --git a/net/minecraft/world/level/levelgen/LegacyRandomSource.java b/net/minecraft/world/level/levelgen/LegacyRandomSource.java
+index c67168517774a0ad9ca43422a79ef14a8ea0c2e8..3563f845d588e334b3ad3fbfd871f0a6d78dfb0f 100644
+--- a/net/minecraft/world/level/levelgen/LegacyRandomSource.java
++++ b/net/minecraft/world/level/levelgen/LegacyRandomSource.java
+@@ -60,6 +60,11 @@ public class LegacyRandomSource implements BitRandomSource {
+             this.seed = seed;
+         }
+ 
++        /** Read-only Lattice bridge for native surface-rule compilation. */
++        public long lattice$seed() {
++            return this.seed;
++        }
++
+         @Override
+         public RandomSource at(int x, int y, int z) {
+             long seed = Mth.getSeed(x, y, z);
