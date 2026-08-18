@@ -43,11 +43,23 @@ bool evaluate_condition(const Arena& a, int cond_ref,
         case ConditionKind::kVerticalGradient: {
             // True at and below i0; false at and above i1; linear gradient
             // chance in between, evaluated against the exact positional
-            // Xoroshiro stream derived from the Java-side random factory.
+            // stream derived from the Java-side random factory. i2 selects
+            // Mojang's modern Xoroshiro (0) or legacy 48-bit LCG (1).
             if (ctx.y <= c.i0) return true;
             if (ctx.y >= c.i1) return false;
             const double d = static_cast<double>(c.i1 - ctx.y)
                            / static_cast<double>(c.i1 - c.i0);
+            if (c.i2 == 1) {
+                constexpr std::uint64_t kMask = (1ULL << 48) - 1ULL;
+                constexpr std::uint64_t kMultiplier = 25214903917ULL;
+                const std::uint64_t positional = static_cast<std::uint64_t>(
+                    lattice::world::gen::rng::math_helper_hash_code(ctx.x, ctx.y, ctx.z));
+                std::uint64_t state = (positional ^ static_cast<std::uint64_t>(c.s0) ^ kMultiplier) & kMask;
+                state = (state * kMultiplier + 11ULL) & kMask;
+                const std::uint32_t bits = static_cast<std::uint32_t>(state >> 24);
+                const float random = static_cast<float>(bits) * 5.9604644775390625e-8f;
+                return static_cast<double>(random) < d;
+            }
             lattice::world::gen::rng::Splitter splitter(
                 static_cast<std::uint64_t>(c.s0),
                 static_cast<std::uint64_t>(c.s1));

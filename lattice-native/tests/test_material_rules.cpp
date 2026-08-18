@@ -1,6 +1,8 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <array>
+#include <cstdint>
 #include <limits>
 
 #include "world/gen/surfacebuilder/material_rules.hpp"
@@ -319,4 +321,39 @@ TEST_CASE("material: vertical gradient uses positional xoroshiro stream") {
     const bool expected = static_cast<double>(random.next_float()) < threshold;
 
     CHECK(evaluate_condition(a, ref, ctx) == expected);
+}
+
+TEST_CASE("material: vertical gradient uses positional legacy stream") {
+    Arena a;
+    Condition c{};
+    c.kind = ConditionKind::kVerticalGradient;
+    c.i0 = 10;
+    c.i1 = 20;
+    c.i2 = 1; // LegacyRandomSource.LegacyPositionalRandomFactory
+    c.s0 = 0x123456789ABCDELL;
+    int ref = static_cast<int>(a.conditions.size());
+    a.conditions.push_back(c);
+
+    for (const auto [x, y, z] : std::array<std::array<int, 3>, 4>{
+             std::array<int, 3>{7, 15, -3},
+             std::array<int, 3>{-19, 11, 41},
+             std::array<int, 3>{1024, 19, -2048},
+             std::array<int, 3>{-30000, 12, 30000}}) {
+        SampleContext ctx = base_ctx();
+        ctx.x = x;
+        ctx.y = y;
+        ctx.z = z;
+
+        constexpr std::uint64_t mask = (1ULL << 48) - 1ULL;
+        constexpr std::uint64_t multiplier = 25214903917ULL;
+        const std::uint64_t positional = static_cast<std::uint64_t>(
+            lattice::world::gen::rng::math_helper_hash_code(x, y, z));
+        std::uint64_t state = (positional ^ static_cast<std::uint64_t>(c.s0) ^ multiplier) & mask;
+        state = (state * multiplier + 11ULL) & mask;
+        const float random = static_cast<float>(static_cast<std::uint32_t>(state >> 24))
+                           * 5.9604644775390625e-8f;
+        const double threshold = static_cast<double>(c.i1 - y)
+                               / static_cast<double>(c.i1 - c.i0);
+        CHECK(evaluate_condition(a, ref, ctx) == (static_cast<double>(random) < threshold));
+    }
 }
