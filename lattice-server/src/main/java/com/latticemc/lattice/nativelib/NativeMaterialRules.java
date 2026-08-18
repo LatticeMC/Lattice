@@ -12,6 +12,8 @@ public final class NativeMaterialRules implements AutoCloseable {
 
     public static final int NO_MATCH = -1;
     public static final int BANDLANDS_SENTINEL = -2;
+    private static final long POSITIONAL_XOROSHIRO = 0L;
+    private static final long POSITIONAL_LEGACY = 1L;
     private static final double[] EMPTY_DOUBLES = new double[0];
     private final long handle;
     private final Map<String, Integer> noiseSlots = new HashMap<>();
@@ -80,7 +82,7 @@ public final class NativeMaterialRules implements AutoCloseable {
     public int addCondVerticalGradient(int trueAtAndBelow, int falseAtAndAbove, RandomState randomState, Identifier randomName) {
         checkOpen();
         long[] seeds = positionalSeeds(randomState, randomName);
-        return nativeAddCondVerticalGradient(handle, trueAtAndBelow, falseAtAndAbove, seeds[0], seeds[1]);
+        return nativeAddCondVerticalGradient(handle, trueAtAndBelow, falseAtAndAbove, (int) seeds[0], seeds[1], seeds[2]);
     }
     public int addCondNoiseThreshold(double lower, double upper) { checkOpen(); return nativeAddCondNoiseThreshold(handle, lower, upper); }
     public int addCondNamedNoiseThreshold(String noiseName, double lower, double upper) {
@@ -130,10 +132,13 @@ public final class NativeMaterialRules implements AutoCloseable {
     }
 
     static long[] positionalSeeds(PositionalRandomFactory factory) {
-        if (!(factory instanceof XoroshiroRandomSource.XoroshiroPositionalRandomFactory xoroshiro)) {
-            return null;
+        if (factory instanceof XoroshiroRandomSource.XoroshiroPositionalRandomFactory xoroshiro) {
+            return new long[] { POSITIONAL_XOROSHIRO, xoroshiro.lattice$seedLo(), xoroshiro.lattice$seedHi() };
         }
-        return new long[] { xoroshiro.lattice$seedLo(), xoroshiro.lattice$seedHi() };
+        if (factory instanceof net.minecraft.world.level.levelgen.LegacyRandomSource.LegacyPositionalRandomFactory legacy) {
+            return new long[] { POSITIONAL_LEGACY, legacy.lattice$seed(), 0L };
+        }
+        return null;
     }
 
     private int noiseSlot(String noiseName) {
@@ -152,7 +157,7 @@ public final class NativeMaterialRules implements AutoCloseable {
     private static native int nativeAddCondAboveYWithSurface(long h, int minY, int adjust);
     private static native int nativeAddCondAboveYWithStoneDepth(long h, int minY, int surfaceDepthMultiplier);
     private static native int nativeAddCondStoneDepth(long h, int offset, boolean adjustSurfaceDepth, int secondaryRange, boolean ceiling);
-    private static native int nativeAddCondVerticalGradient(long h, int trueAtAndBelow, int falseAtAndAbove, long positionalSeedLo, long positionalSeedHi);
+    private static native int nativeAddCondVerticalGradient(long h, int trueAtAndBelow, int falseAtAndAbove, int positionalRandomKind, long positionalSeedLo, long positionalSeedHi);
     private static native int nativeAddCondNoiseThreshold(long h, double lower, double upper);
     private static native int nativeAddCondNamedNoiseThreshold(long h, int noiseSlot, double lower, double upper);
     private static native int nativeAddCondSecondaryNoiseThreshold(long h, double lower, double upper);

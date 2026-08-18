@@ -130,10 +130,11 @@ Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeAddCondStoneDepth
 JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativeMaterialRules_nativeAddCondVerticalGradient(
         JNIEnv*, jclass, jlong h, jint trueAtAndBelowY, jint falseAtAndAboveY,
-        jlong seedLo, jlong seedHi) {
+        jint randomKind, jlong seedLo, jlong seedHi) {
     auto* a = arena_from(h); if (!a) return -1;
     mr::Condition c{}; c.kind = mr::ConditionKind::kVerticalGradient;
     c.i0 = trueAtAndBelowY; c.i1 = falseAtAndAboveY;
+    c.i2 = randomKind;
     c.s0 = static_cast<std::int64_t>(seedLo);
     c.s1 = static_cast<std::int64_t>(seedHi);
     return push_cond(a, c);
