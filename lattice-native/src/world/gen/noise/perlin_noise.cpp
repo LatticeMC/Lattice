@@ -24,6 +24,7 @@ namespace lattice::world::gen::noise {
 
 namespace {
 
+#if defined(LATTICE_HAS_PERLIN_AVX512)
 // AVX-512 is an explicit large-batch tier. The detector keeps auto mode at
 // AVX2, and these extra requirements prevent a partial AVX-512 ISA from ever
 // reaching the ZMM implementation.
@@ -35,6 +36,7 @@ inline bool can_use_avx512(std::size_t count) noexcept {
         && f.requested_tier == lattice::cpu::RequestedTier::Avx512
         && f.avx512f && f.avx512dq && f.avx512vl;
 }
+#endif
 
 // Java's `int floor(double)` equivalent: floor toward -∞, NOT trunc.
 inline int floor_to_int(double x) noexcept {
