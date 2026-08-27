@@ -10,6 +10,7 @@
 namespace lattice::world::gen::noise {
 
 namespace {
+#if defined(LATTICE_HAS_DOUBLE_PERLIN_AVX512)
 constexpr std::size_t kAvx512MinimumBatchSize = 129;
 
 inline bool can_use_avx512(std::size_t count) noexcept {
@@ -18,6 +19,7 @@ inline bool can_use_avx512(std::size_t count) noexcept {
         && f.requested_tier == lattice::cpu::RequestedTier::Avx512
         && f.avx512f && f.avx512dq && f.avx512vl;
 }
+#endif
 
 struct DoublePerlinBatchScratch {
     std::vector<double> scaled_x;
