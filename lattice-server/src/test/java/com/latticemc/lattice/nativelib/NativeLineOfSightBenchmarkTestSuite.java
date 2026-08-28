@@ -247,18 +247,27 @@ class NativeLineOfSightBenchmarkTestSuite {
                 }
 
                 long gateP50 = percentile(gateNanos, 0.50);
+                long gateP95 = percentile(gateNanos, 0.95);
                 long javaP50 = percentile(javaNanos, 0.50);
+                long javaP95 = percentile(javaNanos, 0.95);
                 long nativeP50 = percentile(nativeNanos, 0.50);
+                long nativeP95 = percentile(nativeNanos, 0.95);
                 long gatedP50 = percentile(gatedNanos, 0.50);
+                long gatedP95 = percentile(gatedNanos, 0.95);
                 double work = (double)RAY_COUNT * REPETITIONS;
                 System.out.printf(
                     "LOS gate breakdown: scenario=%s length=%d gate-threshold=%d gate-pass=%d/%d "
-                        + "gate-p50-ns=%d gate-per-ray-ns=%.2f java-p50-ns=%d native-p50-ns=%d gated-p50-ns=%d "
-                        + "gated-per-ray-ns=%.2f gated/java-p50=%.3f gated/native-p50=%.3f%n",
+                        + "gate-p50-ns=%d gate-p95-ns=%d gate-per-ray-ns=%.2f "
+                        + "java-p50-ns=%d java-p95-ns=%d java-per-ray-ns=%.2f "
+                        + "native-p50-ns=%d native-p95-ns=%d native-per-ray-ns=%.2f "
+                        + "gated-p50-ns=%d gated-p95-ns=%d gated-per-ray-ns=%.2f "
+                        + "gated/java-p50=%.3f gated/native-p50=%.3f%n",
                     scenarios[scenario], length, gateThreshold, gatePasses, rays.fromX.length,
-                    gateP50, gateP50 / ((double)rays.fromX.length * REPETITIONS),
-                    javaP50, nativeP50, gatedP50,
-                    gatedP50 / work, (double)gatedP50 / javaP50, (double)gatedP50 / nativeP50);
+                    gateP50, gateP95, gateP50 / ((double)rays.fromX.length * REPETITIONS),
+                    javaP50, javaP95, javaP50 / work,
+                    nativeP50, nativeP95, nativeP50 / work,
+                    gatedP50, gatedP95, gatedP50 / work,
+                    (double)gatedP50 / javaP50, (double)gatedP50 / nativeP50);
             }
         }
     }
