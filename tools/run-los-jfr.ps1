@@ -83,7 +83,25 @@ if ($SparkProfile) { $runnerArgs += '-SparkProfile' }
 Write-Host ("LOS run: section-lookup-reuse={0}, entities={1}, rounds={2}, duration={3}s" -f
     $SectionLookupReuse, $EntityCount, $Rounds, $Duration)
 Write-Host "Cleanup: run-entity-jfr removes only its benchmark tag/type through RCON; no unrelated process is stopped."
-& $runner @runnerArgs
-if ($LASTEXITCODE -ne 0) {
-    throw "LOS JFR runner failed with exit code $LASTEXITCODE"
+try {
+    & $runner @runnerArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "LOS JFR runner failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    # Keep a variant-specific copy for A/B comparison; the delegated runner's
+    # canonical logs are reused on its next invocation. Never overwrite a file.
+    $debugDirectory = Join-Path $ServerRoot 'debug'
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    foreach ($suffix in @('out.log', 'err.log')) {
+        $source = Join-Path $debugDirectory ("entity-jfr.{0}" -f $suffix)
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            $destination = Join-Path $debugDirectory ("los-section-lookup-{0}-{1}.{2}" -f $SectionLookupReuse, $stamp, $suffix)
+            if (Test-Path -LiteralPath $destination) {
+                $destination = Join-Path $debugDirectory ("los-section-lookup-{0}-{1}-{2}.{3}" -f $SectionLookupReuse, $stamp, [Guid]::NewGuid(), $suffix)
+            }
+            Copy-Item -LiteralPath $source -Destination $destination
+            Write-Host ("log: " + $destination)
+        }
+    }
 }
