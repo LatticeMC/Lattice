@@ -1,7 +1,6 @@
 package com.latticemc.lattice.nativelib;
 
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.BlockPos;
@@ -21,6 +20,8 @@ public final class NativeLineOfSight {
     private static final int SECTION_VOLUME = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
     private static final int MAX_SECTION_CACHE_ENTRIES = 2048;
     private static final Map<SectionKey, SectionMask> SECTION_MASK_CACHE = new ConcurrentHashMap<>();
+    private static final ThreadLocal<RayMaskScratch> RAY_MASK_SCRATCH =
+            ThreadLocal.withInitial(RayMaskScratch::new);
     private static final ClassValue<Boolean> USES_LIVING_ENTITY_LOS = new ClassValue<>() {
         @Override
         protected Boolean computeValue(Class<?> type) {
@@ -42,7 +43,20 @@ public final class NativeLineOfSight {
 
     private record SectionKey(int levelIdentity, ResourceKey<Level> dimension, int sectionX, int sectionY, int sectionZ) {}
 
-    private record SectionMask(byte[] data, long gameTime) {}
+    private record SectionMask(byte[] data) {}
+
+    private static final class RayMaskScratch {
+        private byte[] data = new byte[0];
+
+        private byte[] prepare(int volume) {
+            if (data.length < volume) {
+                data = new byte[volume];
+            } else {
+                Arrays.fill(data, 0, volume, (byte) 0);
+            }
+            return data;
+        }
+    }
 
     public static boolean isAvailable() {
         LatticeNative.ensureLoaded();
@@ -66,7 +80,7 @@ public final class NativeLineOfSight {
             for (int z = 0; z < sizeZ; ++z) {
                 for (int x = 0; x < sizeX; ++x) {
                     pos.set(minX + x, minY + y, minZ + z);
-                    if (isOpaqueToLos(level.getBlockState(pos))) {
+                    if (isCollidableToLos(level, pos, level.getBlockState(pos))) {
                         data[index(x, y, z, sizeX, sizeZ)] = 1;
                     }
                 }
@@ -128,6 +142,8 @@ public final class NativeLineOfSight {
     }
 
     public static void invalidateSection(Level level, BlockPos pos) {
+        // Section masks are retained across ticks; all runtime block mutation
+        // paths call this hook after a successful Level#setBlock operation.
         SECTION_MASK_CACHE.remove(sectionKey(level, pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4));
     }
 
@@ -147,7 +163,9 @@ public final class NativeLineOfSight {
             return null;
         }
 
-        SolidMask mask = new SolidMask(new byte[sizeX * sizeY * sizeZ], minX, minY, minZ, sizeX, sizeY, sizeZ);
+        int maskVolume = Math.toIntExact(volume(sizeX, sizeY, sizeZ));
+        SolidMask mask = new SolidMask(RAY_MASK_SCRATCH.get().prepare(maskVolume),
+                minX, minY, minZ, sizeX, sizeY, sizeZ);
         fillRayMask(level, fromX, fromY, fromZ, toX, toY, toZ, mask);
         return mask;
     }
@@ -302,8 +320,11 @@ public final class NativeLineOfSight {
         }
     }
 
-    private static boolean isOpaqueToLos(BlockState state) {
-        return !state.isAir();
+    private static boolean isCollidableToLos(Level level, BlockPos pos, BlockState state) {
+        // ClipContext.Block.COLLIDER delegates to the block's collision shape.
+        // !isAir() is not equivalent: plants and other non-colliding blocks
+        // must remain transparent to line of sight.
+        return !state.getCollisionShape(level, pos).isEmpty();
     }
 
     private static boolean isSectionMaskSolid(Level level, BlockPos.MutableBlockPos pos, int x, int y, int z) {
@@ -315,43 +336,36 @@ public final class NativeLineOfSight {
         byte value = mask.data[localIndex];
         if (value < 0) {
             pos.set(x, y, z);
-            value = (byte)(isOpaqueToLos(level.getBlockState(pos)) ? 1 : 0);
+            value = (byte)(isCollidableToLos(level, pos, level.getBlockState(pos)) ? 1 : 0);
             mask.data[localIndex] = value;
         }
         return value != 0;
     }
 
     private static SectionMask getSectionMask(Level level, int sectionX, int sectionY, int sectionZ) {
-        long gameTime = level.getGameTime();
         SectionKey key = sectionKey(level, sectionX, sectionY, sectionZ);
         SectionMask cached = SECTION_MASK_CACHE.get(key);
-        if (cached != null && cached.gameTime == gameTime) return cached;
+        if (cached != null) return cached;
 
-        SectionMask built = newSectionMask(gameTime);
+        SectionMask built = newSectionMask();
         SECTION_MASK_CACHE.put(key, built);
         if (SECTION_MASK_CACHE.size() > MAX_SECTION_CACHE_ENTRIES) {
-            pruneSectionCache(gameTime);
+            pruneSectionCache();
         }
         return built;
     }
 
-    private static SectionMask newSectionMask(long gameTime) {
+    private static SectionMask newSectionMask() {
         byte[] data = new byte[SECTION_VOLUME];
         Arrays.fill(data, (byte)-1);
-        return new SectionMask(data, gameTime);
+        return new SectionMask(data);
     }
 
     private static SectionKey sectionKey(Level level, int sectionX, int sectionY, int sectionZ) {
         return new SectionKey(System.identityHashCode(level), level.dimension(), sectionX, sectionY, sectionZ);
     }
 
-    private static void pruneSectionCache(long gameTime) {
-        Iterator<Map.Entry<SectionKey, SectionMask>> iterator = SECTION_MASK_CACHE.entrySet().iterator();
-        while (iterator.hasNext()) {
-            if (iterator.next().getValue().gameTime != gameTime) {
-                iterator.remove();
-            }
-        }
+    private static void pruneSectionCache() {
         if (SECTION_MASK_CACHE.size() > MAX_SECTION_CACHE_ENTRIES) {
             SECTION_MASK_CACHE.clear();
         }
