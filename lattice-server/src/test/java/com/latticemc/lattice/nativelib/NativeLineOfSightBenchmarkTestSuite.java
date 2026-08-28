@@ -25,6 +25,7 @@ class NativeLineOfSightBenchmarkTestSuite {
     private static final int WARMUP = 32;
     private static final int SAMPLES = 9;
     private static final int REPETITIONS = 8;
+    private static volatile int benchmarkSink;
 
     @BeforeAll
     static void bootstrapRegistries() {
@@ -75,6 +76,57 @@ class NativeLineOfSightBenchmarkTestSuite {
             (double) percentile(nativeNanos, 0.50) / percentile(javaNanos, 0.50));
     }
 
+    @Test
+    void comparesScalingAndHighLatencyScenarios() {
+        Assumptions.assumeTrue(
+            NativeLineOfSight.isAvailable(),
+            "native LOS library unavailable: " + LatticeNative.failureReason());
+
+        int[] counts = {256, 512, 1024, 2048};
+        String[] scenarios = {"early-block", "clear-long", "sparse-wall", "boundary"};
+        for (int scenario = 0; scenario < scenarios.length; ++scenario) {
+            for (int count : counts) {
+                NativeLineOfSight.SolidMask mask = fixtureMask(scenario);
+                Rays rays = fixtureRays(count, scenario);
+                boolean[] expected = javaBatch(rays, mask);
+                boolean[] actual = NativeLineOfSight.hasLineOfSightBatch(
+                    rays.fromX, rays.fromY, rays.fromZ,
+                    rays.toX, rays.toY, rays.toZ, mask);
+                assertArrayEquals(expected, actual,
+                    "native LOS differs from Java DDA scenario=" + scenarios[scenario] + " rays=" + count);
+
+                int repetitions = Math.max(1, 256 / count);
+                for (int i = 0; i < 8; ++i) {
+                    consume(NativeLineOfSight.hasLineOfSightBatch(
+                        rays.fromX, rays.fromY, rays.fromZ,
+                        rays.toX, rays.toY, rays.toZ, mask));
+                    consume(javaBatch(rays, mask));
+                }
+
+                long[] nativeNanos = new long[5];
+                long[] javaNanos = new long[5];
+                for (int sample = 0; sample < nativeNanos.length; ++sample) {
+                    if ((sample & 1) == 0) {
+                        nativeNanos[sample] = timeNative(rays, mask, repetitions);
+                        javaNanos[sample] = timeJava(rays, mask, repetitions);
+                    } else {
+                        javaNanos[sample] = timeJava(rays, mask, repetitions);
+                        nativeNanos[sample] = timeNative(rays, mask, repetitions);
+                    }
+                }
+
+                long javaP50 = percentile(javaNanos, 0.50);
+                long nativeP50 = percentile(nativeNanos, 0.50);
+                System.out.printf(
+                    "LOS scale: scenario=%s rays=%d repetitions=%d java-p50-ns=%d java-p95-ns=%d java-max-ns=%d native-p50-ns=%d native-p95-ns=%d native-max-ns=%d native/java-p50=%.3f%n",
+                    scenarios[scenario], count, repetitions,
+                    javaP50, percentile(javaNanos, 0.95), max(javaNanos),
+                    nativeP50, percentile(nativeNanos, 0.95), max(nativeNanos),
+                    (double) nativeP50 / javaP50);
+            }
+        }
+    }
+
     private static long timeNative(Rays rays, NativeLineOfSight.SolidMask mask) {
         long start = System.nanoTime();
         boolean[] result = null;
@@ -84,7 +136,7 @@ class NativeLineOfSightBenchmarkTestSuite {
                 rays.toX, rays.toY, rays.toZ,
                 mask);
         }
-        assertTrue(result != null && result.length == RAY_COUNT);
+        assertTrue(result != null && result.length == rays.fromX.length);
         return System.nanoTime() - start;
     }
 
@@ -98,9 +150,27 @@ class NativeLineOfSightBenchmarkTestSuite {
         return System.nanoTime() - start;
     }
 
+    private static long timeNative(Rays rays, NativeLineOfSight.SolidMask mask, int repetitions) {
+        long start = System.nanoTime();
+        for (int i = 0; i < repetitions; ++i) {
+            consume(NativeLineOfSight.hasLineOfSightBatch(
+                rays.fromX, rays.fromY, rays.fromZ,
+                rays.toX, rays.toY, rays.toZ, mask));
+        }
+        return System.nanoTime() - start;
+    }
+
+    private static long timeJava(Rays rays, NativeLineOfSight.SolidMask mask, int repetitions) {
+        long start = System.nanoTime();
+        for (int i = 0; i < repetitions; ++i) {
+            consume(javaBatch(rays, mask));
+        }
+        return System.nanoTime() - start;
+    }
+
     private static boolean[] javaBatch(Rays rays, NativeLineOfSight.SolidMask mask) {
-        boolean[] result = new boolean[RAY_COUNT];
-        for (int i = 0; i < RAY_COUNT; ++i) {
+        boolean[] result = new boolean[rays.fromX.length];
+        for (int i = 0; i < rays.fromX.length; ++i) {
             result[i] = javaDda(
                 rays.fromX[i], rays.fromY[i], rays.fromZ[i],
                 rays.toX[i], rays.toY[i], rays.toZ[i], mask);
@@ -124,6 +194,27 @@ class NativeLineOfSightBenchmarkTestSuite {
         return new NativeLineOfSight.SolidMask(data, 0, 0, 0, REGION_X, REGION_Y, REGION_Z);
     }
 
+    private static NativeLineOfSight.SolidMask fixtureMask(int scenario) {
+        byte[] data = new byte[REGION_X * REGION_Y * REGION_Z];
+        for (int y = 0; y < REGION_Y; ++y) {
+            for (int z = 0; z < REGION_Z; ++z) {
+                for (int x = 0; x < REGION_X; ++x) {
+                    boolean solid = switch (scenario) {
+                        case 0 -> x == 6 && (z & 1) == 0;
+                        case 1 -> false;
+                        case 2 -> (x == 31 && (z & 3) != 0)
+                            || (z == 57 && (x & 7) < 5)
+                            || (y == 12 && ((x * 13 + z * 7) & 31) == 0);
+                        case 3 -> x == 1 || x == REGION_X - 2 || z == 1 || z == REGION_Z - 2;
+                        default -> false;
+                    };
+                    if (solid) data[(y * REGION_Z + z) * REGION_X + x] = 1;
+                }
+            }
+        }
+        return new NativeLineOfSight.SolidMask(data, 0, 0, 0, REGION_X, REGION_Y, REGION_Z);
+    }
+
     private static Rays fixtureRays() {
         double[] fromX = new double[RAY_COUNT];
         double[] fromY = new double[RAY_COUNT];
@@ -140,6 +231,46 @@ class NativeLineOfSightBenchmarkTestSuite {
             toZ[i] = 88.5 - ((i * 5) & 15);
         }
         return new Rays(fromX, fromY, fromZ, toX, toY, toZ);
+    }
+
+    private static Rays fixtureRays(int count, int scenario) {
+        double[] fromX = new double[count];
+        double[] fromY = new double[count];
+        double[] fromZ = new double[count];
+        double[] toX = new double[count];
+        double[] toY = new double[count];
+        double[] toZ = new double[count];
+        for (int i = 0; i < count; ++i) {
+            if (scenario == 0) {
+                fromX[i] = 1.5;
+                fromY[i] = 1.5 + ((i * 5) & 15);
+                fromZ[i] = 2.5 + (i & 15);
+                toX[i] = 88.5;
+                toY[i] = fromY[i];
+                toZ[i] = fromZ[i];
+            } else if (scenario == 3) {
+                fromX[i] = 0.01 + ((i & 3) * 0.01);
+                fromY[i] = 0.01 + ((i * 5) & 15);
+                fromZ[i] = 0.01 + ((i & 7) * 0.01);
+                toX[i] = 95.99 - ((i & 3) * 0.01);
+                toY[i] = 31.99 - ((i * 3) & 15);
+                toZ[i] = 95.99 - ((i & 7) * 0.01);
+            } else {
+                fromX[i] = 1.5 + (i & 7);
+                fromY[i] = 1.5 + ((i * 5) & 15);
+                fromZ[i] = 1.5 + ((i * 3) & 7);
+                toX[i] = 88.5 - ((i * 11) & 15);
+                toY[i] = 2.5 + ((i * 7) & 15);
+                toZ[i] = 88.5 - ((i * 5) & 15);
+            }
+        }
+        return new Rays(fromX, fromY, fromZ, toX, toY, toZ);
+    }
+
+    private static void consume(boolean[] values) {
+        int checksum = 0;
+        for (boolean value : values) checksum = checksum * 31 + (value ? 1 : 0);
+        benchmarkSink = checksum;
     }
 
     private static boolean javaDda(double fromX, double fromY, double fromZ,
@@ -218,6 +349,12 @@ class NativeLineOfSightBenchmarkTestSuite {
         Arrays.sort(sorted);
         int index = (int) Math.ceil(quantile * sorted.length) - 1;
         return sorted[Math.max(0, index)];
+    }
+
+    private static long max(long[] values) {
+        long result = 0L;
+        for (long value : values) result = Math.max(result, value);
+        return result;
     }
 
     private record Rays(double[] fromX, double[] fromY, double[] fromZ,
