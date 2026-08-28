@@ -27,15 +27,6 @@ constexpr double kCollisionEpsilon = 1.0e-7;
            z < inputs.region_min_z + inputs.region_size_z;
 }
 
-[[nodiscard]] std::size_t mask_index(const LosInputs& inputs, int x, int y, int z) noexcept {
-    const int local_x = x - inputs.region_min_x;
-    const int local_y = y - inputs.region_min_y;
-    const int local_z = z - inputs.region_min_z;
-    return (static_cast<std::size_t>(local_y) * static_cast<std::size_t>(inputs.region_size_z) +
-            static_cast<std::size_t>(local_z)) * static_cast<std::size_t>(inputs.region_size_x) +
-           static_cast<std::size_t>(local_x);
-}
-
 [[nodiscard]] bool has_valid_region(const LosInputs& inputs) noexcept {
     return inputs.solid_mask && inputs.region_size_x > 0 && inputs.region_size_y > 0 && inputs.region_size_z > 0;
 }
@@ -91,12 +82,23 @@ LosResult check_line_of_sight(const LosInputs& inputs, std::size_t index) noexce
     double norm_curr_y = norm_diff_y * (diff_y > 0.0 ? (1.0 - frac(from_y_adj)) : frac(from_y_adj));
     double norm_curr_z = norm_diff_z * (diff_z > 0.0 ? (1.0 - frac(from_z_adj)) : frac(from_z_adj));
 
+    // Keep the flattened mask cursor alongside the integer DDA coordinates.
+    // The previous implementation recomputed three multiplies and two adds
+    // for every voxel.  Cursor deltas are exact and remain valid until the
+    // bounds check rejects a coordinate outside the region.
+    const std::ptrdiff_t stride_z = inputs.region_size_x;
+    const std::ptrdiff_t stride_y = stride_z * inputs.region_size_z;
+    std::ptrdiff_t mask_cursor =
+            (static_cast<std::ptrdiff_t>(curr_y - inputs.region_min_y) * stride_y) +
+            (static_cast<std::ptrdiff_t>(curr_z - inputs.region_min_z) * stride_z) +
+            static_cast<std::ptrdiff_t>(curr_x - inputs.region_min_x);
+
     for (;;) {
         if (!is_inside(inputs, curr_x, curr_y, curr_z)) {
             return result;
         }
         ++result.blocks_checked;
-        if (inputs.solid_mask[mask_index(inputs, curr_x, curr_y, curr_z)] != 0) {
+        if (inputs.solid_mask[mask_cursor] != 0) {
             return result;
         }
 
@@ -108,16 +110,20 @@ LosResult check_line_of_sight(const LosInputs& inputs, std::size_t index) noexce
         if (norm_curr_x < norm_curr_y) {
             if (norm_curr_x < norm_curr_z) {
                 curr_x += dx;
+                mask_cursor += dx;
                 norm_curr_x += norm_diff_x;
             } else {
                 curr_z += dz;
+                mask_cursor += dz * stride_z;
                 norm_curr_z += norm_diff_z;
             }
         } else if (norm_curr_y < norm_curr_z) {
             curr_y += dy;
+            mask_cursor += dy * stride_y;
             norm_curr_y += norm_diff_y;
         } else {
             curr_z += dz;
+            mask_cursor += dz * stride_z;
             norm_curr_z += norm_diff_z;
         }
     }
