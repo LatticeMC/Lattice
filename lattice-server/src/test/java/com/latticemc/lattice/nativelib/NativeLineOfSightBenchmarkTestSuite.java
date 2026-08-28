@@ -18,9 +18,9 @@ import org.junit.jupiter.api.Test;
  * timing result into a correctness failure.</p>
  */
 class NativeLineOfSightBenchmarkTestSuite {
-    private static final int REGION_X = 96;
+    private static final int REGION_X = 160;
     private static final int REGION_Y = 32;
-    private static final int REGION_Z = 96;
+    private static final int REGION_Z = 160;
     private static final int RAY_COUNT = 256;
     private static final int WARMUP = 32;
     private static final int SAMPLES = 9;
@@ -127,6 +127,70 @@ class NativeLineOfSightBenchmarkTestSuite {
         }
     }
 
+    @Test
+    void comparesDdaLengthAndLatencyScenarios() {
+        Assumptions.assumeTrue(
+            NativeLineOfSight.isAvailable(),
+            "native LOS library unavailable: " + LatticeNative.failureReason());
+
+        int[] lengths = {4, 8, 12, 16, 24, 32, 48, 64, 96, 128};
+        String[] scenarios = {"early-block", "mid-block", "clear-long", "section-boundary"};
+        for (int scenario = 0; scenario < scenarios.length; ++scenario) {
+            for (int length : lengths) {
+                NativeLineOfSight.SolidMask mask = fixtureMaskForLength(scenario, length);
+                Rays rays = fixtureRaysForLength(RAY_COUNT, scenario, length);
+                boolean[] expected = javaBatch(rays, mask);
+                boolean[] actual = NativeLineOfSight.hasLineOfSightBatch(
+                    rays.fromX, rays.fromY, rays.fromZ,
+                    rays.toX, rays.toY, rays.toZ, mask);
+                assertArrayEquals(expected, actual,
+                    "native LOS differs from Java DDA scenario=" + scenarios[scenario]
+                        + " length=" + length);
+
+                int repetitions = Math.max(1, 64 / length);
+                for (int i = 0; i < 8; ++i) {
+                    if ((i & 1) == 0) {
+                        consumeNative(rays, mask, repetitions);
+                        consumeJava(rays, mask, repetitions);
+                    } else {
+                        consumeJava(rays, mask, repetitions);
+                        consumeNative(rays, mask, repetitions);
+                    }
+                }
+
+                long[] nativeNanos = new long[7];
+                long[] javaNanos = new long[7];
+                for (int sample = 0; sample < nativeNanos.length; ++sample) {
+                    if ((sample & 1) == 0) {
+                        nativeNanos[sample] = timeNative(rays, mask, repetitions);
+                        javaNanos[sample] = timeJava(rays, mask, repetitions);
+                    } else {
+                        javaNanos[sample] = timeJava(rays, mask, repetitions);
+                        nativeNanos[sample] = timeNative(rays, mask, repetitions);
+                    }
+                }
+
+                long javaP50 = percentile(javaNanos, 0.50);
+                long nativeP50 = percentile(nativeNanos, 0.50);
+                long javaP95 = percentile(javaNanos, 0.95);
+                long nativeP95 = percentile(nativeNanos, 0.95);
+                long estimatedSteps = approximateDdaSteps(rays) * repetitions;
+                long measuredWork = (long) RAY_COUNT * repetitions;
+                System.out.printf(
+                    "LOS DDA length: scenario=%s length=%d rays=%d repetitions=%d approx-steps-per-ray=%d "
+                        + "java-p50-ns=%d java-p95-ns=%d native-p50-ns=%d native-p95-ns=%d "
+                        + "java-per-ray-ns=%.1f native-per-ray-ns=%.1f "
+                        + "java-per-dda-step-ns=%.2f native-per-dda-step-ns=%.2f native/java-p50=%.3f%n",
+                    scenarios[scenario], length, RAY_COUNT, repetitions,
+                    estimatedSteps / repetitions / RAY_COUNT,
+                    javaP50, javaP95, nativeP50, nativeP95,
+                    (double) javaP50 / measuredWork, (double) nativeP50 / measuredWork,
+                    (double) javaP50 / estimatedSteps, (double) nativeP50 / estimatedSteps,
+                    (double) nativeP50 / javaP50);
+            }
+        }
+    }
+
     private static long timeNative(Rays rays, NativeLineOfSight.SolidMask mask) {
         long start = System.nanoTime();
         boolean[] result = null;
@@ -166,6 +230,18 @@ class NativeLineOfSightBenchmarkTestSuite {
             consume(javaBatch(rays, mask));
         }
         return System.nanoTime() - start;
+    }
+
+    private static void consumeNative(Rays rays, NativeLineOfSight.SolidMask mask, int repetitions) {
+        for (int i = 0; i < repetitions; ++i) {
+            consume(NativeLineOfSight.hasLineOfSightBatch(
+                rays.fromX, rays.fromY, rays.fromZ,
+                rays.toX, rays.toY, rays.toZ, mask));
+        }
+    }
+
+    private static void consumeJava(Rays rays, NativeLineOfSight.SolidMask mask, int repetitions) {
+        for (int i = 0; i < repetitions; ++i) consume(javaBatch(rays, mask));
     }
 
     private static boolean[] javaBatch(Rays rays, NativeLineOfSight.SolidMask mask) {
@@ -265,6 +341,56 @@ class NativeLineOfSightBenchmarkTestSuite {
             }
         }
         return new Rays(fromX, fromY, fromZ, toX, toY, toZ);
+    }
+
+    private static NativeLineOfSight.SolidMask fixtureMaskForLength(int scenario, int length) {
+        byte[] data = new byte[REGION_X * REGION_Y * REGION_Z];
+        int wallX = Math.max(1, length / 2);
+        for (int y = 0; y < REGION_Y; ++y) {
+            for (int z = 0; z < REGION_Z; ++z) {
+                if (scenario == 0) data[index(0, y, z)] = 1;
+                if (scenario == 1) data[index(wallX, y, z)] = 1;
+                if (scenario == 3 && (z & 1) == 0) data[index(32, y, z)] = 1;
+            }
+        }
+        return new NativeLineOfSight.SolidMask(data, 0, 0, 0, REGION_X, REGION_Y, REGION_Z);
+    }
+
+    private static Rays fixtureRaysForLength(int count, int scenario, int length) {
+        double[] fromX = new double[count];
+        double[] fromY = new double[count];
+        double[] fromZ = new double[count];
+        double[] toX = new double[count];
+        double[] toY = new double[count];
+        double[] toZ = new double[count];
+        for (int i = 0; i < count; ++i) {
+            fromY[i] = 8.5 + (i & 3);
+            if (scenario == 3) {
+                fromX[i] = 15.5 + ((i & 1) * 0.1);
+                fromZ[i] = 15.5 + ((i & 3) * 0.1);
+                toX[i] = fromX[i] + length;
+                toY[i] = fromY[i];
+                toZ[i] = fromZ[i] + (length * 0.5);
+            } else {
+                fromX[i] = 0.5;
+                fromZ[i] = 2.5 + (i & 15);
+                toX[i] = fromX[i] + length;
+                toY[i] = fromY[i];
+                toZ[i] = fromZ[i];
+            }
+        }
+        return new Rays(fromX, fromY, fromZ, toX, toY, toZ);
+    }
+
+    private static long approximateDdaSteps(Rays rays) {
+        long total = 0L;
+        for (int i = 0; i < rays.fromX.length; ++i) {
+            total += 1L
+                + Math.abs(floor(rays.toX[i]) - floor(rays.fromX[i]))
+                + Math.abs(floor(rays.toY[i]) - floor(rays.fromY[i]))
+                + Math.abs(floor(rays.toZ[i]) - floor(rays.fromZ[i]));
+        }
+        return total;
     }
 
     private static void consume(boolean[] values) {
