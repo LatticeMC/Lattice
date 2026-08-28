@@ -51,6 +51,27 @@ public final class NativeLineOfSight {
 
     private static final class RayMaskScratch {
         private byte[] data = new byte[0];
+        private boolean sectionLookupValid;
+        private int sectionX;
+        private int sectionY;
+        private int sectionZ;
+        private LevelChunkSection loadedSection;
+
+        private void beginSectionLookup() {
+            sectionLookupValid = false;
+            loadedSection = null;
+        }
+
+        private LevelChunkSection loadedSection(Level level, int sectionX, int sectionY, int sectionZ) {
+            if (!sectionLookupValid || this.sectionX != sectionX || this.sectionY != sectionY || this.sectionZ != sectionZ) {
+                this.sectionX = sectionX;
+                this.sectionY = sectionY;
+                this.sectionZ = sectionZ;
+                loadedSection = getLoadedSection(level, sectionX, sectionY, sectionZ);
+                sectionLookupValid = true;
+            }
+            return loadedSection;
+        }
 
         private byte[] prepare(int volume) {
             if (data.length < volume) {
@@ -168,16 +189,19 @@ public final class NativeLineOfSight {
         }
 
         int maskVolume = Math.toIntExact(volume(sizeX, sizeY, sizeZ));
-        SolidMask mask = new SolidMask(RAY_MASK_SCRATCH.get().prepare(maskVolume),
+        RayMaskScratch scratch = RAY_MASK_SCRATCH.get();
+        scratch.beginSectionLookup();
+        SolidMask mask = new SolidMask(scratch.prepare(maskVolume),
                 minX, minY, minZ, sizeX, sizeY, sizeZ);
-        fillRayMask(level, fromX, fromY, fromZ, toX, toY, toZ, mask);
+        fillRayMask(level, fromX, fromY, fromZ, toX, toY, toZ, mask, scratch);
         return mask;
     }
 
     private static void fillRayMask(Level level,
                                     double fromX, double fromY, double fromZ,
                                     double toX, double toY, double toZ,
-                                    SolidMask mask) {
+                                    SolidMask mask,
+                                    RayMaskScratch scratch) {
         double adjX = 1.0E-7D * (fromX - toX);
         double adjY = 1.0E-7D * (fromY - toY);
         double adjZ = 1.0E-7D * (fromZ - toZ);
@@ -208,7 +232,7 @@ public final class NativeLineOfSight {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
         for (;;) {
-            setRayMaskBlock(level, pos, currX, currY, currZ, mask);
+            setRayMaskBlock(level, pos, currX, currY, currZ, mask, scratch);
             if (normalizedCurrX > 1.0D && normalizedCurrY > 1.0D && normalizedCurrZ > 1.0D) return;
             if (normalizedCurrX < normalizedCurrY) {
                 if (normalizedCurrX < normalizedCurrZ) {
@@ -228,7 +252,8 @@ public final class NativeLineOfSight {
         }
     }
 
-    private static void setRayMaskBlock(Level level, BlockPos.MutableBlockPos pos, int x, int y, int z, SolidMask mask) {
+    private static void setRayMaskBlock(Level level, BlockPos.MutableBlockPos pos, int x, int y, int z,
+                                         SolidMask mask, RayMaskScratch scratch) {
         if (x < mask.regionMinX || y < mask.regionMinY || z < mask.regionMinZ
                 || x >= mask.regionMinX + mask.regionSizeX
                 || y >= mask.regionMinY + mask.regionSizeY
@@ -236,7 +261,7 @@ public final class NativeLineOfSight {
             return;
         }
         pos.set(x, y, z);
-        if (isSectionMaskSolid(level, pos, x, y, z)) {
+        if (isSectionMaskSolid(level, pos, x, y, z, scratch)) {
             int localX = x - mask.regionMinX;
             int localY = y - mask.regionMinY;
             int localZ = z - mask.regionMinZ;
@@ -331,7 +356,8 @@ public final class NativeLineOfSight {
         return !state.getCollisionShape(level, pos).isEmpty();
     }
 
-    private static boolean isSectionMaskSolid(Level level, BlockPos.MutableBlockPos pos, int x, int y, int z) {
+    private static boolean isSectionMaskSolid(Level level, BlockPos.MutableBlockPos pos, int x, int y, int z,
+                                              RayMaskScratch scratch) {
         int sectionX = x >> 4;
         int sectionY = y >> 4;
         int sectionZ = z >> 4;
@@ -341,7 +367,7 @@ public final class NativeLineOfSight {
         // load a chunk.  If the section is not already available, retain the
         // existing per-cell path below so vanilla loading/fallback semantics stay
         // unchanged.
-        LevelChunkSection loadedSection = getLoadedSection(level, sectionX, sectionY, sectionZ);
+        LevelChunkSection loadedSection = scratch.loadedSection(level, sectionX, sectionY, sectionZ);
         if (loadedSection != null && loadedSection.hasOnlyAir()) {
             return false;
         }
