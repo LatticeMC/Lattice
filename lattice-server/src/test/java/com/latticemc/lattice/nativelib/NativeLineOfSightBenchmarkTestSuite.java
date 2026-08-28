@@ -15,7 +15,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>This is a diagnostic benchmark rather than a performance gate: machine
  * frequency, JNI implementation details and test-runner load must not turn a
- * timing result into a correctness failure.</p>
+ * timing result into a correctness failure. The gated measurements use a
+ * coordinate-only test heuristic; they do not change the production gate and
+ * do not include Level/block-mask construction.</p>
  */
 class NativeLineOfSightBenchmarkTestSuite {
     private static final int REGION_X = 160;
@@ -191,6 +193,76 @@ class NativeLineOfSightBenchmarkTestSuite {
         }
     }
 
+    @Test
+    void decomposesCoordinateGateAndGatedBatchCost() {
+        Assumptions.assumeTrue(
+            NativeLineOfSight.isAvailable(),
+            "native LOS library unavailable: " + LatticeNative.failureReason());
+
+        int[] lengths = {8, 16, 32, 64, 128};
+        String[] scenarios = {"early-block", "clear-long"};
+        for (int scenario = 0; scenario < scenarios.length; ++scenario) {
+            for (int length : lengths) {
+                NativeLineOfSight.SolidMask mask = fixtureMaskForLength(scenario, length);
+                Rays rays = fixtureRaysForLength(RAY_COUNT, scenario, length);
+                boolean[] expected = javaBatch(rays, mask);
+                boolean[] nativeResult = NativeLineOfSight.hasLineOfSightBatch(
+                    rays.fromX, rays.fromY, rays.fromZ,
+                    rays.toX, rays.toY, rays.toZ, mask);
+                assertArrayEquals(expected, nativeResult,
+                    "native LOS differs from Java DDA scenario=" + scenarios[scenario]
+                        + " length=" + length);
+
+                int gateThreshold = 24;
+                int gatePasses = countGatePasses(rays, gateThreshold);
+                // This fixture keeps all rays at the same length, so the gated
+                // path is intentionally homogeneous and remains batch-shaped.
+                assertTrue(gatePasses == 0 || gatePasses == rays.fromX.length);
+
+                for (int i = 0; i < WARMUP; ++i) {
+                    consumeGateOnly(rays, gateThreshold);
+                    consume(javaBatch(rays, mask));
+                    consume(NativeLineOfSight.hasLineOfSightBatch(
+                        rays.fromX, rays.fromY, rays.fromZ,
+                        rays.toX, rays.toY, rays.toZ, mask));
+                    consume(gatedBatch(rays, mask, gateThreshold));
+                }
+
+                long[] gateNanos = new long[SAMPLES];
+                long[] javaNanos = new long[SAMPLES];
+                long[] nativeNanos = new long[SAMPLES];
+                long[] gatedNanos = new long[SAMPLES];
+                for (int sample = 0; sample < SAMPLES; ++sample) {
+                    if ((sample & 1) == 0) {
+                        gateNanos[sample] = timeGateOnly(rays, gateThreshold);
+                        javaNanos[sample] = timeJava(rays, mask, REPETITIONS);
+                        nativeNanos[sample] = timeNative(rays, mask, REPETITIONS);
+                        gatedNanos[sample] = timeGated(rays, mask, gateThreshold, REPETITIONS);
+                    } else {
+                        gatedNanos[sample] = timeGated(rays, mask, gateThreshold, REPETITIONS);
+                        nativeNanos[sample] = timeNative(rays, mask, REPETITIONS);
+                        javaNanos[sample] = timeJava(rays, mask, REPETITIONS);
+                        gateNanos[sample] = timeGateOnly(rays, gateThreshold);
+                    }
+                }
+
+                long gateP50 = percentile(gateNanos, 0.50);
+                long javaP50 = percentile(javaNanos, 0.50);
+                long nativeP50 = percentile(nativeNanos, 0.50);
+                long gatedP50 = percentile(gatedNanos, 0.50);
+                double work = (double)RAY_COUNT * REPETITIONS;
+                System.out.printf(
+                    "LOS gate breakdown: scenario=%s length=%d gate-threshold=%d gate-pass=%d/%d "
+                        + "gate-p50-ns=%d gate-per-ray-ns=%.2f java-p50-ns=%d native-p50-ns=%d gated-p50-ns=%d "
+                        + "gated-per-ray-ns=%.2f gated/java-p50=%.3f gated/native-p50=%.3f%n",
+                    scenarios[scenario], length, gateThreshold, gatePasses, rays.fromX.length,
+                    gateP50, gateP50 / ((double)rays.fromX.length * REPETITIONS),
+                    javaP50, nativeP50, gatedP50,
+                    gatedP50 / work, (double)gatedP50 / javaP50, (double)gatedP50 / nativeP50);
+            }
+        }
+    }
+
     private static long timeNative(Rays rays, NativeLineOfSight.SolidMask mask) {
         long start = System.nanoTime();
         boolean[] result = null;
@@ -232,6 +304,25 @@ class NativeLineOfSightBenchmarkTestSuite {
         return System.nanoTime() - start;
     }
 
+    private static long timeGateOnly(Rays rays, int threshold) {
+        long start = System.nanoTime();
+        int passes = 0;
+        for (int repetition = 0; repetition < REPETITIONS; ++repetition) {
+            passes += countGatePasses(rays, threshold);
+        }
+        benchmarkSink = passes;
+        return System.nanoTime() - start;
+    }
+
+    private static long timeGated(Rays rays, NativeLineOfSight.SolidMask mask,
+                                  int threshold, int repetitions) {
+        long start = System.nanoTime();
+        for (int repetition = 0; repetition < repetitions; ++repetition) {
+            consume(gatedBatch(rays, mask, threshold));
+        }
+        return System.nanoTime() - start;
+    }
+
     private static void consumeNative(Rays rays, NativeLineOfSight.SolidMask mask, int repetitions) {
         for (int i = 0; i < repetitions; ++i) {
             consume(NativeLineOfSight.hasLineOfSightBatch(
@@ -242,6 +333,44 @@ class NativeLineOfSightBenchmarkTestSuite {
 
     private static void consumeJava(Rays rays, NativeLineOfSight.SolidMask mask, int repetitions) {
         for (int i = 0; i < repetitions; ++i) consume(javaBatch(rays, mask));
+    }
+
+    private static void consumeGateOnly(Rays rays, int threshold) {
+        benchmarkSink = countGatePasses(rays, threshold);
+    }
+
+    private static boolean[] gatedBatch(Rays rays, NativeLineOfSight.SolidMask mask, int threshold) {
+        int passes = countGatePasses(rays, threshold);
+        if (passes == rays.fromX.length) {
+            return NativeLineOfSight.hasLineOfSightBatch(
+                rays.fromX, rays.fromY, rays.fromZ,
+                rays.toX, rays.toY, rays.toZ, mask);
+        }
+        return javaBatch(rays, mask);
+    }
+
+    private static int countGatePasses(Rays rays, int threshold) {
+        int passes = 0;
+        for (int i = 0; i < rays.fromX.length; ++i) {
+            if (shouldUseNativeGate(
+                rays.fromX[i], rays.fromY[i], rays.fromZ[i],
+                rays.toX[i], rays.toY[i], rays.toZ[i], threshold)) {
+                ++passes;
+            }
+        }
+        return passes;
+    }
+
+    /** Coordinate-only diagnostic heuristic; deliberately not production policy. */
+    private static boolean shouldUseNativeGate(double fromX, double fromY, double fromZ,
+                                               double toX, double toY, double toZ,
+                                               int threshold) {
+        double dx = Math.abs(toX - fromX);
+        double dy = Math.abs(toY - fromY);
+        double dz = Math.abs(toZ - fromZ);
+        double maxAxis = Math.max(dx, Math.max(dy, dz));
+        double distanceSq = dx * dx + dy * dy + dz * dz;
+        return maxAxis >= threshold && distanceSq >= (double)threshold * threshold;
     }
 
     private static boolean[] javaBatch(Rays rays, NativeLineOfSight.SolidMask mask) {
