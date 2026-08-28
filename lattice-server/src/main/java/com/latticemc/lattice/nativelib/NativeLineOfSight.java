@@ -11,6 +11,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.Level;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.block.state.BlockState;
@@ -357,6 +358,12 @@ public final class NativeLineOfSight {
     }
 
     private static LevelChunkSection getLoadedSection(Level level, int sectionX, int sectionY, int sectionZ) {
+        // Level#getChunkIfLoadedImmediately is server-only in this mapping (it
+        // casts to ServerLevel internally). Public mask helpers also accept a
+        // generic Level, so retain the old path for client/test levels.
+        if (!(level instanceof ServerLevel)) {
+            return null;
+        }
         ChunkAccess chunk = level.getChunkIfLoadedImmediately(sectionX, sectionZ);
         if (chunk == null || sectionY < chunk.getMinSectionY() || sectionY > chunk.getMaxSectionY()) {
             return null;
