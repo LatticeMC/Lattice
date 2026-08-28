@@ -96,14 +96,19 @@ class LatticeConfigTestSuite {
                   enabled: true
                 density:
                   native-function: false
+                performance:
+                  los:
+                    section-lookup-reuse: true
                 """);
         System.setProperty("lattice.nativePaletteOps", "false");
         System.setProperty("lattice.nativeDensityFunction", "true");
+        System.setProperty("lattice.nativeLosSectionLookupReuse", "false");
 
         LatticeConfig.preload(config);
 
         assertEquals("false", System.getProperty("lattice.nativePaletteOps"));
         assertEquals("true", System.getProperty("lattice.nativeDensityFunction"));
+        assertEquals("false", System.getProperty("lattice.nativeLosSectionLookupReuse"));
     }
 
     @Test
