@@ -4,12 +4,15 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.block.state.BlockState;
 
 public final class NativeLineOfSight {
@@ -331,6 +334,17 @@ public final class NativeLineOfSight {
         int sectionX = x >> 4;
         int sectionY = y >> 4;
         int sectionZ = z >> 4;
+
+        // A loaded all-air section is provably transparent for COLLIDER LOS.
+        // Do not call getChunk()/getBlockState() here: those APIs may synchronously
+        // load a chunk.  If the section is not already available, retain the
+        // existing per-cell path below so vanilla loading/fallback semantics stay
+        // unchanged.
+        LevelChunkSection loadedSection = getLoadedSection(level, sectionX, sectionY, sectionZ);
+        if (loadedSection != null && loadedSection.hasOnlyAir()) {
+            return false;
+        }
+
         SectionMask mask = getSectionMask(level, sectionX, sectionY, sectionZ);
         int localIndex = index(x & 15, y & 15, z & 15, SECTION_SIZE, SECTION_SIZE);
         byte value = mask.data[localIndex];
@@ -340,6 +354,16 @@ public final class NativeLineOfSight {
             mask.data[localIndex] = value;
         }
         return value != 0;
+    }
+
+    private static LevelChunkSection getLoadedSection(Level level, int sectionX, int sectionY, int sectionZ) {
+        ChunkAccess chunk = level.getChunkIfLoadedImmediately(sectionX, sectionZ);
+        if (chunk == null || sectionY < chunk.getMinSectionY() || sectionY > chunk.getMaxSectionY()) {
+            return null;
+        }
+        int sectionIndex = chunk.getSectionIndex(SectionPos.sectionToBlockCoord(sectionY));
+        LevelChunkSection[] sections = chunk.getSections();
+        return sectionIndex >= 0 && sectionIndex < sections.length ? sections[sectionIndex] : null;
     }
 
     private static SectionMask getSectionMask(Level level, int sectionX, int sectionY, int sectionZ) {
