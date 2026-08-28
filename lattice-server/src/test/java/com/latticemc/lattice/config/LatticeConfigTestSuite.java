@@ -47,6 +47,7 @@ class LatticeConfigTestSuite {
         assertEquals("false", System.getProperty("lattice.nativeEntityVisibilityBatchEnabled"));
         assertEquals("512", System.getProperty("lattice.nativeEntityVisibilityBatchMinEntities"));
         assertEquals("1048576", System.getProperty("lattice.nativeEntityVisibilityBatchMaxScratchBytes"));
+        assertEquals("true", System.getProperty("lattice.nativeLosSectionLookupReuse"));
     }
 
     @Test
@@ -68,6 +69,9 @@ class LatticeConfigTestSuite {
                     batch-max-scratch-bytes: 2097152
                 brain:
                   minimum-behaviors: 300
+                performance:
+                  los:
+                    section-lookup-reuse: false
                 """);
 
         LatticeConfig.preload(config);
@@ -80,6 +84,7 @@ class LatticeConfigTestSuite {
         assertEquals("true", System.getProperty("lattice.nativeEntityVisibilityBatchEnabled"));
         assertEquals("2048", System.getProperty("lattice.nativeEntityVisibilityBatchMinEntities"));
         assertEquals("2097152", System.getProperty("lattice.nativeEntityVisibilityBatchMaxScratchBytes"));
+        assertEquals("false", System.getProperty("lattice.nativeLosSectionLookupReuse"));
     }
 
     @Test
@@ -117,6 +122,9 @@ class LatticeConfigTestSuite {
                     minimum-players: -1
                     batch-minimum-entities: 1
                     batch-max-scratch-bytes: 0
+                performance:
+                  los:
+                    section-lookup-reuse: maybe
                 """);
         System.setProperty("lattice.disable", "not-a-boolean");
 
@@ -128,6 +136,7 @@ class LatticeConfigTestSuite {
         assertEquals("16", System.getProperty("lattice.nativeEntityVisibilityMinPlayers"));
         assertEquals("512", System.getProperty("lattice.nativeEntityVisibilityBatchMinEntities"));
         assertEquals("1048576", System.getProperty("lattice.nativeEntityVisibilityBatchMaxScratchBytes"));
+        assertEquals("true", System.getProperty("lattice.nativeLosSectionLookupReuse"));
     }
 
     private void snapshotAndClearManagedProperties() {

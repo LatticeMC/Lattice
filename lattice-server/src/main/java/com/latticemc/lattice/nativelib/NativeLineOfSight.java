@@ -23,6 +23,9 @@ public final class NativeLineOfSight {
     private static final int SECTION_SIZE = 16;
     private static final int SECTION_VOLUME = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
     private static final int MAX_SECTION_CACHE_ENTRIES = 2048;
+    /** Startup-only switch bridged by {@code LatticeConfig}; a restart is required after changes. */
+    private static final boolean REUSE_SECTION_LOOKUP = Boolean.parseBoolean(
+            System.getProperty("lattice.nativeLosSectionLookupReuse", "true"));
     private static final Map<SectionKey, SectionMask> SECTION_MASK_CACHE = new ConcurrentHashMap<>();
     private static final ThreadLocal<RayMaskScratch> RAY_MASK_SCRATCH =
             ThreadLocal.withInitial(RayMaskScratch::new);
@@ -63,6 +66,11 @@ public final class NativeLineOfSight {
         }
 
         private LevelChunkSection loadedSection(Level level, int sectionX, int sectionY, int sectionZ) {
+            if (!REUSE_SECTION_LOOKUP) {
+                // Preserve the pre-optimization behavior for diagnostics and A/B runs:
+                // each visited block performs its own loaded-section lookup.
+                return getLoadedSection(level, sectionX, sectionY, sectionZ);
+            }
             if (!sectionLookupValid || this.sectionX != sectionX || this.sectionY != sectionY || this.sectionZ != sectionZ) {
                 this.sectionX = sectionX;
                 this.sectionY = sectionY;
