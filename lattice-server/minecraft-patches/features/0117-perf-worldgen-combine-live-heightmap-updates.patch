@@ -1,0 +1,139 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 29 Aug 2026 20:25:20 +0800
+Subject: [PATCH] perf(worldgen): combine live heightmap updates
+
+
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 29134c020afed3c86b707bd65212e055928c8e36..3f91f6a3670f187d03aa33282f17d6d4353cbd88 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -379,10 +379,18 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+                 return null;
+             } else {
+                 Block block = state.getBlock();
+-                this.heightmaps.get(Heightmap.Types.MOTION_BLOCKING).update(i, y, i2, state);
+-                this.heightmaps.get(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES).update(i, y, i2, state);
+-                this.heightmaps.get(Heightmap.Types.OCEAN_FLOOR).update(i, y, i2, state);
+-                this.heightmaps.get(Heightmap.Types.WORLD_SURFACE).update(i, y, i2, state);
++                Heightmap motionBlocking = this.heightmaps.get(Heightmap.Types.MOTION_BLOCKING);
++                Heightmap motionBlockingNoLeaves = this.heightmaps.get(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
++                Heightmap oceanFloor = this.heightmaps.get(Heightmap.Types.OCEAN_FLOOR);
++                Heightmap worldSurface = this.heightmaps.get(Heightmap.Types.WORLD_SURFACE);
++                if (motionBlocking != null && motionBlockingNoLeaves != null && oceanFloor != null && worldSurface != null) {
++                    Heightmap.updateAll(motionBlocking, motionBlockingNoLeaves, oceanFloor, worldSurface, i, y, i2, state);
++                } else {
++                    this.heightmaps.get(Heightmap.Types.MOTION_BLOCKING).update(i, y, i2, state);
++                    this.heightmaps.get(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES).update(i, y, i2, state);
++                    this.heightmaps.get(Heightmap.Types.OCEAN_FLOOR).update(i, y, i2, state);
++                    this.heightmaps.get(Heightmap.Types.WORLD_SURFACE).update(i, y, i2, state);
++                }
+                 boolean hasOnlyAir1 = section.hasOnlyAir();
+                 if (hasOnlyAir != hasOnlyAir1) {
+                     this.level.getChunkSource().getLightEngine().updateSectionStatus(pos, hasOnlyAir1);
+diff --git a/net/minecraft/world/level/levelgen/Heightmap.java b/net/minecraft/world/level/levelgen/Heightmap.java
+index 2cfb0c6589d07c0e80d114e96d669cb25924e840..8712f6f860acd99c4a0a321d04ae9ef44dd5a969 100644
+--- a/net/minecraft/world/level/levelgen/Heightmap.java
++++ b/net/minecraft/world/level/levelgen/Heightmap.java
+@@ -123,6 +123,101 @@ public class Heightmap implements com.latticemc.lattice.bridge.HeightmapAccessor
+         }
+     }
+ 
++    /**
++     * Updates the four live heightmaps for a block change without allocating a
++     * temporary collection or scanning the column more than once. Each map
++     * retains its own predicate and current height semantics; this helper only
++     * shares the block-state reads needed when the changed block was a column
++     * maximum.
++     */
++    public static void updateAll(
++        Heightmap first,
++        Heightmap second,
++        Heightmap third,
++        Heightmap fourth,
++        int x,
++        int y,
++        int z,
++        BlockState state
++    ) {
++        int firstAvailable = first.getFirstAvailable(x, z);
++        int secondAvailable = second.getFirstAvailable(x, z);
++        int thirdAvailable = third.getFirstAvailable(x, z);
++        int fourthAvailable = fourth.getFirstAvailable(x, z);
++
++        boolean firstScan = updateWithoutScan(first, firstAvailable, x, y, z, state);
++        boolean secondScan = updateWithoutScan(second, secondAvailable, x, y, z, state);
++        boolean thirdScan = updateWithoutScan(third, thirdAvailable, x, y, z, state);
++        boolean fourthScan = updateWithoutScan(fourth, fourthAvailable, x, y, z, state);
++        if (!firstScan && !secondScan && !thirdScan && !fourthScan) {
++            return;
++        }
++
++        int minY = first.chunk.getMinY();
++        BlockPos.MutableBlockPos mutableBlockPos = new BlockPos.MutableBlockPos();
++        boolean firstDone = !firstScan;
++        boolean secondDone = !secondScan;
++        boolean thirdDone = !thirdScan;
++        boolean fourthDone = !fourthScan;
++        for (int scanY = y - 1; scanY >= minY && (!firstDone || !secondDone || !thirdDone || !fourthDone); scanY--) {
++            mutableBlockPos.set(x, scanY, z);
++            BlockState candidate = first.chunk.getBlockState(mutableBlockPos);
++            if (!firstDone && first.isOpaque.test(candidate)) {
++                first.setHeight(x, z, scanY + 1);
++                firstDone = true;
++            }
++            if (!secondDone && second.isOpaque.test(candidate)) {
++                second.setHeight(x, z, scanY + 1);
++                secondDone = true;
++            }
++            if (!thirdDone && third.isOpaque.test(candidate)) {
++                third.setHeight(x, z, scanY + 1);
++                thirdDone = true;
++            }
++            if (!fourthDone && fourth.isOpaque.test(candidate)) {
++                fourth.setHeight(x, z, scanY + 1);
++                fourthDone = true;
++            }
++        }
++
++        if (!firstDone) {
++            first.setHeight(x, z, first.chunk.getMinY());
++        }
++        if (!secondDone) {
++            second.setHeight(x, z, second.chunk.getMinY());
++        }
++        if (!thirdDone) {
++            third.setHeight(x, z, third.chunk.getMinY());
++        }
++        if (!fourthDone) {
++            fourth.setHeight(x, z, fourth.chunk.getMinY());
++        }
++    }
++
++    /** Returns true when the caller must perform the shared downward scan. */
++    private static boolean updateWithoutScan(
++        Heightmap heightmap,
++        int firstAvailable,
++        int x,
++        int y,
++        int z,
++        BlockState state
++    ) {
++        if (y <= firstAvailable - 2) {
++            return false;
++        }
++        if (heightmap.isOpaque.test(state)) {
++            if (y >= firstAvailable) {
++                heightmap.setHeight(x, z, y + 1);
++            }
++            return false;
++        }
++        if (firstAvailable - 1 == y) {
++            return true;
++        }
++        return false;
++    }
++
+     public int getFirstAvailable(int x, int z) {
+         return this.getFirstAvailable(getIndex(x, z));
+     }
