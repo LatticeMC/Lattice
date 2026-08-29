@@ -240,7 +240,7 @@ public final class NativeLineOfSight {
                 results[i] = Boolean.FALSE;
                 continue;
             }
-            if (distanceSq < MIN_NATIVE_DISTANCE_SQ) {
+            if (distanceSq <= MIN_NATIVE_DISTANCE_SQ) {
                 continue;
             }
 
