@@ -4,8 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Arrays;
+import java.util.List;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.level.Level;
+import org.mockito.Mockito;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -29,10 +34,44 @@ class NativeLineOfSightBenchmarkTestSuite {
     private static final int REPETITIONS = 8;
     private static volatile int benchmarkSink;
 
+    @Test
+    void batchMobApiValidatesNullInputsWithoutLoadingNative() {
+        boolean threw = false;
+        try {
+            NativeLineOfSight.tryHasLineOfSightBatch(null, null);
+        } catch (IllegalArgumentException expected) {
+            threw = true;
+        }
+        assertTrue(threw, "null mob/list must be rejected");
+    }
+
     @BeforeAll
     static void bootstrapRegistries() {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
+    }
+
+    @Test
+    void emptyEntityBatchReturnsAnEmptyResult() {
+        Mob mob = Mockito.mock(Mob.class);
+
+        assertArrayEquals(new Boolean[0], NativeLineOfSight.tryHasLineOfSightBatch(mob, List.of()));
+    }
+
+    @Test
+    void batchRetainsCrossWorldRejectionWhenNativePathCannotHandleAnEntry() {
+        Level mobLevel = Mockito.mock(Level.class);
+        Level otherLevel = Mockito.mock(Level.class);
+        Mob mob = Mockito.mock(Mob.class);
+        Entity sameWorld = Mockito.mock(Entity.class);
+        Entity otherWorld = Mockito.mock(Entity.class);
+        Mockito.when(mob.level()).thenReturn(mobLevel);
+        Mockito.when(sameWorld.level()).thenReturn(mobLevel);
+        Mockito.when(otherWorld.level()).thenReturn(otherLevel);
+
+        assertArrayEquals(
+            new Boolean[] {null, Boolean.FALSE, null},
+            NativeLineOfSight.tryHasLineOfSightBatch(mob, List.of(sameWorld, otherWorld, sameWorld)));
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.latticemc.lattice.nativelib;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.BlockPos;
@@ -172,6 +173,147 @@ public final class NativeLineOfSight {
         SolidMask mask = computeRaySolidMask(mob.level(), fromX, fromY, fromZ, toX, toY, toZ);
         if (mask == null) return null;
         return hasLineOfSight(fromX, fromY, fromZ, toX, toY, toZ, mask) ? Boolean.TRUE : null;
+    }
+
+    /**
+     * Evaluates a group of LOS requests from one mob while sharing the Java
+     * solid-mask construction and one native batch call.  The returned array
+     * uses the same tri-state contract as {@link #tryHasLineOfSight(Mob,
+     * Entity)}: {@code FALSE} is a final distance/level rejection,
+     * {@code TRUE} is a native-proven visible ray, and {@code null} requires
+     * the caller to preserve the vanilla/plugin fallback path.
+     *
+     * <p>The input order is retained and no state is cached across ticks.
+     * Callers remain responsible for their own seen/unseen caches.</p>
+     */
+    public static Boolean[] tryHasLineOfSightBatch(Mob mob, List<? extends Entity> entities) {
+        if (mob == null || entities == null) {
+            throw new IllegalArgumentException("null mob or entities");
+        }
+        int count = entities.size();
+        Boolean[] results = new Boolean[count];
+        if (count == 0) {
+            return results;
+        }
+
+        Level level = mob.level();
+        boolean usesLivingEntityLos = USES_LIVING_ENTITY_LOS.get(mob.getClass());
+        boolean nativeAvailable = usesLivingEntityLos && isAvailable();
+        if (!nativeAvailable) {
+            // Cross-world is a definitive vanilla result even when the native
+            // path is unavailable; all same-world requests must fall through.
+            for (int i = 0; i < count; ++i) {
+                Entity entity = entities.get(i);
+                if (entity == null) {
+                    throw new IllegalArgumentException("null entity at index " + i);
+                }
+                results[i] = entity.level() != level ? Boolean.FALSE : null;
+            }
+            return results;
+        }
+
+        double fromX = mob.getX();
+        double fromY = mob.getEyeY();
+        double fromZ = mob.getZ();
+        int candidateCount = 0;
+
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (int i = 0; i < count; ++i) {
+            Entity entity = entities.get(i);
+            if (entity == null) {
+                throw new IllegalArgumentException("null entity at index " + i);
+            }
+            if (entity.level() != level) {
+                results[i] = Boolean.FALSE;
+                continue;
+            }
+            double toX = entity.getX();
+            double toY = entity.getEyeY();
+            double toZ = entity.getZ();
+            double distanceSq = distanceToSqr(fromX, fromY, fromZ, toX, toY, toZ);
+            if (distanceSq > MAX_LOS_DISTANCE_SQ) {
+                results[i] = Boolean.FALSE;
+                continue;
+            }
+            if (distanceSq < MIN_NATIVE_DISTANCE_SQ) {
+                continue;
+            }
+
+            minX = Math.min(minX, Math.min(Mth.floor(fromX), Mth.floor(toX)) - 1);
+            minY = Math.min(minY, Math.max(level.getMinY(), Math.min(Mth.floor(fromY), Mth.floor(toY)) - 1));
+            minZ = Math.min(minZ, Math.min(Mth.floor(fromZ), Mth.floor(toZ)) - 1);
+            maxX = Math.max(maxX, Math.max(Mth.floor(fromX), Mth.floor(toX)) + 1);
+            maxY = Math.max(maxY, Math.min(level.getMaxY(), Math.max(Mth.floor(fromY), Mth.floor(toY)) + 1));
+            maxZ = Math.max(maxZ, Math.max(Mth.floor(fromZ), Mth.floor(toZ)) + 1);
+            ++candidateCount;
+        }
+        if (candidateCount == 0) {
+            return results;
+        }
+
+        long sizeXL = (long)maxX - minX + 1L;
+        long sizeYL = (long)maxY - minY + 1L;
+        long sizeZL = (long)maxZ - minZ + 1L;
+        long maskVolume = volume(sizeXL, sizeYL, sizeZL);
+        if (sizeXL <= 0L || sizeYL <= 0L || sizeZL <= 0L
+                || sizeXL > Integer.MAX_VALUE || sizeYL > Integer.MAX_VALUE || sizeZL > Integer.MAX_VALUE
+                || maskVolume > MAX_RAY_MASK_VOLUME) {
+            return results;
+        }
+
+        int sizeX = (int)sizeXL;
+        int sizeY = (int)sizeYL;
+        int sizeZ = (int)sizeZL;
+        int[] candidateIndices = new int[candidateCount];
+        double[] fromXs = new double[candidateCount];
+        double[] fromYs = new double[candidateCount];
+        double[] fromZs = new double[candidateCount];
+        double[] toXs = new double[candidateCount];
+        double[] toYs = new double[candidateCount];
+        double[] toZs = new double[candidateCount];
+        int nativeIndex = 0;
+        for (int i = 0; i < count; ++i) {
+            Entity entity = entities.get(i);
+            if (entity == null) {
+                throw new IllegalArgumentException("null entity at index " + i);
+            }
+            if (entity.level() != level) continue;
+            double toX = entity.getX();
+            double toY = entity.getEyeY();
+            double toZ = entity.getZ();
+            double distanceSq = distanceToSqr(fromX, fromY, fromZ, toX, toY, toZ);
+            if (distanceSq <= MIN_NATIVE_DISTANCE_SQ || distanceSq > MAX_LOS_DISTANCE_SQ) continue;
+            candidateIndices[nativeIndex] = i;
+            fromXs[nativeIndex] = fromX;
+            fromYs[nativeIndex] = fromY;
+            fromZs[nativeIndex] = fromZ;
+            toXs[nativeIndex] = toX;
+            toYs[nativeIndex] = toY;
+            toZs[nativeIndex] = toZ;
+            ++nativeIndex;
+        }
+
+        RayMaskScratch scratch = RAY_MASK_SCRATCH.get();
+        scratch.beginSectionLookup();
+        SolidMask mask = new SolidMask(scratch.prepare((int)maskVolume),
+                minX, minY, minZ, sizeX, sizeY, sizeZ);
+        for (int i = 0; i < nativeIndex; ++i) {
+            fillRayMask(level, fromXs[i], fromYs[i], fromZs[i], toXs[i], toYs[i], toZs[i], mask, scratch);
+        }
+        boolean[] nativeResults = hasLineOfSightBatch(fromXs, fromYs, fromZs, toXs, toYs, toZs, mask);
+        for (int i = 0; i < nativeIndex; ++i) {
+            // A native false remains unresolved so the caller can run the
+            // exact vanilla clip/plugin path, matching the single-ray API.
+            if (nativeResults[i]) {
+                results[candidateIndices[i]] = Boolean.TRUE;
+            }
+        }
+        return results;
     }
 
     public static void invalidateSection(Level level, BlockPos pos) {
@@ -471,6 +613,10 @@ public final class NativeLineOfSight {
 
     private static long volume(int sizeX, int sizeY, int sizeZ) {
         return (long)sizeX * (long)sizeY * (long)sizeZ;
+    }
+
+    private static long volume(long sizeX, long sizeY, long sizeZ) {
+        return sizeX * sizeY * sizeZ;
     }
 
     private static native boolean nativeCheckSingle(
