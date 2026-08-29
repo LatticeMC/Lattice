@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 29 Aug 2026 12:20:54 +0800
+Subject: [PATCH] perf(los): batch nearest item visibility checks
+
+
+diff --git a/net/minecraft/world/entity/ai/sensing/NearestItemSensor.java b/net/minecraft/world/entity/ai/sensing/NearestItemSensor.java
+index 09fd13e2d958da8326276c4dadf25bf488aff5ac..c520f4d1d410605d22dd0795b218eb49d29344f4 100644
+--- a/net/minecraft/world/entity/ai/sensing/NearestItemSensor.java
++++ b/net/minecraft/world/entity/ai/sensing/NearestItemSensor.java
+@@ -1,5 +1,6 @@
+ package net.minecraft.world.entity.ai.sensing;
+ 
++import com.latticemc.lattice.nativelib.NativeLineOfSight;
+ import com.google.common.collect.ImmutableSet;
+ import java.util.Comparator;
+ import java.util.List;
+@@ -28,8 +29,24 @@ public class NearestItemSensor extends Sensor<Mob> {
+         entitiesOfClass.sort(Comparator.comparingDouble(entity::distanceToSqr));
+         // Paper start - Perf: remove streams from hot code
+         ItemEntity nearest = null;
+-        for (final ItemEntity itemEntity : entitiesOfClass) {
+-            if (entity.hasLineOfSight(itemEntity)) { // Paper - Perf: Move predicate into getEntities
++        Boolean[] nativeResults = null;
++        if (entitiesOfClass.size() > 1) {
++            try {
++                nativeResults = NativeLineOfSight.tryHasLineOfSightBatch(entity, entitiesOfClass);
++            } catch (Exception ignored) {
++                // Preserve the original per-item path if native preparation
++                // cannot service this batch.
++            }
++        }
++        for (int i = 0; i < entitiesOfClass.size(); ++i) {
++            final ItemEntity itemEntity = entitiesOfClass.get(i);
++            Boolean nativeResult = nativeResults == null ? null : nativeResults[i];
++            // Native FALSE is definitive only for cross-world/over-distance
++            // requests.  The sensor's query is same-world and <=32 blocks,
++            // but retain the vanilla call for all non-TRUE results so custom
++            // Mob#hasLineOfSight overrides and plugin behavior remain exact.
++            if (nativeResult == Boolean.TRUE
++                    || (nativeResult != Boolean.TRUE && entity.hasLineOfSight(itemEntity))) { // Paper - Perf: Move predicate into getEntities
+                 nearest = itemEntity;
+                 break;
+             }
