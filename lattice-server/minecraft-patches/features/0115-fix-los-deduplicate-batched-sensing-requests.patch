@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 29 Aug 2026 12:17:56 +0800
+Subject: [PATCH] fix(los): deduplicate batched sensing requests
+
+
+diff --git a/net/minecraft/world/entity/ai/sensing/Sensing.java b/net/minecraft/world/entity/ai/sensing/Sensing.java
+index 42e4bc2f45e985af70a1dfa63b0ae6cb60c81ecc..ac59950de81535efc5877aeced06362a5a6bc1f1 100644
+--- a/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -97,13 +97,14 @@ public class Sensing {
+             return results;
+         }
+         List<Entity> nativeEntities = new ArrayList<>(count);
++        IntSet queued = new IntOpenHashSet();
+         for (int i = 0; i < count; ++i) {
+             Entity entity = entities.get(i);
+             if (entity == null) {
+                 throw new IllegalArgumentException("null entity at index " + i);
+             }
+             int id = entity.getId();
+-            if (!this.seen.contains(id) && !this.unseen.contains(id)) {
++            if (!this.seen.contains(id) && !this.unseen.contains(id) && queued.add(id)) {
+                 nativeEntities.add(entity);
+             }
+         }

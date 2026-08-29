@@ -240,7 +240,7 @@ public final class NativeLineOfSight {
                 results[i] = Boolean.FALSE;
                 continue;
             }
-            if (distanceSq <= MIN_NATIVE_DISTANCE_SQ) {
+            if (distanceSq < MIN_NATIVE_DISTANCE_SQ) {
                 continue;
             }
 
@@ -287,7 +287,7 @@ public final class NativeLineOfSight {
             double toY = entity.getEyeY();
             double toZ = entity.getZ();
             double distanceSq = distanceToSqr(fromX, fromY, fromZ, toX, toY, toZ);
-            if (distanceSq <= MIN_NATIVE_DISTANCE_SQ || distanceSq > MAX_LOS_DISTANCE_SQ) continue;
+            if (distanceSq < MIN_NATIVE_DISTANCE_SQ || distanceSq > MAX_LOS_DISTANCE_SQ) continue;
             candidateIndices[nativeIndex] = i;
             fromXs[nativeIndex] = fromX;
             fromYs[nativeIndex] = fromY;

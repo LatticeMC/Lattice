@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 29 Aug 2026 12:13:35 +0800
+Subject: [PATCH] perf(los): expose batched sensing queries
+
+
+diff --git a/net/minecraft/world/entity/ai/sensing/Sensing.java b/net/minecraft/world/entity/ai/sensing/Sensing.java
+index a6c877de42131a25664b6ed57bd9c473f3628d41..42e4bc2f45e985af70a1dfa63b0ae6cb60c81ecc 100644
+--- a/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -4,6 +4,8 @@ import com.latticemc.lattice.nativelib.LatticeNative;
+ import com.latticemc.lattice.nativelib.NativeLineOfSight;
+ import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+ import it.unimi.dsi.fastutil.ints.IntSet;
++import java.util.ArrayList;
++import java.util.List;
+ import net.minecraft.util.profiling.Profiler;
+ import net.minecraft.util.profiling.ProfilerFiller;
+ import net.minecraft.world.entity.Entity;
+@@ -74,4 +76,96 @@ public class Sensing {
+             return hasLineOfSight;
+         }
+     }
++
++    /**
++     * Resolves several LOS requests in input order.  Unknown entries are
++     * submitted to the native layer as one batch; native negative results
++     * deliberately fall through to the exact vanilla path.  The per-tick
++     * seen/unseen sets remain the source of truth, so callers observe the same
++     * memoization behavior as repeated {@link #hasLineOfSight(Entity)} calls.
++     */
++    public boolean[] hasLineOfSightBatch(List<? extends Entity> entities) {
++        if (entities == null) {
++            throw new IllegalArgumentException("null entities");
++        }
++        int count = entities.size();
++        boolean[] results = new boolean[count];
++        if (count < 2) {
++            for (int i = 0; i < count; ++i) {
++                results[i] = this.hasLineOfSight(entities.get(i));
++            }
++            return results;
++        }
++        List<Entity> nativeEntities = new ArrayList<>(count);
++        for (int i = 0; i < count; ++i) {
++            Entity entity = entities.get(i);
++            if (entity == null) {
++                throw new IllegalArgumentException("null entity at index " + i);
++            }
++            int id = entity.getId();
++            if (!this.seen.contains(id) && !this.unseen.contains(id)) {
++                nativeEntities.add(entity);
++            }
++        }
++        Boolean[] nativeResults;
++        if (nativeEntities.isEmpty()) {
++            nativeResults = new Boolean[0];
++        } else {
++            try {
++                nativeResults = NativeLineOfSight.tryHasLineOfSightBatch(this.mob, nativeEntities);
++            } catch (Exception exception) {
++                nativeResults = null;
++                LatticeNative.logFallbackOnce("native_los", exception.getMessage());
++            }
++        }
++
++        int nativeCursor = 0;
++        for (int i = 0; i < count; ++i) {
++            Entity entity = entities.get(i);
++            if (entity == null) {
++                throw new IllegalArgumentException("null entity at index " + i);
++            }
++            int id = entity.getId();
++            if (this.seen.contains(id)) {
++                results[i] = true;
++                continue;
++            }
++            if (this.unseen.contains(id)) {
++                results[i] = false;
++                continue;
++            }
++
++            Boolean nativeResult = nativeResults == null || nativeCursor >= nativeResults.length
++                ? null : nativeResults[nativeCursor++];
++            if (nativeResult != null) {
++                if (LatticeNative.VERIFY) {
++                    boolean vanilla = this.mob.hasLineOfSight(entity);
++                    if (vanilla != nativeResult) {
++                        throw new AssertionError(
++                            "lattice.verify: native_los mismatch mob="
++                                + this.mob.getType()
++                                + " target="
++                                + entity.getType()
++                                + " vanilla="
++                                + vanilla
++                                + " native="
++                                + nativeResult
++                        );
++                    }
++                }
++                results[i] = nativeResult;
++            } else {
++                ProfilerFiller profilerFiller = Profiler.get();
++                profilerFiller.push("hasLineOfSight");
++                results[i] = this.mob.hasLineOfSight(entity);
++                profilerFiller.pop();
++            }
++            if (results[i]) {
++                this.seen.add(id);
++            } else {
++                this.unseen.add(id);
++            }
++        }
++        return results;
++    }
+ }
