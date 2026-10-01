@@ -12,6 +12,7 @@
 
 #include "world/gen/noise/simplex_noise.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 

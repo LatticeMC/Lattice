@@ -246,6 +246,12 @@ ParseResult parse_impl(const std::uint8_t* raw_data, std::size_t raw_len,
         res.status = Status::kBadArg;
         return res;
     }
+    if (max_depth > kMaxIndexDepth) {
+        // Index entries encode depth as uint8_t; do not allow callers to
+        // request a limit that cannot be represented without wrapping.
+        res.status = Status::kBadArg;
+        return res;
+    }
 
     // Read the root header: <tag-id> <name-len> <name>. The first byte
     // must be TAG_Compound (10). Vanilla also accepts a top-level
@@ -283,8 +289,10 @@ ParseResult parse_impl(const std::uint8_t* raw_data, std::size_t raw_len,
 
     auto push_frame = [&](const Frame& f) noexcept -> bool {
         if (stack_size == stack_cap) {
-            const std::size_t new_cap = stack_cap * 2;
-            if (new_cap > max_depth) return false;
+            const std::size_t doubled_cap = stack_cap * 2;
+            const std::size_t new_cap =
+                doubled_cap > max_depth ? max_depth : doubled_cap;
+            if (new_cap <= stack_size) return false;
             Frame* fresh = static_cast<Frame*>(std::malloc(new_cap * sizeof(Frame)));
             if (!fresh) return false;
             std::memcpy(fresh, stack, stack_size * sizeof(Frame));
@@ -352,13 +360,16 @@ ParseResult parse_impl(const std::uint8_t* raw_data, std::size_t raw_len,
             // List elements have no name. Write the index entry for
             // this element, then either inline-parse (scalar) or
             // push a frame (COMPOUND / nested LIST).
-            const std::uint8_t child_depth =
-                static_cast<std::uint8_t>(top.depth + 1u);
-            if (child_depth >= max_depth) {
+            const std::size_t child_depth_value =
+                static_cast<std::size_t>(top.depth) + 1u;
+            if (child_depth_value >= max_depth ||
+                child_depth_value > kMaxIndexDepth) {
                 finalize_writer(Status::kDepthOverflow);
                 res.error_offset = pos;
                 return res;
             }
+            const std::uint8_t child_depth =
+                static_cast<std::uint8_t>(child_depth_value);
 
             if (elem_type == TagId::kCompound) {
                 if (writer.tag_count() >= max_tags) {
@@ -506,13 +517,16 @@ ParseResult parse_impl(const std::uint8_t* raw_data, std::size_t raw_len,
         }
         pos += name_len;
 
-        const std::uint8_t child_depth =
-            static_cast<std::uint8_t>(top.depth + 1u);
-        if (child_depth >= max_depth) {
+        const std::size_t child_depth_value =
+            static_cast<std::size_t>(top.depth) + 1u;
+        if (child_depth_value >= max_depth ||
+            child_depth_value > kMaxIndexDepth) {
             finalize_writer(Status::kDepthOverflow);
             res.error_offset = pos;
             return res;
         }
+        const std::uint8_t child_depth =
+            static_cast<std::uint8_t>(child_depth_value);
 
         const TagId child_type = static_cast<TagId>(tag);
 

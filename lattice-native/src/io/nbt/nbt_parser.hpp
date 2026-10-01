@@ -111,7 +111,11 @@ struct ParseResult {
 };
 
 /// Default policy limits. Callers may override to be stricter.
-inline constexpr std::size_t kDefaultMaxDepth = 512;     // NbtSizeTracker.DEFAULT_MAX_DEPTH
+///
+/// The flat index stores depth in one byte, so accepting a larger limit would
+/// allow the on-wire nesting depth to wrap when it is written to the index.
+inline constexpr std::size_t kMaxIndexDepth    = 255;
+inline constexpr std::size_t kDefaultMaxDepth  = kMaxIndexDepth;
 inline constexpr std::size_t kDefaultMaxTags  = 1u << 20; // 1 Mi tags
 
 /// Compute an upper bound on the index buffer size needed for a worst-case
