@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "world/entity/pathfinder.hpp"
@@ -291,6 +292,58 @@ TEST_CASE("pathfinder searches from a resident state mirror") {
     CHECK(output.path_length == direct.path_length);
     CHECK(std::equal(output_cells, output_cells + output.path_length * 3, direct_cells));
 
+}
+
+TEST_CASE("pathfinder lazy mirror rejects checked coordinate and section bounds") {
+    const int target_x = 0;
+    const int target_y = 0;
+    const int target_z = 0;
+    const float malus[26] = {};
+    PathfinderStateMirror mirror{};
+    mirror.world_key = 17;
+
+    auto make_inputs = [&]() {
+        PathfinderInputs inputs{};
+        inputs.target_x = &target_x;
+        inputs.target_y = &target_y;
+        inputs.target_z = &target_z;
+        inputs.target_count = 1;
+        inputs.config = PathfinderConfig{64.0F, 8, 0, 1.5F};
+        inputs.entity_width = 1;
+        inputs.entity_height = 1;
+        inputs.pathfinding_malus = malus;
+        inputs.pathfinding_malus_count = 26;
+        return inputs;
+    };
+
+    int coords[24]{};
+    PathfinderOutput output{coords, 8};
+    PathfinderScratch scratch{};
+
+    PathfinderInputs high = make_inputs();
+    high.region_min_x = std::numeric_limits<int>::max();
+    high.region_size_x = 2;
+    high.region_size_y = 1;
+    high.region_size_z = 1;
+    CHECK_FALSE(find_path_from_state_mirror_into(high, mirror, 17, output, scratch));
+    CHECK(scratch.lazy_sections.empty());
+
+    PathfinderInputs low = make_inputs();
+    low.region_min_x = std::numeric_limits<int>::min();
+    low.region_size_x = 1;
+    low.region_size_y = 1;
+    low.region_size_z = 1;
+    CHECK_FALSE(find_path_from_state_mirror_into(low, mirror, 17, output, scratch));
+    CHECK(scratch.lazy_sections.empty());
+
+    // 514 sections along both horizontal axes exceeds the 512-section lazy
+    // budget while keeping the cell volume below the normal int-sized limit.
+    PathfinderInputs too_many_sections = make_inputs();
+    too_many_sections.region_size_x = 8192;
+    too_many_sections.region_size_y = 1;
+    too_many_sections.region_size_z = 8192;
+    CHECK_FALSE(find_path_from_state_mirror_into(too_many_sections, mirror, 17, output, scratch));
+    CHECK(scratch.lazy_sections.empty());
 }
 
 TEST_CASE("pathfinder: L shaped path around obstacle") {

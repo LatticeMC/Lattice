@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -20,6 +21,42 @@ constexpr int kResultHeaderInts = 3;
 /// this degrades to a full mirror clear, which is what every invalidation used to
 /// do unconditionally.
 constexpr std::size_t kMaxInvalidationLog = 4096;
+
+[[nodiscard]] bool checked_positive_product(jint first, jint second, jint third,
+                                            std::int64_t& result) noexcept {
+    if (first <= 0 || second <= 0 || third <= 0) return false;
+    const std::int64_t a = first;
+    const std::int64_t b = second;
+    const std::int64_t c = third;
+    if (a > std::numeric_limits<std::int64_t>::max() / b) return false;
+    const std::int64_t ab = a * b;
+    if (ab > std::numeric_limits<std::int64_t>::max() / c) return false;
+    result = ab * c;
+    return true;
+}
+
+[[nodiscard]] bool endpoint_fits(jint minimum, jint size) noexcept {
+    const std::int64_t endpoint = static_cast<std::int64_t>(minimum)
+        + static_cast<std::int64_t>(size) - 1;
+    return endpoint >= std::numeric_limits<jint>::min()
+        && endpoint <= std::numeric_limits<jint>::max();
+}
+
+[[nodiscard]] bool expanded_endpoint_fits(jint minimum, jint size, jint entity_size) noexcept {
+    if (size <= 0 || entity_size <= 0) return false;
+    const std::int64_t state_min = static_cast<std::int64_t>(minimum) - 1;
+    const std::int64_t state_max = static_cast<std::int64_t>(minimum)
+        + static_cast<std::int64_t>(size) + static_cast<std::int64_t>(entity_size) - 1;
+    return state_min >= std::numeric_limits<jint>::min()
+        && state_max <= std::numeric_limits<jint>::max();
+}
+
+[[nodiscard]] bool output_array_covers(JNIEnv* env, jintArray output,
+                                       jint max_visited_nodes) noexcept {
+    if (max_visited_nodes <= 0) return false;
+    const std::int64_t required = 3 + static_cast<std::int64_t>(max_visited_nodes) * 3;
+    return required <= env->GetArrayLength(output);
+}
 
 /// Shared, per-world log of invalidated section keys.
 ///
@@ -134,16 +171,21 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: invalid dimensions/config");
         return 0L;
     }
+    if (!endpoint_fits(regionMinX, regionSizeX)
+            || !endpoint_fits(regionMinY, regionSizeY)
+            || !endpoint_fits(regionMinZ, regionSizeZ)) {
+        lattice::jni::throw_illegal_arg(env, "lattice pathfinder: region endpoint overflow");
+        return 0L;
+    }
     if (targetCount <= 0 || env->GetArrayLength(jTargetX) < targetCount
             || env->GetArrayLength(jTargetY) < targetCount
             || env->GetArrayLength(jTargetZ) < targetCount) {
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: target arrays too short");
         return 0L;
     }
-    const long long volume = static_cast<long long>(regionSizeX)
-        * static_cast<long long>(regionSizeY)
-        * static_cast<long long>(regionSizeZ);
-    if (volume <= 0 || volume > env->GetArrayLength(jPathTypes)) {
+    std::int64_t volume = 0;
+    if (!checked_positive_product(regionSizeX, regionSizeY, regionSizeZ, volume)
+            || volume > env->GetArrayLength(jPathTypes)) {
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: path type array too short");
         return 0L;
     }
@@ -152,7 +194,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: empty malus array");
         return 0L;
     }
-    if (env->GetArrayLength(jOutPath) < 3 + maxVisitedNodes * 3) {
+    if (!output_array_covers(env, jOutPath, maxVisitedNodes)) {
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: output array too short");
         return 0L;
     }
@@ -317,7 +359,20 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: invalid state snapshot dimensions/config");
         return 0L;
     }
-    const long long stateVolume = static_cast<long long>(stateSizeX) * stateSizeY * stateSizeZ;
+    if (!endpoint_fits(regionMinX, regionSizeX)
+            || !endpoint_fits(regionMinY, regionSizeY)
+            || !endpoint_fits(regionMinZ, regionSizeZ)
+            || !endpoint_fits(stateMinX, stateSizeX)
+            || !endpoint_fits(stateMinY, stateSizeY)
+            || !endpoint_fits(stateMinZ, stateSizeZ)) {
+        lattice::jni::throw_illegal_arg(env, "lattice pathfinder: region endpoint overflow");
+        return 0L;
+    }
+    std::int64_t stateVolume = 0;
+    if (!checked_positive_product(stateSizeX, stateSizeY, stateSizeZ, stateVolume)) {
+        lattice::jni::throw_illegal_arg(env, "lattice pathfinder: state snapshot volume overflow");
+        return 0L;
+    }
     if (stateVolume <= 0 || stateVolume > env->GetArrayLength(jStateCells)
             || descriptorCount > env->GetArrayLength(jDescriptorPathTypes)
             || descriptorCount > env->GetArrayLength(jDescriptorFloorHeights)) {
@@ -328,7 +383,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
             || env->GetArrayLength(jTargetY) < targetCount
             || env->GetArrayLength(jTargetZ) < targetCount
             || env->GetArrayLength(jPathfindingMalus) <= 0
-            || env->GetArrayLength(jOutPath) < 3 + maxVisitedNodes * 3) {
+            || !output_array_covers(env, jOutPath, maxVisitedNodes)) {
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: target, malus, or output array too short");
         return 0L;
     }
@@ -460,8 +515,17 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateMir
             || targetCount <= 0 || env->GetArrayLength(jTargetX) < targetCount
             || env->GetArrayLength(jTargetY) < targetCount || env->GetArrayLength(jTargetZ) < targetCount
             || env->GetArrayLength(jPathfindingMalus) <= 0
-            || env->GetArrayLength(jOutPath) < 3 + maxVisitedNodes * 3) {
+            || !output_array_covers(env, jOutPath, maxVisitedNodes)) {
         lattice::jni::throw_illegal_arg(env, "lattice pathfinder: invalid state mirror dimensions/config");
+        return 0L;
+    }
+    if (!endpoint_fits(regionMinX, regionSizeX)
+            || !endpoint_fits(regionMinY, regionSizeY)
+            || !endpoint_fits(regionMinZ, regionSizeZ)
+            || !expanded_endpoint_fits(regionMinX, regionSizeX, entityWidth)
+            || !expanded_endpoint_fits(regionMinY, regionSizeY, entityHeight)
+            || !expanded_endpoint_fits(regionMinZ, regionSizeZ, entityWidth)) {
+        lattice::jni::throw_illegal_arg(env, "lattice pathfinder: region endpoint overflow");
         return 0L;
     }
 
