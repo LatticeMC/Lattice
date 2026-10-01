@@ -29,6 +29,18 @@ void push_name(std::vector<std::uint8_t>& v, const std::string& name) {
     for (char c : name) push_u8(v, static_cast<std::uint8_t>(c));
 }
 
+std::vector<std::uint8_t> nested_compounds(std::size_t nested_count) {
+    std::vector<std::uint8_t> raw{10, 0x00, 0x00};
+    for (std::size_t i = 0; i < nested_count; ++i) {
+        push_u8(raw, 10);
+        push_name(raw, "");
+    }
+    for (std::size_t i = 0; i <= nested_count; ++i) {
+        push_u8(raw, 0);
+    }
+    return raw;
+}
+
 ParseResult parse_into_index(const std::vector<std::uint8_t>& raw,
                              std::size_t max_depth = kDefaultMaxDepth,
                              std::size_t max_tags = kDefaultMaxTags) {
@@ -167,6 +179,25 @@ TEST_CASE("nbt_parser: depth overflow rejected") {
 
     auto r = parse_into_index(raw, 1, kDefaultMaxTags);
     check_parse_status(r, Status::kDepthOverflow, 7);
+}
+
+TEST_CASE("nbt_parser: index depth limit matches uint8 representation") {
+    // max_depth is an exclusive limit: a limit of 255 accepts index depths
+    // through 254, while the next nested compound is rejected before any
+    // uint8_t conversion can wrap.
+    const auto raw = nested_compounds(kMaxIndexDepth);
+    auto accepted = validate_only(raw, kMaxIndexDepth - 1, kDefaultMaxTags);
+    CHECK(accepted.status == Status::kDepthOverflow);
+
+    const auto shallow = nested_compounds(kMaxIndexDepth - 1);
+    auto boundary = validate_only(shallow, kMaxIndexDepth, kDefaultMaxTags);
+    CHECK(boundary.status == Status::kOk);
+}
+
+TEST_CASE("nbt_parser: max depth above uint8 index range rejected") {
+    const auto raw = nested_compounds(1);
+    auto r = validate_only(raw, kMaxIndexDepth + 1, kDefaultMaxTags);
+    check_parse_status(r, Status::kBadArg, 0);
 }
 
 TEST_CASE("nbt_parser: tag cap overflow rejected") {
