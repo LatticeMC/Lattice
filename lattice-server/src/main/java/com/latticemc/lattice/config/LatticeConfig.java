@@ -34,6 +34,8 @@ public final class LatticeConfig {
             bool("native.download", "lattice.native.download", true, "Allow downloading a release native library when it is not bundled."),
             nonEmptyString("native.release", "lattice.native.release", "native-latest", "Release tag used when downloading the native library."),
             nonEmptyString("native.release-base-url", "lattice.native.releaseBaseUrl", "https://github.com/LatticeMC/Lattice/releases/download", "Base HTTP(S) URL used when downloading the native library."),
+            string("native.sha256", "lattice.native.sha256", "", "Trusted SHA-256 (64 hexadecimal characters) for a release native library; downloads are refused without a locally pinned digest."),
+            bool("native.allow-insecure-http", "lattice.native.allowInsecureHttp", false, "Allow downloading the native library over plain HTTP. Leave disabled to require HTTPS."),
             cpuTier("native.cpu-tier", "lattice.nativeCpu", "auto", "Native CPU tier: auto, scalar, avx2, or avx512. Unsupported hardware safely falls back to a compatible native implementation."),
             bool("native.aabb-query", "lattice.nativeAabbQuery", true, "Use native AABB intersection scans when available."),
             bool("performance.los.section-lookup-reuse", "lattice.nativeLosSectionLookupReuse", true,
