@@ -40,6 +40,10 @@ constexpr std::int8_t kDamageCautious = 24;
 constexpr std::int8_t kDangerTrapdoor = 25;
 constexpr int kPathTypeCount = 26;
 constexpr std::size_t kMaskWordBits = 64;
+/// Lazy mirror materialisation is intentionally bounded.  A request touching
+/// more sections falls back to the snapshot path instead of allocating an
+/// unbounded pointer table.
+constexpr std::int64_t kMaxLazySections = 512;
 
 constexpr std::int8_t kClosedFlag = 1;
 constexpr std::int8_t kOpenFlag = 2;
@@ -47,27 +51,112 @@ constexpr std::int8_t kOpenFlag = 2;
 [[nodiscard]] std::int8_t lazy_path_type_at(void* context, int x, int y, int z) noexcept;
 [[nodiscard]] float lazy_floor_level_at(void* context, int x, int y, int z) noexcept;
 
+[[nodiscard]] bool region_endpoint_fits(int minimum, int size) noexcept {
+    const std::int64_t endpoint = static_cast<std::int64_t>(minimum)
+        + static_cast<std::int64_t>(size) - 1;
+    return endpoint >= std::numeric_limits<int>::min()
+        && endpoint <= std::numeric_limits<int>::max();
+}
+
 [[nodiscard]] bool valid_inputs(const PathfinderInputs& in) noexcept {
     if ((!in.path_types && !in.lazy_context) || !in.pathfinding_malus) return false;
     if (!in.target_x || !in.target_y || !in.target_z || in.target_count <= 0) return false;
     if (in.region_size_x <= 0 || in.region_size_y <= 0 || in.region_size_z <= 0) return false;
+    if (!region_endpoint_fits(in.region_min_x, in.region_size_x)
+            || !region_endpoint_fits(in.region_min_y, in.region_size_y)
+            || !region_endpoint_fits(in.region_min_z, in.region_size_z)) return false;
     if (in.config.max_visited_nodes <= 0 || in.config.max_range <= 0.0F) return false;
     return in.pathfinding_malus_count > 0;
 }
 
+[[nodiscard]] bool checked_add_i64(std::int64_t lhs, std::int64_t rhs,
+                                   std::int64_t& result) noexcept {
+    if ((rhs > 0 && lhs > std::numeric_limits<std::int64_t>::max() - rhs)
+            || (rhs < 0 && lhs < std::numeric_limits<std::int64_t>::min() - rhs)) return false;
+    result = lhs + rhs;
+    return true;
+}
+
+[[nodiscard]] bool checked_sub_i64(std::int64_t lhs, std::int64_t rhs,
+                                   std::int64_t& result) noexcept {
+    if ((rhs > 0 && lhs < std::numeric_limits<std::int64_t>::min() + rhs)
+            || (rhs < 0 && lhs > std::numeric_limits<std::int64_t>::max() + rhs)) return false;
+    result = lhs - rhs;
+    return true;
+}
+
+[[nodiscard]] bool checked_mul_i64(std::int64_t lhs, std::int64_t rhs,
+                                   std::int64_t& result) noexcept {
+    if (lhs == 0 || rhs == 0) {
+        result = 0;
+        return true;
+    }
+    if (lhs == -1) {
+        if (rhs == std::numeric_limits<std::int64_t>::min()) return false;
+        result = -rhs;
+        return true;
+    }
+    if (rhs == -1) {
+        if (lhs == std::numeric_limits<std::int64_t>::min()) return false;
+        result = -lhs;
+        return true;
+    }
+    if (lhs > 0) {
+        if (rhs > 0) {
+            if (lhs > std::numeric_limits<std::int64_t>::max() / rhs) return false;
+        } else if (rhs < std::numeric_limits<std::int64_t>::min() / lhs) return false;
+    } else if (rhs > 0) {
+        if (lhs < std::numeric_limits<std::int64_t>::min() / rhs) return false;
+    } else if (lhs < std::numeric_limits<std::int64_t>::max() / rhs) {
+        return false;
+    }
+    result = lhs * rhs;
+    return true;
+}
+
+[[nodiscard]] bool checked_state_axis(int region_min, int region_size, int entity_size,
+                                      int& state_min, int& state_max,
+                                      int& state_size) noexcept {
+    if (region_size <= 0 || entity_size <= 0) return false;
+    std::int64_t min_value = static_cast<std::int64_t>(region_min);
+    std::int64_t max_value = min_value;
+    if (!checked_sub_i64(min_value, 1, min_value)
+            || !checked_add_i64(max_value, static_cast<std::int64_t>(region_size), max_value)
+            || !checked_add_i64(max_value, static_cast<std::int64_t>(entity_size), max_value)
+            || !checked_sub_i64(max_value, 1, max_value)) return false;
+    if (min_value < std::numeric_limits<int>::min() || min_value > std::numeric_limits<int>::max()
+            || max_value < std::numeric_limits<int>::min() || max_value > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    std::int64_t size_value = 0;
+    if (!checked_sub_i64(max_value, min_value, size_value)
+            || !checked_add_i64(size_value, 1, size_value)
+            || size_value <= 0 || size_value > std::numeric_limits<int>::max()) return false;
+    state_min = static_cast<int>(min_value);
+    state_max = static_cast<int>(max_value);
+    state_size = static_cast<int>(size_value);
+    return true;
+}
+
 [[nodiscard]] int volume(const PathfinderInputs& in) noexcept {
-    const long long v = static_cast<long long>(in.region_size_x)
-        * static_cast<long long>(in.region_size_y)
-        * static_cast<long long>(in.region_size_z);
-    if (v <= 0 || v > std::numeric_limits<int>::max()) return -1;
+    std::int64_t v = 1;
+    if (!checked_mul_i64(v, static_cast<std::int64_t>(in.region_size_x), v)
+            || !checked_mul_i64(v, static_cast<std::int64_t>(in.region_size_y), v)
+            || !checked_mul_i64(v, static_cast<std::int64_t>(in.region_size_z), v)
+            || v <= 0 || v > std::numeric_limits<int>::max()) return -1;
     return static_cast<int>(v);
 }
 
 [[nodiscard]] bool in_region(const PathfinderInputs& in, int x, int y, int z) noexcept {
-    return x >= in.region_min_x && y >= in.region_min_y && z >= in.region_min_z
-        && x < in.region_min_x + in.region_size_x
-        && y < in.region_min_y + in.region_size_y
-        && z < in.region_min_z + in.region_size_z;
+    const std::int64_t max_x = static_cast<std::int64_t>(in.region_min_x) + in.region_size_x;
+    const std::int64_t max_y = static_cast<std::int64_t>(in.region_min_y) + in.region_size_y;
+    const std::int64_t max_z = static_cast<std::int64_t>(in.region_min_z) + in.region_size_z;
+    return static_cast<std::int64_t>(x) >= in.region_min_x
+        && static_cast<std::int64_t>(y) >= in.region_min_y
+        && static_cast<std::int64_t>(z) >= in.region_min_z
+        && static_cast<std::int64_t>(x) < max_x
+        && static_cast<std::int64_t>(y) < max_y
+        && static_cast<std::int64_t>(z) < max_z;
 }
 
 [[nodiscard]] int grid_index(const PathfinderInputs& in, int x, int y, int z) noexcept {
@@ -911,14 +1000,23 @@ namespace {
     if (!snapshot.cells || !snapshot.raw_path_types || !snapshot.floor_heights
             || snapshot.descriptor_count <= 0 || snapshot.size_x <= 0
             || snapshot.size_y <= 0 || snapshot.size_z <= 0) return false;
+    if (!region_endpoint_fits(in.region_min_x, in.region_size_x)
+            || !region_endpoint_fits(in.region_min_y, in.region_size_y)
+            || !region_endpoint_fits(in.region_min_z, in.region_size_z)) return false;
     const int count = volume(in);
     if (count <= 0) return false;
     scratch.materialized_path_types.resize(static_cast<std::size_t>(count));
     scratch.materialized_floor_levels.resize(static_cast<std::size_t>(count));
     int index = 0;
-    for (int y = in.region_min_y; y < in.region_min_y + in.region_size_y; ++y) {
-        for (int z = in.region_min_z; z < in.region_min_z + in.region_size_z; ++z) {
-            for (int x = in.region_min_x; x < in.region_min_x + in.region_size_x; ++x, ++index) {
+    const std::int64_t end_y = static_cast<std::int64_t>(in.region_min_y) + in.region_size_y;
+    const std::int64_t end_z = static_cast<std::int64_t>(in.region_min_z) + in.region_size_z;
+    const std::int64_t end_x = static_cast<std::int64_t>(in.region_min_x) + in.region_size_x;
+    for (std::int64_t y_value = in.region_min_y; y_value < end_y; ++y_value) {
+        const int y = static_cast<int>(y_value);
+        for (std::int64_t z_value = in.region_min_z; z_value < end_z; ++z_value) {
+            const int z = static_cast<int>(z_value);
+            for (std::int64_t x_value = in.region_min_x; x_value < end_x; ++x_value, ++index) {
+                const int x = static_cast<int>(x_value);
                 std::int8_t type = kBlocked;
                 float floor_height = 0.0F;
                 if (!mob_path_type(in, snapshot, x, y, z, type)) return false;
@@ -1092,20 +1190,20 @@ struct LazyPathGrid {
     int section_count_x;
     int section_count_y;
     int section_count_z;
+    int state_count_x;
+    int state_count_y;
+    int state_count_z;
     std::vector<const PathfinderStateMirrorSection*>& sections;
     bool failed = false;
 
     LazyPathGrid(const PathfinderInputs& inputs, const PathfinderStateMirror& state_mirror,
                  int key, PathfinderScratch& state_scratch) noexcept
         : in(inputs), mirror(state_mirror), world_key(key), scratch(state_scratch),
-          state_min_x(inputs.region_min_x - 1), state_min_y(inputs.region_min_y - 1), state_min_z(inputs.region_min_z - 1),
-          state_max_x(inputs.region_min_x + inputs.region_size_x + inputs.entity_width - 1),
-          state_max_y(inputs.region_min_y + inputs.region_size_y + inputs.entity_height - 1),
-          state_max_z(inputs.region_min_z + inputs.region_size_z + inputs.entity_width - 1),
-          section_min_x(state_min_x >> 4), section_min_y(state_min_y >> 4), section_min_z(state_min_z >> 4),
-          section_count_x((state_max_x >> 4) - section_min_x + 1),
-          section_count_y((state_max_y >> 4) - section_min_y + 1),
-          section_count_z((state_max_z >> 4) - section_min_z + 1),
+          state_min_x(0), state_min_y(0), state_min_z(0),
+          state_max_x(0), state_max_y(0), state_max_z(0),
+          section_min_x(0), section_min_y(0), section_min_z(0),
+          section_count_x(0), section_count_y(0), section_count_z(0),
+          state_count_x(0), state_count_y(0), state_count_z(0),
           sections(state_scratch.lazy_sections) {}
 
     [[nodiscard]] std::size_t section_slot(int sx, int sy, int sz) const noexcept {
@@ -1114,14 +1212,43 @@ struct LazyPathGrid {
 
 
     [[nodiscard]] bool initialise() noexcept {
-        if (mirror.world_key != world_key || section_count_x <= 0 || section_count_y <= 0 || section_count_z <= 0) return false;
-        const std::size_t count = static_cast<std::size_t>(section_count_x) * section_count_y * section_count_z;
-        sections.resize(count);
+        if (mirror.world_key != world_key
+                || !checked_state_axis(in.region_min_x, in.region_size_x, in.entity_width,
+                                        state_min_x, state_max_x, state_count_x)
+                || !checked_state_axis(in.region_min_y, in.region_size_y, in.entity_height,
+                                       state_min_y, state_max_y, state_count_y)
+                || !checked_state_axis(in.region_min_z, in.region_size_z, in.entity_width,
+                                       state_min_z, state_max_z, state_count_z)) return false;
+        section_min_x = state_min_x >> 4;
+        section_min_y = state_min_y >> 4;
+        section_min_z = state_min_z >> 4;
+        const int section_max_x = state_max_x >> 4;
+        const int section_max_y = state_max_y >> 4;
+        const int section_max_z = state_max_z >> 4;
+        std::int64_t count_x = static_cast<std::int64_t>(section_max_x)
+            - section_min_x + 1;
+        std::int64_t count_y = static_cast<std::int64_t>(section_max_y)
+            - section_min_y + 1;
+        std::int64_t count_z = static_cast<std::int64_t>(section_max_z)
+            - section_min_z + 1;
+        std::int64_t count = 0;
+        if (count_x <= 0 || count_y <= 0 || count_z <= 0
+                || !checked_mul_i64(count_x, count_y, count)
+                || !checked_mul_i64(count, count_z, count)
+                || count > kMaxLazySections) return false;
+        section_count_x = static_cast<int>(count_x);
+        section_count_y = static_cast<int>(count_y);
+        section_count_z = static_cast<int>(count_z);
+        const std::size_t section_count = static_cast<std::size_t>(count);
+        sections.resize(section_count);
         for (int sy = 0; sy < section_count_y; ++sy) for (int sz = 0; sz < section_count_z; ++sz) for (int sx = 0; sx < section_count_x; ++sx) {
             const std::size_t slot = section_slot(sx, sy, sz);
-            const auto it = mirror.sections.find(mirror_section_key((section_min_x + sx) << 4,
-                                                                     (section_min_y + sy) << 4,
-                                                                     (section_min_z + sz) << 4));
+            const auto section_origin = [](int section) noexcept {
+                return static_cast<int>(static_cast<std::int64_t>(section) * 16);
+            };
+            const auto it = mirror.sections.find(mirror_section_key(
+                section_origin(section_min_x + sx), section_origin(section_min_y + sy),
+                section_origin(section_min_z + sz)));
             if (it == mirror.sections.end()) return false;
             sections[slot] = &it->second;
         }
@@ -1460,21 +1587,19 @@ bool find_path_from_state_mirror_into(const PathfinderInputs& inputs,
         const bool ok = find_path_into(lazy_inputs, output, scratch);
         if (!lazy.failed) return ok;
     }
-    const long long state_min_x = static_cast<long long>(inputs.region_min_x) - 1;
-    const long long state_min_y = static_cast<long long>(inputs.region_min_y) - 1;
-    const long long state_min_z = static_cast<long long>(inputs.region_min_z) - 1;
-    const long long state_size_x = static_cast<long long>(inputs.region_size_x) + inputs.entity_width + 1;
-    const long long state_size_y = static_cast<long long>(inputs.region_size_y) + inputs.entity_height + 1;
-    const long long state_size_z = static_cast<long long>(inputs.region_size_z) + inputs.entity_width + 1;
-    if (state_min_x < std::numeric_limits<int>::min() || state_min_x > std::numeric_limits<int>::max()
-            || state_min_y < std::numeric_limits<int>::min() || state_min_y > std::numeric_limits<int>::max()
-            || state_min_z < std::numeric_limits<int>::min() || state_min_z > std::numeric_limits<int>::max()
-            || state_size_x > std::numeric_limits<int>::max() || state_size_y > std::numeric_limits<int>::max()
-            || state_size_z > std::numeric_limits<int>::max()) return false;
+    int state_min_x = 0, state_max_x = 0, state_size_x = 0;
+    int state_min_y = 0, state_max_y = 0, state_size_y = 0;
+    int state_min_z = 0, state_max_z = 0, state_size_z = 0;
+    if (!checked_state_axis(inputs.region_min_x, inputs.region_size_x, inputs.entity_width,
+                            state_min_x, state_max_x, state_size_x)
+            || !checked_state_axis(inputs.region_min_y, inputs.region_size_y, inputs.entity_height,
+                                   state_min_y, state_max_y, state_size_y)
+            || !checked_state_axis(inputs.region_min_z, inputs.region_size_z, inputs.entity_width,
+                                   state_min_z, state_max_z, state_size_z)) return false;
     PathfinderStateSnapshot snapshot{};
     if (!load_pathfinder_state_snapshot(mirror, world_key,
-                                        static_cast<int>(state_min_x), static_cast<int>(state_min_y), static_cast<int>(state_min_z),
-                                        static_cast<int>(state_size_x), static_cast<int>(state_size_y), static_cast<int>(state_size_z),
+                                        state_min_x, state_min_y, state_min_z,
+                                        state_size_x, state_size_y, state_size_z,
                                         scratch, snapshot)) return false;
     return find_path_from_state_snapshot_into(inputs, snapshot, output, scratch);
 }
