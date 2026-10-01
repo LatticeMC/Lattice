@@ -1,0 +1,29 @@
+From 05c4e93af5d0ca3abfeae3e7acadaaa4e6f74428 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 2 Oct 2026 06:11:32 +0800
+Subject: [PATCH] feat(worldgen): derive structure generation streams
+
+---
+ .../world/level/levelgen/structure/Structure.java        | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/net/minecraft/world/level/levelgen/structure/Structure.java b/net/minecraft/world/level/levelgen/structure/Structure.java
+index 8328e86..6a3a5c5 100644
+--- a/net/minecraft/world/level/levelgen/structure/Structure.java
++++ b/net/minecraft/world/level/levelgen/structure/Structure.java
+@@ -95,9 +95,12 @@ public abstract class Structure {
+         Predicate<Holder<Biome>> validBiome
+     ) {
+         ProfiledDuration profiledDuration = JvmProfiler.INSTANCE.onStructureGenerate(chunkPos, level, structure);
+-        Structure.GenerationContext generationContext = new Structure.GenerationContext(
+-            registryAccess, chunkGenerator, biomeSource, randomState, structureTemplateManager, seed, chunkPos, heightAccessor, validBiome
+-        );
++        Structure.GenerationContext generationContext;
++        try (com.latticemc.lattice.worldgen.SeedProtection.Scope ignored = com.latticemc.lattice.worldgen.SeedProtection.enterStructure(structure.unwrapKey().map(key -> key.identifier().toString()).orElse(null))) {
++            generationContext = new Structure.GenerationContext(
++                registryAccess, chunkGenerator, biomeSource, randomState, structureTemplateManager, seed, chunkPos, heightAccessor, validBiome
++            );
++        }
+         Optional<Structure.GenerationStub> optional = this.findValidGenerationPoint(generationContext);
+         if (optional.isPresent()) {
+             StructurePiecesBuilder piecesBuilder = optional.get().getPiecesBuilder();

@@ -1,0 +1,127 @@
+From 974fc6afc80fd3490609b03346a9a88cb0e82d26 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 2 Oct 2026 06:10:59 +0800
+Subject: [PATCH] feat(worldgen): protect configured structure random streams
+
+---
+ .../world/level/chunk/ChunkGenerator.java     | 10 +++++++++-
+ .../chunk/ChunkGeneratorStructureState.java   |  9 ++++++---
+ .../RandomSpreadStructurePlacement.java       | 19 ++++++++++++++++++-
+ .../placement/StructurePlacement.java         |  6 +++++-
+ 4 files changed, 38 insertions(+), 6 deletions(-)
+
+diff --git a/net/minecraft/world/level/chunk/ChunkGenerator.java b/net/minecraft/world/level/chunk/ChunkGenerator.java
+index 7b98964..25a2842 100644
+--- a/net/minecraft/world/level/chunk/ChunkGenerator.java
++++ b/net/minecraft/world/level/chunk/ChunkGenerator.java
+@@ -525,6 +525,7 @@ public abstract class ChunkGenerator {
+             ChunkPos pos = chunk.getPos();
+             SectionPos sectionPos = SectionPos.bottomOf(chunk);
+             RandomState randomState = structureState.randomState();
++            try (com.latticemc.lattice.worldgen.SeedProtection.Scope ignored = com.latticemc.lattice.worldgen.SeedProtection.enter(structureManager.level.getMinecraftWorld())) {
+             structureState.possibleStructureSets()
+                 .forEach(
+                     structures -> {
+@@ -558,7 +559,13 @@ public abstract class ChunkGenerator {
+                                 ArrayList<StructureSet.StructureSelectionEntry> list1 = new ArrayList<>(list.size());
+                                 list1.addAll(list);
+                                 WorldgenRandom worldgenRandom = new WorldgenRandom(new LegacyRandomSource(0L));
+-                                worldgenRandom.setLargeFeatureSeed(structureState.getLevelSeed(), pos.x, pos.z);
++                                String structureSetKey = structures.unwrapKey().map(key -> key.identifier().toString()).orElse("-");
++                                net.minecraft.util.RandomSource protectedRandom = com.latticemc.lattice.worldgen.SeedProtection.forStructureSet(structureSetKey, "selection", pos.x, pos.z);
++                                if (protectedRandom == null) {
++                                    worldgenRandom.setLargeFeatureSeed(structureState.getLevelSeed(), pos.x, pos.z);
++                                } else {
++                                    worldgenRandom = new WorldgenRandom(protectedRandom);
++                                }
+                                 int i = 0;
+ 
+                                 for (StructureSet.StructureSelectionEntry structureSelectionEntry1 : list1) {
+@@ -601,6 +608,7 @@ public abstract class ChunkGenerator {
+                         }
+                     }
+                 );
++            }
+         }
+     }
+ 
+diff --git a/net/minecraft/world/level/chunk/ChunkGeneratorStructureState.java b/net/minecraft/world/level/chunk/ChunkGeneratorStructureState.java
+index 784d9de..3bc151f 100644
+--- a/net/minecraft/world/level/chunk/ChunkGeneratorStructureState.java
++++ b/net/minecraft/world/level/chunk/ChunkGeneratorStructureState.java
+@@ -205,13 +205,16 @@ public class ChunkGeneratorStructureState {
+             List<CompletableFuture<ChunkPos>> list = new ArrayList<>(count);
+             int spread = placement.spread();
+             HolderSet<Biome> holderSet = placement.preferredBiomes();
+-            RandomSource randomSource = RandomSource.create();
++            RandomSource protectedRandom = com.latticemc.lattice.worldgen.SeedProtection.forStructureSet("minecraft:strongholds", "rings", 0L, 0L);
++            RandomSource randomSource = protectedRandom != null ? protectedRandom : RandomSource.create();
+             // Paper start - Add missing structure set seed configs
+-            if (this.conf.strongholdSeed != null && structureSet.is(net.minecraft.world.level.levelgen.structure.BuiltinStructureSets.STRONGHOLDS)) {
++            if (protectedRandom == null && this.conf.strongholdSeed != null && structureSet.is(net.minecraft.world.level.levelgen.structure.BuiltinStructureSets.STRONGHOLDS)) {
+                 randomSource.setSeed(this.conf.strongholdSeed);
+             } else {
+             // Paper end - Add missing structure set seed configs
+-            randomSource.setSeed(this.concentricRingsSeed);
++                if (protectedRandom == null) {
++                    randomSource.setSeed(this.concentricRingsSeed);
++                }
+             } // Paper - Add missing structure set seed configs
+             double d = randomSource.nextDouble() * Math.PI * 2.0;
+             int i = 0;
+diff --git a/net/minecraft/world/level/levelgen/structure/placement/RandomSpreadStructurePlacement.java b/net/minecraft/world/level/levelgen/structure/placement/RandomSpreadStructurePlacement.java
+index ee0d9dd..c1d1312 100644
+--- a/net/minecraft/world/level/levelgen/structure/placement/RandomSpreadStructurePlacement.java
++++ b/net/minecraft/world/level/levelgen/structure/placement/RandomSpreadStructurePlacement.java
+@@ -65,16 +65,33 @@ public class RandomSpreadStructurePlacement extends StructurePlacement {
+     }
+ 
+     public ChunkPos getPotentialStructureChunk(long seed, int regionX, int regionZ) {
++        return this.lattice$getPotentialStructureChunk(seed, regionX, regionZ, null);
++    }
++
++    private ChunkPos lattice$getPotentialStructureChunk(long seed, int regionX, int regionZ, net.minecraft.util.RandomSource protectedRandom) {
+         int i = Math.floorDiv(regionX, this.spacing);
+         int i1 = Math.floorDiv(regionZ, this.spacing);
+         WorldgenRandom worldgenRandom = new WorldgenRandom(new LegacyRandomSource(0L));
+-        worldgenRandom.setLargeFeatureWithSalt(seed, i, i1, this.salt());
++        if (protectedRandom == null) {
++            worldgenRandom.setLargeFeatureWithSalt(seed, i, i1, this.salt());
++        } else {
++            worldgenRandom = new WorldgenRandom(protectedRandom);
++        }
+         int i2 = this.spacing - this.separation;
+         int i3 = this.spreadType.evaluate(worldgenRandom, i2);
+         int i4 = this.spreadType.evaluate(worldgenRandom, i2);
+         return new ChunkPos(i * this.spacing + i3, i1 * this.spacing + i4);
+     }
+ 
++    public boolean lattice$isPlacementChunk(ChunkGeneratorStructureState structureState, int x, int z, net.minecraft.resources.ResourceKey<net.minecraft.world.level.levelgen.structure.StructureSet> structureSetKey) {
++        String key = structureSetKey.identifier().toString();
++        net.minecraft.util.RandomSource random = com.latticemc.lattice.worldgen.SeedProtection.protectsSet(key)
++            ? com.latticemc.lattice.worldgen.SeedProtection.forStructureSet(key, "placement", Math.floorDiv(x, this.spacing), Math.floorDiv(z, this.spacing))
++            : null;
++        ChunkPos potentialStructureChunk = this.lattice$getPotentialStructureChunk(structureState.getLevelSeed(), x, z, random);
++        return potentialStructureChunk.x == x && potentialStructureChunk.z == z;
++    }
++
+     @Override
+     protected boolean isPlacementChunk(ChunkGeneratorStructureState structureState, int x, int z) {
+         ChunkPos potentialStructureChunk = this.getPotentialStructureChunk(structureState.getLevelSeed(), x, z);
+diff --git a/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java b/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
+index b3a538f..30cd1ec 100644
+--- a/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
++++ b/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
+@@ -95,7 +95,11 @@ public abstract class StructurePlacement {
+             }
+         }
+         // Paper end - Add missing structure set seed configs
+-        return this.isPlacementChunk(structureState, x, z)
++        boolean placementChunk = this instanceof RandomSpreadStructurePlacement randomSpread
++            && structureSetKey != null
++            ? randomSpread.lattice$isPlacementChunk(structureState, x, z, structureSetKey)
++            : this.isPlacementChunk(structureState, x, z);
++        return placementChunk
+             && this.applyAdditionalChunkRestrictions(x, z, structureState.getLevelSeed(), saltOverride) // Paper - Add missing structure set seed configs
+             && this.applyInteractionsWithOtherStructures(structureState, x, z);
+     }

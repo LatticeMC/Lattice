@@ -1,0 +1,24 @@
+From 9ef5939d1393daa537666d9c467f7d652a385476 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 2 Oct 2026 06:11:52 +0800
+Subject: [PATCH] feat(worldgen): use AES streams for structure generation
+
+---
+ net/minecraft/world/level/levelgen/structure/Structure.java | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/net/minecraft/world/level/levelgen/structure/Structure.java b/net/minecraft/world/level/levelgen/structure/Structure.java
+index 6a3a5c5..8b31439 100644
+--- a/net/minecraft/world/level/levelgen/structure/Structure.java
++++ b/net/minecraft/world/level/levelgen/structure/Structure.java
+@@ -252,6 +252,10 @@ public abstract class Structure {
+         }
+ 
+         private static WorldgenRandom makeRandom(long seed, ChunkPos chunkPos) {
++            net.minecraft.util.RandomSource protectedRandom = com.latticemc.lattice.worldgen.SeedProtection.forCurrentStructure("generation", chunkPos.x, chunkPos.z, 0L);
++            if (protectedRandom != null) {
++                return new WorldgenRandom(protectedRandom);
++            }
+             WorldgenRandom worldgenRandom = new WorldgenRandom(new LegacyRandomSource(0L));
+             worldgenRandom.setLargeFeatureSeed(seed, chunkPos.x, chunkPos.z);
+             return worldgenRandom;

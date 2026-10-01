@@ -1,0 +1,32 @@
+From 1f4b97873bde5b4429a2bf2c28292f769d5249bb Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 2 Oct 2026 06:21:53 +0800
+Subject: [PATCH] feat(worldgen): protect structure piece placement streams
+
+---
+ .../level/levelgen/structure/StructureStart.java     | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/net/minecraft/world/level/levelgen/structure/StructureStart.java b/net/minecraft/world/level/levelgen/structure/StructureStart.java
+index 063d79e..6acb970 100644
+--- a/net/minecraft/world/level/levelgen/structure/StructureStart.java
++++ b/net/minecraft/world/level/levelgen/structure/StructureStart.java
+@@ -85,6 +85,18 @@ public final class StructureStart {
+     public void placeInChunk(
+         WorldGenLevel level, StructureManager structureManager, ChunkGenerator generator, RandomSource random, BoundingBox box, ChunkPos chunkPos
+     ) {
++        String structureKey = level.registryAccess().lookupOrThrow(Registries.STRUCTURE)
++            .getResourceKey(this.structure)
++            .map(key -> key.identifier().toString())
++            .orElse(null);
++        RandomSource protectedRandom = structureKey == null
++            ? null
++            : com.latticemc.lattice.worldgen.SeedProtection.forStructure(
++                level.getMinecraftWorld(), structureKey, "piece-placement", chunkPos.x, chunkPos.z, this.chunkPos.toLong()
++            );
++        if (protectedRandom != null) {
++            random = protectedRandom;
++        }
+         List<StructurePiece> list = this.pieceContainer.pieces();
+         if (!list.isEmpty()) {
+             BoundingBox boundingBox = list.get(0).boundingBox;

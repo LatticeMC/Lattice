@@ -23,6 +23,7 @@ import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 public final class LatticeConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("LatticeConfig");
     private static final Path DEFAULT_PATH = Path.of("lattice.yml");
+    private static volatile SeedProtectionConfig seedProtection = SeedProtectionConfig.defaults();
 
     private static final List<Setting> SETTINGS = List.of(
             bool("global.disable-native", "lattice.disable", false, "Disable all Lattice native acceleration."),
@@ -116,6 +117,7 @@ public final class LatticeConfig {
     public static void preload(Path path) {
         CommentedConfigurationNode root = load(path);
         warnUnknownKeys(root, "");
+        seedProtection = SeedProtectionConfig.parse(root);
         for (Setting setting : SETTINGS) {
             String explicit = System.getProperty(setting.property());
             if (explicit != null) {
@@ -130,6 +132,10 @@ public final class LatticeConfig {
             String resolved = raw == null ? setting.defaultValue() : setting.parse(raw.toString(), setting.path());
             System.setProperty(setting.property(), resolved == null ? setting.defaultValue() : resolved);
         }
+    }
+
+    public static SeedProtectionConfig seedProtection() {
+        return seedProtection;
     }
 
     static List<String> managedProperties() {
@@ -187,6 +193,21 @@ public final class LatticeConfig {
                     .append('\n');
             previous = current;
         }
+        output.append("\n# AES-backed structure random streams. Changes require a server restart.\n")
+                .append("worldgen:\n")
+                .append("  seed-protection:\n")
+                .append("    algorithm: 'aes-256-ctr-hkdf-sha256-v1'\n")
+                .append("    master-key-file: 'config/lattice/seed-protection.key'\n")
+                .append("    require-hardware-aes: false\n")
+                .append("    default:\n")
+                .append("      enabled: false\n")
+                .append("      structures:\n")
+                .append("        include:\n")
+                .append("          - '#lattice:underground_structures'\n")
+                .append("        exclude: []\n")
+                .append("    worlds:\n")
+                .append("      by-uuid: {}\n")
+                .append("      by-name: {}\n");
         Files.writeString(path, output.toString());
     }
 
@@ -194,6 +215,9 @@ public final class LatticeConfig {
         for (var entry : node.childrenMap().entrySet()) {
             String path = prefix.isEmpty() ? String.valueOf(entry.getKey()) : prefix + '.' + entry.getKey();
             CommentedConfigurationNode child = (CommentedConfigurationNode) entry.getValue();
+            if (path.equals("worldgen.seed-protection") || path.startsWith("worldgen.seed-protection.")) {
+                continue;
+            }
             if (child.childrenMap().isEmpty()) {
                 if (!SETTING_PATHS.contains(path)) {
                     LOGGER.warn("Unknown key '{}' in lattice.yml; keeping it unchanged", path);
