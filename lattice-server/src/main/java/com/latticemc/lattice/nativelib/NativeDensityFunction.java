@@ -1291,6 +1291,27 @@ public final class NativeDensityFunction {
         UNSUPPORTED.computeIfAbsent(name, ignored -> new LongAdder()).increment();
     }
 
+    /** 独立构图的编译覆盖统计；不安装程序、不改变生产开关或复用线程缓存。 */
+    public static CompilerStats compilerStats(DensityFunction function) {
+        long handle = createArena();
+        if (handle == 0L) throw new OutOfMemoryError("density compiler stats arena");
+        try {
+            int root = new Compiler(handle, function, false, true).compile(function);
+            if (root < 0) return new CompilerStats(false, -1, root, 0, 0);
+            long[] values = nativeGetCompilerStats(handle, root);
+            if (values == null || values.length != 4) throw new IllegalStateException("Invalid density compiler stats");
+            return new CompilerStats(true, (int) values[0], (int) values[1], values[2], values[3]);
+        } finally {
+            destroyArena(handle);
+            java.lang.ref.Reference.reachabilityFence(function);
+        }
+    }
+
+    public record CompilerStats(boolean arenaBuilt, int error, int errorNode, long instructions, long opaqueOps) {
+        public boolean compiled() { return arenaBuilt && error == 0; }
+        public double opaqueRatio() { return instructions == 0 ? Double.NaN : (double) opaqueOps / instructions; }
+    }
+
     private static NativeDensityFunction compileNew(DensityFunction function) {
         return compileNew(function, false);
     }
@@ -2484,6 +2505,7 @@ public final class NativeDensityFunction {
         private final long handle;
         private final DensityFunction root;
         private final boolean directCell;
+        private final boolean diagnosticsOnly;
         private final Map<DensityFunction, Integer> refs = new IdentityHashMap<>();
         private final Map<ExpensiveLeafKey, Integer> expensiveLeafRefs = new HashMap<>();
         private final List<InterpolatorBinding> interpolators = new ArrayList<>();
@@ -2493,9 +2515,14 @@ public final class NativeDensityFunction {
         private int directExpensiveNodeCount;
 
         private Compiler(long handle, DensityFunction root, boolean directCell) {
+            this(handle, root, directCell, false);
+        }
+
+        private Compiler(long handle, DensityFunction root, boolean directCell, boolean diagnosticsOnly) {
             this.handle = handle;
             this.root = root;
             this.directCell = directCell;
+            this.diagnosticsOnly = diagnosticsOnly;
         }
 
         private int compile(DensityFunction function) {
@@ -2658,7 +2685,7 @@ public final class NativeDensityFunction {
                     int slot = cacheSlot(handle, ref);
                     if (slot < 0) return -1;
                     interpolators.add(new InterpolatorBinding(access, slot));
-                    access.lattice$setNativeSlot(slot);
+                    if (!diagnosticsOnly) access.lattice$setNativeSlot(slot);
                 }
                 return ref;
             }
@@ -2850,6 +2877,7 @@ public final class NativeDensityFunction {
     private static native void nativeSetSegmentedMixedRangeEnabled(long cacheHandle, boolean enabled);
     private static native void nativeResetExecutionStats(long cacheHandle);
     private static native long[] nativeGetExecutionStats(long cacheHandle);
+    private static native long[] nativeGetCompilerStats(long handle, int root);
     private static native void nativeEvaluateGrid(long handle, long cacheHandle, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateGridRoots(long handle, long cacheHandle, int[] roots, int count, double x0, double y0, double z0, double dx, double dy, double dz, int cellX0, int cellZ0, int nx, int ny, int nz, double[] out);
     private static native void nativeEvaluateYColumn(long handle, long cacheHandle, double x, double y0, double z, double dy, int cellX, int cellZ, int ny, double[] out);

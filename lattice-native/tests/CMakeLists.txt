@@ -27,6 +27,12 @@ function(lattice_add_test name)
     endif()
     set(target_name "lattice_test_${name}")
     add_executable(${target_name} ${ARG_SOURCES} ${ARG_DEPS_SRC})
+    # All recursive density consumers now also link the installed compiler.
+    set(density_evaluator "${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp")
+    set(density_compiler "${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/df_compile.cpp")
+    if(density_evaluator IN_LIST ARG_DEPS_SRC AND NOT density_compiler IN_LIST ARG_DEPS_SRC)
+        target_sources(${target_name} PRIVATE "${density_compiler}")
+    endif()
     target_link_libraries(${target_name} PRIVATE doctest::doctest)
     target_include_directories(${target_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/include

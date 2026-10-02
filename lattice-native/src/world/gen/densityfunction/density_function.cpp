@@ -537,7 +537,7 @@ float evaluate_spline_impl(const NodeArena& arena, const Spline& s,
     if (s.kind == SplineKind::kFixedFloat) return s.fixed_value;
     // Implementation: location_function evaluated as a normal DF.
     const double f_d = (s.location_function >= 0)
-        ? evaluate(arena, static_cast<NodeRef>(s.location_function), ctx)
+        ? evaluate_node(arena, static_cast<NodeRef>(s.location_function), ctx)
         : 0.0;
     const float  f   = static_cast<float>(f_d);
 
@@ -577,62 +577,68 @@ float evaluate_spline(const NodeArena& arena, SplineRef ref,
 } // namespace
 
 double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexcept {
-    if (root < 0 || root >= static_cast<NodeRef>(arena.nodes.size())) return 0.0;
     if (arena.compiled_program && root == arena.compiled_program_root) {
-        return dfc::evaluate(*arena.compiled_program, ctx);
+        return dfc::evaluate(*arena.compiled_program, arena, ctx);
     }
+    return evaluate_node(arena, root, ctx);
+}
+
+double evaluate_node(const NodeArena& arena, NodeRef root, const Context& ctx) noexcept {
+    if (root < 0 || root >= static_cast<NodeRef>(arena.nodes.size())) return 0.0;
     const Node& n = arena.nodes[root];
     switch (n.kind) {
         case NodeKind::kConstant:
             return eval_const(n);
 
         case NodeKind::kAbs: {
-            const double v = evaluate(arena, n.a, ctx);
+            const double v = evaluate_node(arena, n.a, ctx);
             return std::abs(v);
         }
         case NodeKind::kSquare: {
-            const double v = evaluate(arena, n.a, ctx);
+            const double v = evaluate_node(arena, n.a, ctx);
             return v * v;
         }
         case NodeKind::kCube: {
-            const double v = evaluate(arena, n.a, ctx);
+            const double v = evaluate_node(arena, n.a, ctx);
             return v * v * v;
         }
         case NodeKind::kHalfNegative: {
-            return half_negative(evaluate(arena, n.a, ctx));
+            return half_negative(evaluate_node(arena, n.a, ctx));
         }
         case NodeKind::kQuarterNegative: {
-            return quarter_negative(evaluate(arena, n.a, ctx));
+            return quarter_negative(evaluate_node(arena, n.a, ctx));
         }
         case NodeKind::kInvert: {
-            return 1.0 / evaluate(arena, n.a, ctx);
+            return 1.0 / evaluate_node(arena, n.a, ctx);
         }
         case NodeKind::kSqueeze: {
-            return squeeze(evaluate(arena, n.a, ctx));
+            return squeeze(evaluate_node(arena, n.a, ctx));
         }
 
         case NodeKind::kAdd: {
             if (n.a == n.b) {
-                const double value = evaluate(arena, n.a, ctx);
+                const double value = evaluate_node(arena, n.a, ctx);
                 return value + value;
             }
-            return evaluate(arena, n.a, ctx) + evaluate(arena, n.b, ctx);
+            const double left = evaluate_node(arena, n.a, ctx);
+            const double right = evaluate_node(arena, n.b, ctx);
+            return left + right;
         }
         case NodeKind::kMul: {
-            const double left = evaluate(arena, n.a, ctx);
+            const double left = evaluate_node(arena, n.a, ctx);
             if (n.a == n.b) return left * left;
-            return left == 0.0 ? 0.0 : left * evaluate(arena, n.b, ctx);
+            return left == 0.0 ? 0.0 : left * evaluate_node(arena, n.b, ctx);
         }
         case NodeKind::kMin: {
-            if (n.a == n.b) return evaluate(arena, n.a, ctx);
-            const double a = evaluate(arena, n.a, ctx);
-            const double b = evaluate(arena, n.b, ctx);
+            if (n.a == n.b) return evaluate_node(arena, n.a, ctx);
+            const double a = evaluate_node(arena, n.a, ctx);
+            const double b = evaluate_node(arena, n.b, ctx);
             return std::min(a, b);
         }
         case NodeKind::kMax: {
-            if (n.a == n.b) return evaluate(arena, n.a, ctx);
-            const double a = evaluate(arena, n.a, ctx);
-            const double b = evaluate(arena, n.b, ctx);
+            if (n.a == n.b) return evaluate_node(arena, n.a, ctx);
+            const double a = evaluate_node(arena, n.a, ctx);
+            const double b = evaluate_node(arena, n.b, ctx);
             return std::max(a, b);
         }
 
@@ -641,23 +647,23 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
         }
 
         case NodeKind::kMapRange: {
-            const double input = evaluate(arena, n.a, ctx);
+            const double input = evaluate_node(arena, n.a, ctx);
             return map_range(input, n.d0, n.d1, n.d2, n.d3);
         }
 
         case NodeKind::kLerp: {
-            const double t    = evaluate(arena, n.a, ctx);
-            const double low  = evaluate(arena, n.b, ctx);
-            const double high = evaluate(arena, n.c, ctx);
+            const double t    = evaluate_node(arena, n.a, ctx);
+            const double low  = evaluate_node(arena, n.b, ctx);
+            const double high = evaluate_node(arena, n.c, ctx);
             return lerp(t, low, high);
         }
 
         case NodeKind::kRangeChoice: {
-            const double input = evaluate(arena, n.a, ctx);
+            const double input = evaluate_node(arena, n.a, ctx);
             if (input >= n.d0 && input < n.d1) {
-                return evaluate(arena, n.b, ctx);
+                return evaluate_node(arena, n.b, ctx);
             } else {
-                return evaluate(arena, n.c, ctx);
+                return evaluate_node(arena, n.c, ctx);
             }
         }
 
@@ -672,9 +678,9 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             if (!n.noise_ptr) return 0.0;
             // n.d0 = scaleXZ, n.d1 = scaleY
             // operands: a = shiftX function, b = shiftY function, c = shiftZ function
-            const double sx = evaluate(arena, n.a, ctx);
-            const double sy = evaluate(arena, n.b, ctx);
-            const double sz = evaluate(arena, n.c, ctx);
+            const double sx = evaluate_node(arena, n.a, ctx);
+            const double sy = evaluate_node(arena, n.b, ctx);
+            const double sz = evaluate_node(arena, n.c, ctx);
             return noise::sample(*n.noise_ptr,
                                   ctx.x * n.d0 + sx,
                                   ctx.y * n.d1 + sy,
@@ -706,7 +712,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             // (e.g. unit tests), the node degrades to passthrough.
             if (!ctx.cache || n.cache_slot_id < 0
                 || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_2d.size())) {
-                return evaluate(arena, n.a, ctx);
+                return evaluate_node(arena, n.a, ctx);
             }
             auto& slot = ctx.cache->cache_2d[n.cache_slot_id];
             const int kx = floor_to_int(ctx.x);
@@ -714,20 +720,20 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             if (slot.valid && slot.x == kx && slot.z == kz) {
                 return slot.value;
             }
-            const double v = evaluate(arena, n.a, ctx);
+            const double v = evaluate_node(arena, n.a, ctx);
             slot.valid = true; slot.x = kx; slot.z = kz; slot.value = v;
             return v;
         }
         case NodeKind::kCacheOnce: {
             if (!ctx.cache || n.cache_slot_id < 0
                 || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_once.size())) {
-                return evaluate(arena, n.a, ctx);
+                return evaluate_node(arena, n.a, ctx);
             }
             auto& slot = ctx.cache->cache_once[n.cache_slot_id];
             if (slot.valid && slot.x == ctx.x && slot.y == ctx.y && slot.z == ctx.z) {
                 return slot.value;
             }
-            const double v = evaluate(arena, n.a, ctx);
+            const double v = evaluate_node(arena, n.a, ctx);
             slot.valid = true;
             slot.x = ctx.x; slot.y = ctx.y; slot.z = ctx.z; slot.value = v;
             return v;
@@ -735,7 +741,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
         case NodeKind::kCacheAllInCell: {
             if (!ctx.cache || n.cache_slot_id < 0
                 || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_all_in_cell.size())) {
-                return evaluate(arena, n.a, ctx);
+                return evaluate_node(arena, n.a, ctx);
             }
             const int slot_id = n.cache_slot_id;
             if (slot_id < static_cast<int>(ctx.cache->cache_all_in_cell_arrays.size())) {
@@ -762,20 +768,20 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
                 | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ctx.cellZ) & 0xFFFFFFu) << 16)
                 | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(static_cast<int>(ctx.y)) & 0xFFFFu));
             if (double* cached = bucket.find(key)) return *cached;
-            const double v = evaluate(arena, n.a, ctx);
+            const double v = evaluate_node(arena, n.a, ctx);
             bucket.get_or_insert(key) = v;
             return v;
         }
         case NodeKind::kFlatCache: {
             if (!ctx.cache || n.cache_slot_id < 0
                 || n.cache_slot_id >= static_cast<int>(ctx.cache->flat_cache.size())) {
-                return evaluate(arena, n.a, ctx);
+                return evaluate_node(arena, n.a, ctx);
             }
             auto& slot = ctx.cache->flat_cache[n.cache_slot_id];
             if (slot.valid && slot.cellX == ctx.cellX && slot.cellZ == ctx.cellZ) {
                 return slot.value;
             }
-            const double v = evaluate(arena, n.a, ctx);
+            const double v = evaluate_node(arena, n.a, ctx);
             slot.valid = true; slot.cellX = ctx.cellX; slot.cellZ = ctx.cellZ;
             slot.value = v;
             return v;
@@ -799,19 +805,19 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             if (!ctx.cache || !ctx.cache->is_in_interpolation_loop
                 || n.cache_slot_id < 0
                 || n.cache_slot_id >= static_cast<int>(ctx.cache->interpolators.size())) {
-                return evaluate(arena, n.a, ctx);
+                return evaluate_node(arena, n.a, ctx);
             }
             return ctx.cache->interpolators[n.cache_slot_id].result;
         }
 
         case NodeKind::kWeirdScaledSampler: {
-            if (!n.noise_ptr) return evaluate(arena, n.a, ctx);
+            if (!n.noise_ptr) return evaluate_node(arena, n.a, ctx);
             // Mojang's `WeirdScaledSampler` applies a rarity-value
             // mapper to the input, then samples noise at coordinates
             // scaled by that mapper. The two mappers (Type1 / Type2)
             // produce different rarity → scale curves; we replicate
             // both. n.d0 selects the type: 0 = Type1, 1 = Type2.
-            const double input = evaluate(arena, n.a, ctx);
+            const double input = evaluate_node(arena, n.a, ctx);
             const int    type  = static_cast<int>(n.d0);
             // RarityValueMapper rarities, vanilla constants:
             const double rarity = (type == 1)
@@ -859,7 +865,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
         case NodeKind::kClamp: {
             // Mojang `Clamp.apply(density)`: MathHelper.clamp(input, min, max).
             // n.d0 = min, n.d1 = max.
-            const double v = evaluate(arena, n.a, ctx);
+            const double v = evaluate_node(arena, n.a, ctx);
             return clamp_d(v, n.d0, n.d1);
         }
 
@@ -875,7 +881,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
         case NodeKind::kBlendDensity: {
             // BlendDensity dispatches to `pos.getBlender().applyBlendDensity(pos, input)`.
             // Under NO_BLENDING that's a passthrough (Blender.java:48-50).
-            return evaluate(arena, n.a, ctx);
+            return evaluate_node(arena, n.a, ctx);
         }
 
         case NodeKind::kSpline: {
@@ -903,7 +909,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             const int    cell_height = n.i1;
             if (cell_height <= 0) return static_cast<double>(lower_bound);
 
-            const double upper = evaluate(arena, n.b, ctx);
+            const double upper = evaluate_node(arena, n.b, ctx);
             const int i = static_cast<int>(std::floor(upper / static_cast<double>(cell_height)))
                           * cell_height;
             if (i <= lower_bound) return static_cast<double>(lower_bound);
@@ -911,7 +917,7 @@ double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexce
             Context inner = ctx;
             for (int j = i; j >= lower_bound; j -= cell_height) {
                 inner.y = static_cast<double>(j);
-                const double d = evaluate(arena, n.a, inner);
+                const double d = evaluate_node(arena, n.a, inner);
                 if (d > 0.0) return static_cast<double>(j);
             }
             return static_cast<double>(lower_bound);

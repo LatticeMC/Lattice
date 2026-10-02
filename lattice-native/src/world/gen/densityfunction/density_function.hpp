@@ -269,7 +269,7 @@ struct NodeArena {
     std::vector<NodeRef> batch_roots;
 
     // Optional flat program installed after the tree is frozen. The program
-    // is used only when evaluating compiled_program_root; unsupported trees
+    // is used only when evaluating compiled_program_root; invalid trees
     // leave this empty and continue through the recursive evaluator.
     std::shared_ptr<const dfc::Program> compiled_program;
     NodeRef compiled_program_root = kNullRef;
@@ -753,6 +753,11 @@ struct Context {
 /// Evaluate a specific sub-tree.
 [[nodiscard]] double evaluate(const NodeArena& arena, NodeRef root,
                               const Context& ctx) noexcept;
+
+/// Recursive oracle and opaque-subtree entry. Never dispatches a Program,
+/// including when root is the arena's installed program root.
+[[nodiscard]] double evaluate_node(const NodeArena& arena, NodeRef root,
+                                   const Context& ctx) noexcept;
 
 /// Scalar branch selection for an already-evaluated mixed RangeChoice input
 /// column. This follows the same per-Y context and comparison as point

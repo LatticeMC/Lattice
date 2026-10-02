@@ -47,6 +47,8 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         System.out.printf("cpu=%s seed=%d warmup=%d samples=%d workItems=%s workers=%s%n",
             LatticeNative.cpuSummary(), config.seed, config.warmupRounds, config.sampleCount,
             Arrays.toString(config.workItems), Arrays.toString(config.workers));
+        printCompilerCoverage(config.seed);
+        if (config.coverageOnly) return;
         System.out.println("lifecycle cold=fresh worker+RandomState per sample; hot=reused worker+RandomState per mode.");
         System.out.println("Each work item owns its NoiseChunk, native cache and output buffers; workers never share mutable worldgen state.");
         System.out.println("path=grid uses preliminary surface grid; slice initializes one complete Overworld slice; column walks one X column of CacheAllInCell state.");
@@ -60,6 +62,10 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             shape.cellWidth, shape.cellHeight, shape.cellCountXZ, shape.cellCountY, shape.yRows, shape.zRows,
             shape.interpolatorRoots, shape.cacheRoots);
         verifyParity(config, shape);
+        if (config.verifyOnly) {
+            System.out.println("PARITY_RESULT modes=eager,lazy status=passed scope=observed-native-calls; see per-path coverage");
+            return;
+        }
 
         for (final Path path : Path.values()) {
             for (final int workers : config.workers) {
@@ -70,6 +76,35 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                 }
             }
         }
+    }
+
+    private static void printCompilerCoverage(final long seed) throws Exception {
+        final RandomState random = RandomState.create(registries, NoiseGeneratorSettings.OVERWORLD, seed);
+        final NoiseSettings noise = settings.noiseSettings();
+        final Shape shape = new Shape(noise.getCellWidth(), noise.getCellHeight(), 16 / noise.getCellWidth(),
+            noise.height() / noise.getCellHeight(), 0, 0, 0, 0);
+        final NoiseChunk chunk = newChunk(random, 0, shape);
+        final NoiseRouter router = random.router().mapAll(chunk::wrap);
+        System.out.println("compiler source=vanilla-overworld wrapped=NoiseChunk blender=empty; error: -1=java-arena, 0=none, 1=root, 2=unsupported, 3=operand");
+        int roots = 0;
+        int compiled = 0;
+        long instructions = 0;
+        long opaque = 0;
+        for (final var component : NoiseRouter.class.getRecordComponents()) {
+            final DensityFunction function = (DensityFunction) component.getAccessor().invoke(router);
+            final var stats = NativeDensityFunction.compilerStats(function);
+            roots++;
+            if (stats.compiled()) compiled++;
+            instructions += stats.instructions();
+            opaque += stats.opaqueOps();
+            System.out.printf("COMPILER root=%s arena-built=%s compiled=%s error=%d error-node=%d instructions=%d opaque=%d opaque-ratio=%.6f%n",
+                component.getName(), stats.arenaBuilt(), stats.compiled(), stats.error(), stats.errorNode(),
+                stats.instructions(), stats.opaqueOps(), stats.opaqueRatio());
+        }
+        final double coverage = roots == 0 ? 0.0 : (double) compiled / roots;
+        final double opaqueRatio = instructions == 0 ? Double.NaN : (double) opaque / instructions;
+        System.out.printf("COMPILER_SUMMARY roots=%d compiled=%d compile-ratio=%.6f instructions=%d opaque=%d opaque-ratio=%.6f target-met=%s%n",
+            roots, compiled, coverage, instructions, opaque, opaqueRatio, coverage >= 0.9 && opaqueRatio <= 0.3);
     }
 
     private static void bootstrap() {
@@ -90,13 +125,15 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         for (final boolean lazyMixedRange : new boolean[] {false, true}) {
             configureNative(true, true, lazyMixedRange, false, false);
             NativeDensityFunction.setIntOption("parityInterval", 1);
-            NativeDensityFunction.resetStats();
             for (final Path path : Path.values()) {
+                NativeDensityFunction.resetStats();
                 execute(path, config.seed, 0, shape);
-            }
-            final String status = NativeDensityFunction.status();
-            if (!status.contains("parity={checks=") || !status.contains("failures=0")) {
-                throw new IllegalStateException("Native worldgen parity failed or was unavailable: " + status);
+                final String status = NativeDensityFunction.status();
+                if (!status.contains("parity={checks=") || status.contains("parity={checks=0,") || !status.contains("failures=0")) {
+                    throw new IllegalStateException("Native worldgen parity failed or was unavailable for " + path + ": " + status);
+                }
+                System.out.printf("PARITY mode=%s path=%s coverage=%s status=%s%n",
+                    lazyMixedRange ? "lazy" : "eager", path, coverage(path, status), status);
             }
         }
         configureNative(false, false, false, false, false);
@@ -453,7 +490,8 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         }
     }
 
-    private record Config(int warmupRounds, int sampleCount, int coldSamples, long seed, int[] workItems, int[] workers) {
+    private record Config(int warmupRounds, int sampleCount, int coldSamples, long seed, int[] workItems, int[] workers,
+                          boolean coverageOnly, boolean verifyOnly) {
         static Config parse(final String[] args) {
             int warmup = 4;
             int samples = 9;
@@ -461,6 +499,8 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             long seed = DEFAULT_SEED;
             int[] workItems = DEFAULT_WORK_ITEMS;
             int[] workers = DEFAULT_WORKERS;
+            boolean coverageOnly = false;
+            boolean verifyOnly = false;
             for (final String argument : args) {
                 if (argument.startsWith("--warmup=")) warmup = positive(argument, "--warmup=");
                 else if (argument.startsWith("--samples=")) samples = positive(argument, "--samples=");
@@ -468,9 +508,11 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                 else if (argument.startsWith("--seed=")) seed = Long.parseLong(argument.substring("--seed=".length()));
                 else if (argument.startsWith("--work-items=")) workItems = list(argument, "--work-items=");
                 else if (argument.startsWith("--workers=")) workers = list(argument, "--workers=");
+                else if (argument.equals("--coverage-only")) coverageOnly = true;
+                else if (argument.equals("--verify-only")) verifyOnly = true;
                 else throw new IllegalArgumentException("Unknown benchmark argument: " + argument);
             }
-            return new Config(warmup, samples, coldSamples, seed, workItems, workers);
+            return new Config(warmup, samples, coldSamples, seed, workItems, workers, coverageOnly, verifyOnly);
         }
 
         private static int positive(final String argument, final String prefix) {

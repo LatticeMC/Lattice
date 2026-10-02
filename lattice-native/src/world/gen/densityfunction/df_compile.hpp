@@ -28,6 +28,15 @@ enum class Op : std::uint8_t {
     kMapRange,
     kLerp,
     kClamp,
+    kOpaqueNoise,
+    kOpaqueCache,
+    kOpaqueInterpolated,
+    kOpaqueSpline,
+    kOpaqueBeardifier,
+    kOpaqueBlend,
+    kOpaqueFindTopSurface,
+    kOpaqueRangeChoice,
+    kOpaqueMul,
 };
 
 struct Instr {
@@ -40,12 +49,20 @@ struct Instr {
     double imm1 = 0.0;
     double imm2 = 0.0;
     double imm3 = 0.0;
+    NodeRef ref = kNullRef;
 };
 
 struct Program {
     std::vector<Instr> code;
     std::uint32_t value_count = 0;
     std::uint32_t result = 0;
+
+    [[nodiscard]] std::size_t opaque_count() const noexcept {
+        std::size_t count = 0;
+        // Opaque operations follow the original scalar operations.
+        for (const Instr& instr : code) count += instr.op > Op::kClamp;
+        return count;
+    }
 };
 
 enum class CompileError : std::uint8_t {
@@ -65,17 +82,18 @@ struct CompileResult {
     }
 };
 
-/// Compile only pure, stateless nodes. Cache/noise/spline/interpolator nodes
-/// are rejected so flattening cannot change evaluation side effects.
+/// Compile arithmetic around opaque recursive subtrees. Only fully pure
+/// subtrees may reuse values. The source arena must stay frozen during use.
 [[nodiscard]] CompileResult compile(const NodeArena& arena, NodeRef root) noexcept;
 
-/// Compile and install a pure program on an arena after construction. Returns
-/// false for unsupported or invalid graphs; the arena remains on the recursive
+/// Compile and install a hybrid program on an arena after construction. Returns
+/// false for unknown kinds or invalid graphs; the arena remains on the recursive
 /// evaluator in that case.
 [[nodiscard]] bool install(NodeArena& arena, NodeRef root) noexcept;
 
-[[nodiscard]] double evaluate(const Program& program, const Context& ctx) noexcept;
-[[nodiscard]] double evaluate(const Program& program, const Context& ctx,
+/// Pass the arena from which program was compiled (or its unchanged copy).
+[[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx) noexcept;
+[[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
                               double* values, std::size_t value_capacity) noexcept;
 
 [[nodiscard]] const char* compile_error_name(CompileError error) noexcept;

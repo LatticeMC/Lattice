@@ -1,7 +1,9 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <bit>
+#include <array>
 #include <cstdint>
 #include <limits>
+#include <random>
 #include <string>
 
 #include <doctest/doctest.h>
@@ -39,6 +41,25 @@ NodeRef binary(NodeArena& arena, NodeKind kind, NodeRef left, NodeRef right) {
     return arena.push(n);
 }
 
+NodeRef gradient(NodeArena& arena) {
+    Node n{};
+    n.kind = NodeKind::kYClampedGradient;
+    n.i0 = -16; n.i1 = 16; n.d0 = -16; n.d1 = 16;
+    return arena.push(n);
+}
+
+void check_once_cache(const CacheState& actual, const CacheState& expected) {
+    REQUIRE(actual.cache_once.size() == expected.cache_once.size());
+    for (std::size_t i = 0; i < actual.cache_once.size(); ++i) {
+        const auto& a = actual.cache_once[i];
+        const auto& b = expected.cache_once[i];
+        CHECK(a.valid == b.valid);
+        if (!a.valid || !b.valid) continue;
+        CHECK(bits(a.x) == bits(b.x)); CHECK(bits(a.y) == bits(b.y)); CHECK(bits(a.z) == bits(b.z));
+        CHECK(bits(a.value) == bits(b.value));
+    }
+}
+
 } // namespace
 
 TEST_CASE("density compiler: flattened arithmetic preserves bits") {
@@ -56,7 +77,7 @@ TEST_CASE("density compiler: flattened arithmetic preserves bits") {
     CHECK(compiled.program.value_count == 1);
 
     const Context ctx{17.0, -31.0, 5.0};
-    CHECK(bits(dfc::evaluate(compiled.program, ctx)) == bits(evaluate(arena, ctx)));
+    CHECK(bits(dfc::evaluate(compiled.program, arena, ctx)) == bits(evaluate(arena, ctx)));
 }
 
 TEST_CASE("density compiler: coordinate and scalar transforms preserve bits") {
@@ -80,7 +101,7 @@ TEST_CASE("density compiler: coordinate and scalar transforms preserve bits") {
     const dfc::CompileResult compiled = dfc::compile(arena, root);
     REQUIRE(compiled);
     for (const Context ctx : {Context{0.0, -64.0, 0.0}, Context{0.0, 0.0, 0.0}, Context{0.0, 128.0, 0.0}}) {
-        CHECK(bits(dfc::evaluate(compiled.program, ctx)) == bits(evaluate(arena, ctx)));
+        CHECK(bits(dfc::evaluate(compiled.program, arena, ctx)) == bits(evaluate(arena, ctx)));
     }
 }
 
@@ -135,7 +156,7 @@ TEST_CASE("density compiler: nonconstant instruction stream preserves bits") {
     for (const Context ctx : {Context{0.0, -20.0, 0.0}, Context{0.0, -5.0, 0.0},
                               Context{0.0, 0.0, 0.0}, Context{0.0, 7.0, 0.0},
                               Context{0.0, 20.0, 0.0}}) {
-        CHECK(bits(dfc::evaluate(compiled.program, ctx)) == bits(evaluate(arena, ctx)));
+        CHECK(bits(dfc::evaluate(compiled.program, arena, ctx)) == bits(evaluate(arena, ctx)));
     }
 }
 
@@ -156,7 +177,7 @@ TEST_CASE("density compiler: DAG reuse and dead nodes are compacted") {
     REQUIRE(compiled);
     CHECK(compiled.program.code.size() == 2);
     CHECK(compiled.program.value_count == 2);
-    CHECK(bits(dfc::evaluate(compiled.program, Context{0.0, 4.0, 0.0}))
+    CHECK(bits(dfc::evaluate(compiled.program, arena, Context{0.0, 4.0, 0.0}))
           == bits(evaluate(arena, Context{0.0, 4.0, 0.0})));
 }
 
@@ -181,7 +202,7 @@ TEST_CASE("density compiler: installed program is used by the production evaluat
     CHECK(bits(evaluate(arena, ctx)) == recursive_bits);
 }
 
-TEST_CASE("density compiler: unsupported stateful nodes fail explicitly") {
+TEST_CASE("density compiler: opaque root installs without recursive redispatch") {
     NodeArena arena;
     const NodeRef value = constant(arena, 2.0);
     Node cache{};
@@ -190,9 +211,11 @@ TEST_CASE("density compiler: unsupported stateful nodes fail explicitly") {
     const NodeRef root = arena.push(cache);
 
     const dfc::CompileResult compiled = dfc::compile(arena, root);
-    CHECK_FALSE(compiled);
-    CHECK(compiled.error == dfc::CompileError::kUnsupportedNode);
-    CHECK(std::string(dfc::compile_error_name(compiled.error)) == "unsupported-node");
+    REQUIRE(compiled);
+    CHECK(compiled.program.code.size() == 1);
+    CHECK(compiled.program.opaque_count() == 1);
+    REQUIRE(dfc::install(arena, root));
+    CHECK(evaluate(arena, root, Context{0, 0, 0}) == 2.0);
 }
 
 TEST_CASE("density compiler: malformed roots and cycles fail explicitly") {
@@ -228,7 +251,7 @@ TEST_CASE("density compiler: clamp and squeeze preserve NaN and signed zero") {
     const dfc::CompileResult compiled = dfc::compile(arena, root);
     REQUIRE(compiled);
     const Context ctx{0.0, 0.0, 0.0};
-    CHECK(bits(dfc::evaluate(compiled.program, ctx)) == bits(evaluate(arena, ctx)));
+    CHECK(bits(dfc::evaluate(compiled.program, arena, ctx)) == bits(evaluate(arena, ctx)));
 
     NodeArena zero_arena;
     const NodeRef negative_zero = constant(zero_arena, -0.0);
@@ -236,5 +259,213 @@ TEST_CASE("density compiler: clamp and squeeze preserve NaN and signed zero") {
     zero_arena.root = squeeze_ref;
     const dfc::CompileResult zero_compiled = dfc::compile(zero_arena, squeeze_ref);
     REQUIRE(zero_compiled);
-    CHECK(bits(dfc::evaluate(zero_compiled.program, ctx)) == bits(evaluate(zero_arena, ctx)));
+    CHECK(bits(dfc::evaluate(zero_compiled.program, zero_arena, ctx)) == bits(evaluate(zero_arena, ctx)));
+}
+
+TEST_CASE("density compiler: mixed arithmetic folds constants without removing opaque calls") {
+    NodeArena arena;
+    const auto sum = binary(arena, NodeKind::kAdd, constant(arena, 2), constant(arena, 3));
+    const auto cached = unary(arena, NodeKind::kCacheOnce, gradient(arena));
+    const auto root = binary(arena, NodeKind::kAdd, sum, cached);
+    const auto compiled = dfc::compile(arena, root);
+    REQUIRE(compiled);
+    CHECK(compiled.program.code.size() == 3);
+    CHECK(compiled.program.opaque_count() == 1);
+    CHECK(compiled.program.code[0].op == dfc::Op::kConstant);
+    CHECK(compiled.program.code[0].imm0 == 5.0);
+    std::array<double, 3> scratch; // Intentionally uninitialised; no leaf reads operands.
+    CHECK(dfc::evaluate(compiled.program, arena, Context{0, 4, 0}, scratch.data(), scratch.size()) == 9.0);
+}
+
+TEST_CASE("density compiler: multiplication and range preserve lazy cache effects") {
+    for (const bool range : {false, true}) {
+        NodeArena arena;
+        const auto source = gradient(arena);
+        const auto in = unary(arena, NodeKind::kCacheOnce, constant(arena, 7));
+        const auto out = unary(arena, NodeKind::kCacheOnce, constant(arena, -3));
+        Node n{};
+        n.kind = range ? NodeKind::kRangeChoice : NodeKind::kMul;
+        n.a = source; n.b = in; n.c = out; n.d0 = 0; n.d1 = 1;
+        const auto root = arena.push(n);
+        REQUIRE(dfc::install(arena, root));
+        for (const double y : {-1.0, -0.0, 0.0, 0.5, 1.0}) {
+            CacheState expected, actual;
+            expected.resize_for(arena); actual.resize_for(arena);
+            const auto want = evaluate_node(arena, root, Context{1, y, 2, &expected});
+            const auto got = evaluate(arena, root, Context{1, y, 2, &actual});
+            CHECK(bits(got) == bits(want));
+            check_once_cache(actual, expected);
+            const bool choose_in = y >= 0 && y < 1;
+            CHECK(actual.cache_once[0].valid == (range ? choose_in : y != 0));
+            CHECK(actual.cache_once[1].valid == (range && !choose_in));
+        }
+    }
+}
+
+TEST_CASE("density compiler: repeated stateful DAG observes intervening coordinate changes") {
+    NodeArena arena;
+    const auto cached = unary(arena, NodeKind::kCacheOnce, gradient(arena));
+    const auto shared = unary(arena, NodeKind::kHalfNegative, cached);
+    Node find{};
+    find.kind = NodeKind::kFindTopSurface;
+    find.a = cached; find.b = constant(arena, 8); find.i0 = 0; find.i1 = 4;
+    const auto surface = arena.push(find);
+    Node lerp{};
+    lerp.kind = NodeKind::kLerp; lerp.a = shared; lerp.b = surface; lerp.c = shared;
+    const auto root = arena.push(lerp);
+    REQUIRE(dfc::install(arena, root));
+    CHECK(arena.compiled_program->opaque_count() == 3);
+    CacheState expected, actual;
+    expected.resize_for(arena); actual.resize_for(arena);
+    CHECK(bits(evaluate(arena, root, Context{1, 2, 3, &actual}))
+          == bits(evaluate_node(arena, root, Context{1, 2, 3, &expected})));
+    check_once_cache(actual, expected);
+    CHECK(actual.cache_once[0].y == 2);
+    CHECK(actual.cache_once[0].value == 2);
+}
+
+TEST_CASE("density compiler: cache hits never pre-evaluate wrapped inputs") {
+    for (const auto kind : {NodeKind::kCache2D, NodeKind::kCacheOnce, NodeKind::kFlatCache,
+                            NodeKind::kCacheAllInCell, NodeKind::kInterpolated}) {
+        NodeArena arena;
+        const auto inner = unary(arena, NodeKind::kCacheOnce, gradient(arena));
+        const auto root = unary(arena, kind, inner);
+        REQUIRE(dfc::install(arena, root));
+        CacheState expected, actual;
+        expected.resize_for(arena); actual.resize_for(arena);
+        const int slot = arena.nodes[root].cache_slot_id;
+        const std::array<double, 1> cell_values{123};
+        if (kind == NodeKind::kCacheAllInCell) {
+            for (auto* cache : {&actual, &expected}) {
+                cache->cache_all_in_cell_arrays[slot] = cell_values.data();
+                cache->cache_all_in_cell_array_lengths[slot] = cell_values.size();
+            }
+        }
+        if (kind == NodeKind::kInterpolated) {
+            for (auto* cache : {&actual, &expected}) {
+                cache->is_in_interpolation_loop = true;
+                cache->interpolators[slot].result = 456;
+            }
+        }
+        for (const double y : {2.0, 2.0, 3.0}) {
+            actual.cache_once[0].valid = false;
+            expected.cache_once[0].valid = false;
+            Context ac{1, y, 3, &actual, 0, 0, 0, 0, 0, 1, 1};
+            Context ec = ac; ec.cache = &expected;
+            CHECK(bits(evaluate(arena, root, ac)) == bits(evaluate_node(arena, root, ec)));
+            check_once_cache(actual, expected);
+            if (kind == NodeKind::kCacheAllInCell || kind == NodeKind::kInterpolated)
+                CHECK_FALSE(actual.cache_once[0].valid);
+        }
+        CHECK(bits(evaluate(arena, root, Context{1, 4, 3})) == bits(evaluate_node(arena, root, Context{1, 4, 3})));
+    }
+}
+
+TEST_CASE("density compiler: input-free cell leaf and moved arenas preserve source references") {
+    NodeArena arena;
+    Node n{}; n.kind = NodeKind::kCacheAllInCell;
+    arena.root = arena.push(n);
+    REQUIRE(dfc::install(arena, arena.root));
+    NodeArena copy = arena;
+    NodeArena moved = std::move(arena);
+    const std::array<double, 1> cell{19};
+    for (auto* source : {&copy, &moved}) {
+        CacheState cache; cache.resize_for(*source);
+        cache.cache_all_in_cell_arrays[0] = cell.data();
+        cache.cache_all_in_cell_array_lengths[0] = 1;
+        CHECK(evaluate(*source, Context{0, 0, 0, &cache, 0, 0, 0, 0, 0, 1, 1}) == 19);
+        CHECK(evaluate(*source, Context{0, 0, 0}) == 0);
+        constant(*source, 3);
+        CHECK_FALSE(source->compiled_program);
+    }
+}
+
+TEST_CASE("density compiler: same-ref binary operations preserve signed zero and NaN") {
+    for (const double value : {-0.0, 0.0, std::numeric_limits<double>::infinity(),
+                               std::numeric_limits<double>::quiet_NaN()}) {
+        for (const auto kind : {NodeKind::kAdd, NodeKind::kMul, NodeKind::kMin, NodeKind::kMax}) {
+            NodeArena arena;
+            const auto child = unary(arena, NodeKind::kCacheOnce, constant(arena, value));
+            const auto root = binary(arena, kind, child, child);
+            REQUIRE(dfc::install(arena, root));
+            CHECK(arena.compiled_program->opaque_count() == 1);
+            CHECK(bits(evaluate(arena, root, Context{0, 0, 0})) == bits(evaluate_node(arena, root, Context{0, 0, 0})));
+        }
+    }
+}
+
+TEST_CASE("density compiler: all opaque families preserve seeded arithmetic parity") {
+    namespace noise = lattice::world::gen::noise;
+    noise::PerlinNoiseSampler perlin{};
+    for (int i = 0; i < 256; ++i) perlin.permutation[i] = static_cast<std::uint8_t>(i * 23);
+    const std::array<noise::PerlinNoiseSampler, 1> octaves{perlin};
+    const std::array<double, 1> amplitudes{1};
+    noise::OctavePerlinNoiseSampler octave{octaves.data(), amplitudes.data(), 1, 1, 1};
+    noise::DoublePerlinNoiseSampler sampler{octave, octave, 1};
+    noise::SimplexNoiseSampler simplex{};
+    for (int i = 0; i < 256; ++i) simplex.permutation[i] = static_cast<std::uint8_t>(i * 23);
+    noise::InterpolatedNoiseSampler old_noise{&octave, &octave, &octave, 1, 1, 80, 160, 8};
+    beardifier::BeardifierData beard;
+    beard.junctions.push_back({2, 4, 6});
+    std::mt19937 random(0xDFC);
+    for (const auto kind : {NodeKind::kNoise, NodeKind::kShiftedNoise, NodeKind::kShiftA, NodeKind::kShiftB,
+                            NodeKind::kShift, NodeKind::kWeirdScaledSampler, NodeKind::kEndIslands,
+                            NodeKind::kInterpolatedNoise, NodeKind::kBeardifier, NodeKind::kBlendAlpha,
+                            NodeKind::kBlendOffset, NodeKind::kBlendDensity, NodeKind::kSpline}) {
+        NodeArena arena;
+        const auto y = gradient(arena);
+        Spline fixed{}; fixed.kind = SplineKind::kFixedFloat; fixed.fixed_value = 2;
+        const auto fixed_ref = arena.push_spline(fixed);
+        Spline spline{}; spline.kind = SplineKind::kImpl; spline.location_function = y;
+        spline.breakpoint_count = 1; spline.breakpoints_start = arena.reserve_spline_breakpoints(1);
+        arena.spline_breakpoints[0] = {0, 0.5f, fixed_ref};
+        Node n{}; n.kind = kind; n.a = y; n.b = constant(arena, 0); n.c = y;
+        n.d0 = 0.5; n.d1 = 0.25; n.noise_ptr = &sampler; n.simplex_ptr = &simplex;
+        n.interp_noise_ptr = &old_noise; n.beardifier_ptr = &beard; n.i0 = arena.push_spline(spline);
+        auto root = arena.push(n);
+        std::vector<NodeRef> refs{y, root};
+        for (int i = 0; i < 12; ++i) {
+            root = binary(arena, i % 2 == 0 ? NodeKind::kAdd : NodeKind::kMin,
+                          root, refs[random() % refs.size()]);
+            refs.push_back(root);
+        }
+        REQUIRE(dfc::install(arena, root));
+        CHECK(arena.compiled_program->opaque_count() > 0);
+        for (int i = 0; i < 32; ++i) {
+            const Context ctx{static_cast<double>(random() % 40), static_cast<double>(random() % 32) - 16,
+                              -static_cast<double>(random() % 40)};
+            CHECK(bits(evaluate(arena, root, ctx)) == bits(evaluate_node(arena, root, ctx)));
+        }
+    }
+}
+
+TEST_CASE("density compiler: validates operands and cycles inside opaque graphs") {
+    NodeArena arena;
+    Node n{}; n.kind = NodeKind::kCacheOnce; n.a = 99;
+    const auto root = arena.push(n);
+    CHECK(dfc::compile(arena, root).error == dfc::CompileError::kInvalidOperand);
+    arena.nodes[root].a = root;
+    CHECK(dfc::compile(arena, root).error == dfc::CompileError::kInvalidOperand);
+    arena.nodes[root].kind = static_cast<NodeKind>(255);
+    CHECK(dfc::compile(arena, root).error == dfc::CompileError::kUnsupportedNode);
+
+    NodeArena spline_arena;
+    Spline spline{}; spline.kind = SplineKind::kImpl; spline.breakpoint_count = 1;
+    spline.breakpoints_start = spline_arena.reserve_spline_breakpoints(1);
+    spline.location_function = 0;
+    const auto spline_ref = spline_arena.push_spline(spline);
+    spline_arena.spline_breakpoints[0] = {0, 0, spline_ref};
+    Node spline_node{}; spline_node.kind = NodeKind::kSpline; spline_node.i0 = spline_ref;
+    const auto spline_root = spline_arena.push(spline_node);
+    CHECK(dfc::compile(spline_arena, spline_root).error == dfc::CompileError::kInvalidOperand);
+    spline_arena.splines[0].breakpoint_count = 0;
+    CHECK(dfc::compile(spline_arena, spline_root).error == dfc::CompileError::kInvalidOperand);
+    spline_arena.splines[0].location_function = kNullRef;
+    REQUIRE(dfc::install(spline_arena, spline_root));
+    CHECK(evaluate(spline_arena, spline_root, Context{0, 0, 0}) == 0);
+    spline_arena.splines[0].breakpoint_count = 1;
+    spline_arena.splines[0].location_function = constant(spline_arena, 1);
+    CHECK(dfc::compile(spline_arena, spline_root).error == dfc::CompileError::kInvalidOperand);
+    spline_arena.splines[0].breakpoints_start = 100;
+    CHECK(dfc::compile(spline_arena, spline_root).error == dfc::CompileError::kInvalidOperand);
 }

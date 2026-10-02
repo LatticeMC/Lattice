@@ -347,6 +347,12 @@ val nativeDensityWorldgenBenchmark by tasks.registering(JavaExec::class) {
     mainClass.set("net.minecraft.world.level.levelgen.NativeDensityFunctionWorldgenBenchmark")
     workingDir = rootProject.layout.projectDirectory.asFile
     jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dlattice.nativeDensityFunctionGrid=true")
+    if (providers.gradleProperty("nativeDensityWorldgenCoverageOnly").getOrElse("false").toBoolean()) {
+        args("--coverage-only")
+    }
+    if (providers.gradleProperty("nativeDensityWorldgenVerifyOnly").getOrElse("false").toBoolean()) {
+        args("--verify-only")
+    }
     args(
         "--warmup=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkWarmup").getOrElse("4"),
         "--samples=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkSamples").getOrElse("9"),

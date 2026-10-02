@@ -20,10 +20,15 @@ struct Builder {
     CompileResult result;
     std::vector<std::uint32_t> slots;
     std::vector<std::uint8_t> visiting;
+    std::vector<std::uint8_t> pure;
+    std::vector<std::uint8_t> spline_visiting;
     std::vector<std::uint8_t> is_constant;
     std::vector<double> constant_values;
 
-    explicit Builder(const NodeArena& input) : arena(input), visiting(input.nodes.size(), 0) {}
+    explicit Builder(const NodeArena& input) : arena(input),
+        slots(input.nodes.size(), std::numeric_limits<std::uint32_t>::max()),
+        visiting(input.nodes.size(), 0), pure(input.nodes.size(), 0),
+        spline_visiting(input.splines.size(), 0) {}
 
     std::uint32_t fail(CompileError error, NodeRef node) noexcept {
         if (result.error == CompileError::kNone) {
@@ -35,6 +40,79 @@ struct Builder {
 
     bool valid(NodeRef ref) const noexcept {
         return ref >= 0 && ref < static_cast<NodeRef>(arena.nodes.size());
+    }
+
+    // Validate through opaque boundaries too: splines can link back to the
+    // density graph and cycles must never reach the recursive evaluator.
+    void inspect_spline(SplineRef ref, NodeRef owner) {
+        if (ref < 0 || static_cast<std::size_t>(ref) >= arena.splines.size()) {
+            fail(CompileError::kInvalidOperand, owner); return;
+        }
+        auto& state = spline_visiting[ref];
+        if (state == 2) return;
+        if (state == 1) { fail(CompileError::kInvalidOperand, owner); return; }
+        state = 1;
+        const Spline& spline = arena.splines[ref];
+        if (spline.kind == SplineKind::kImpl) {
+            // The interpreter evaluates the location even with no breakpoints.
+            if (spline.location_function != kNullRef) inspect(spline.location_function);
+            const auto start = static_cast<std::size_t>(spline.breakpoints_start);
+            const auto count = static_cast<std::size_t>(spline.breakpoint_count);
+            if (start > arena.spline_breakpoints.size()
+                || count > arena.spline_breakpoints.size() - start) {
+                fail(CompileError::kInvalidOperand, owner);
+            } else if (count > 0) {
+                for (std::size_t i = 0; i < count; ++i)
+                    inspect_spline(arena.spline_breakpoints[start + i].value, owner);
+            }
+        } else if (spline.kind != SplineKind::kFixedFloat) {
+            fail(CompileError::kUnsupportedNode, owner);
+        }
+        state = 2;
+    }
+
+    bool inspect(NodeRef ref) {
+        if (!valid(ref)) { fail(CompileError::kInvalidOperand, ref); return false; }
+        auto& state = visiting[ref];
+        if (state == 2) return pure[ref] != 0;
+        if (state == 1) { fail(CompileError::kInvalidOperand, ref); return false; }
+        state = 1;
+        const Node& node = arena.nodes[ref];
+        bool is_pure = false;
+        switch (node.kind) {
+            case NodeKind::kConstant: case NodeKind::kYClampedGradient:
+                is_pure = true; break;
+            case NodeKind::kAbs: case NodeKind::kSquare: case NodeKind::kCube:
+            case NodeKind::kHalfNegative: case NodeKind::kQuarterNegative:
+            case NodeKind::kInvert: case NodeKind::kSqueeze:
+            case NodeKind::kMapRange: case NodeKind::kClamp:
+                is_pure = inspect(node.a); break;
+            case NodeKind::kAdd: case NodeKind::kMul: case NodeKind::kMin: case NodeKind::kMax:
+                is_pure = inspect(node.a); is_pure &= inspect(node.b); break;
+            case NodeKind::kLerp:
+                is_pure = inspect(node.a); is_pure &= inspect(node.b); is_pure &= inspect(node.c); break;
+            case NodeKind::kRangeChoice: case NodeKind::kShiftedNoise:
+                inspect(node.a); inspect(node.b); inspect(node.c); break;
+            case NodeKind::kCache2D: case NodeKind::kCacheOnce: case NodeKind::kFlatCache:
+            case NodeKind::kInterpolated: case NodeKind::kBlendDensity: case NodeKind::kWeirdScaledSampler:
+                inspect(node.a); break;
+            case NodeKind::kCacheAllInCell:
+                // JNI also creates input-free leaves backed by cell arrays.
+                if (node.a != kNullRef) inspect(node.a);
+                break;
+            case NodeKind::kFindTopSurface:
+                inspect(node.a); inspect(node.b); break;
+            case NodeKind::kSpline:
+                inspect_spline(node.i0, ref); break;
+            case NodeKind::kNoise: case NodeKind::kShiftA: case NodeKind::kShiftB: case NodeKind::kShift:
+            case NodeKind::kInterpolatedNoise: case NodeKind::kEndIslands:
+            case NodeKind::kBeardifier: case NodeKind::kBlendAlpha: case NodeKind::kBlendOffset:
+                break;
+            default: fail(CompileError::kUnsupportedNode, ref); break;
+        }
+        pure[ref] = is_pure;
+        state = 2;
+        return is_pure;
     }
 
     std::uint32_t emit(const Instr& instr) {
@@ -98,10 +176,7 @@ struct Builder {
     std::uint32_t compile_node(NodeRef ref) {
         if (!valid(ref)) return fail(CompileError::kInvalidOperand, ref);
         const std::size_t index = static_cast<std::size_t>(ref);
-        if (slots.size() <= index) slots.resize(index + 1, std::numeric_limits<std::uint32_t>::max());
-        if (slots[index] != std::numeric_limits<std::uint32_t>::max()) return slots[index];
-        if (visiting[index] != 0) return fail(CompileError::kInvalidOperand, ref);
-        visiting[index] = 1;
+        if (pure[index] && slots[index] != std::numeric_limits<std::uint32_t>::max()) return slots[index];
         const Node& node = arena.nodes[index];
         Instr instr{};
         std::uint32_t value = 0;
@@ -120,9 +195,15 @@ struct Builder {
                 instr.s0 = child(node.a); value = emit(instr); break;
             }
             case NodeKind::kAdd: case NodeKind::kMul: case NodeKind::kMin: case NodeKind::kMax: {
+                if (node.kind == NodeKind::kMul && node.a != node.b && !pure[node.b]) {
+                    instr.op = Op::kOpaqueMul; instr.ref = ref; value = emit(instr); break;
+                }
                 instr.op = static_cast<Op>(static_cast<std::uint8_t>(Op::kAdd)
                     + (static_cast<std::uint8_t>(node.kind) - static_cast<std::uint8_t>(NodeKind::kAdd)));
-                instr.s0 = child(node.a); instr.s1 = child(node.b); value = emit(instr); break;
+                instr.s0 = child(node.a);
+                instr.s1 = node.a == node.b ? instr.s0 : child(node.b);
+                if (node.kind == NodeKind::kMul && node.a == node.b) instr.op = Op::kSquare;
+                value = emit(instr); break;
             }
             case NodeKind::kMapRange:
                 instr.op = Op::kMapRange; instr.s0 = child(node.a);
@@ -134,12 +215,30 @@ struct Builder {
             case NodeKind::kClamp:
                 instr.op = Op::kClamp; instr.s0 = child(node.a); instr.imm0 = node.d0; instr.imm1 = node.d1;
                 value = emit(instr); break;
+            case NodeKind::kNoise: case NodeKind::kShiftedNoise:
+            case NodeKind::kShiftA: case NodeKind::kShiftB: case NodeKind::kShift:
+            case NodeKind::kWeirdScaledSampler: case NodeKind::kEndIslands: case NodeKind::kInterpolatedNoise:
+                instr.op = Op::kOpaqueNoise; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kCache2D: case NodeKind::kCacheOnce:
+            case NodeKind::kCacheAllInCell: case NodeKind::kFlatCache:
+                instr.op = Op::kOpaqueCache; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kInterpolated:
+                instr.op = Op::kOpaqueInterpolated; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kSpline:
+                instr.op = Op::kOpaqueSpline; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kBeardifier:
+                instr.op = Op::kOpaqueBeardifier; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kBlendAlpha: case NodeKind::kBlendOffset: case NodeKind::kBlendDensity:
+                instr.op = Op::kOpaqueBlend; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kFindTopSurface:
+                instr.op = Op::kOpaqueFindTopSurface; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kRangeChoice:
+                instr.op = Op::kOpaqueRangeChoice; instr.ref = ref; value = emit(instr); break;
             default:
                 value = fail(CompileError::kUnsupportedNode, ref); break;
         }
-        visiting[index] = 0;
         if (result.error != CompileError::kNone) return value;
-        slots[index] = value;
+        if (pure[index]) slots[index] = value;
         return value;
     }
 };
@@ -174,6 +273,8 @@ CompileResult compile(const NodeArena& arena, NodeRef root) noexcept {
         builder.result.error_node = root;
         return builder.result;
     }
+    builder.inspect(root);
+    if (builder.result.error != CompileError::kNone) return builder.result;
     builder.result.program.result = builder.compile_node(root);
     if (builder.result.error != CompileError::kNone) return builder.result;
 
@@ -246,7 +347,7 @@ bool install(NodeArena& arena, NodeRef root) noexcept {
     return true;
 }
 
-double evaluate(const Program& program, const Context& ctx,
+double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
                 double* values, std::size_t value_capacity) noexcept {
     if (!values || value_capacity < program.value_count
         || program.value_count == 0 || program.result >= program.value_count) return 0.0;
@@ -255,9 +356,19 @@ double evaluate(const Program& program, const Context& ctx,
     };
     for (const Instr& instr : program.code) {
         double value = 0.0;
-        const double a = read_slot(instr.s0);
-        const double b = read_slot(instr.s1);
-        const double c = read_slot(instr.s2);
+        // Read only real operands: leaf/opaque instructions can be first in a
+        // caller-provided, uninitialised scratch buffer.
+        double a = 0.0, b = 0.0, c = 0.0;
+        switch (instr.op) {
+            case Op::kLerp: c = read_slot(instr.s2); [[fallthrough]];
+            case Op::kAdd: case Op::kMul: case Op::kMin: case Op::kMax:
+                b = read_slot(instr.s1); [[fallthrough]];
+            case Op::kAbs: case Op::kSquare: case Op::kCube:
+            case Op::kHalfNegative: case Op::kQuarterNegative: case Op::kInvert:
+            case Op::kSqueeze: case Op::kMapRange: case Op::kClamp:
+                a = read_slot(instr.s0); break;
+            default: break;
+        }
         switch (instr.op) {
             case Op::kConstant: value = instr.imm0; break;
             case Op::kCoordX: value = ctx.x; break;
@@ -278,15 +389,19 @@ double evaluate(const Program& program, const Context& ctx,
             case Op::kMapRange: value = map_range(a, instr.imm0, instr.imm1, instr.imm2, instr.imm3); break;
             case Op::kLerp: value = b + a * (c - b); break;
             case Op::kClamp: value = clamp_d(a, instr.imm0, instr.imm1); break;
+            case Op::kOpaqueNoise: case Op::kOpaqueCache: case Op::kOpaqueInterpolated:
+            case Op::kOpaqueSpline: case Op::kOpaqueBeardifier: case Op::kOpaqueBlend:
+            case Op::kOpaqueFindTopSurface: case Op::kOpaqueRangeChoice: case Op::kOpaqueMul:
+                value = evaluate_node(arena, instr.ref, ctx); break;
         }
         if (instr.dst < program.value_count) values[instr.dst] = value;
     }
     return values[program.result];
 }
 
-double evaluate(const Program& program, const Context& ctx) noexcept {
+double evaluate(const Program& program, const NodeArena& arena, const Context& ctx) noexcept {
     std::vector<double> values(program.value_count, 0.0);
-    return evaluate(program, ctx, values.data(), values.size());
+    return evaluate(program, arena, ctx, values.data(), values.size());
 }
 
 const char* compile_error_name(CompileError error) noexcept {

@@ -910,6 +910,26 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeGetExecutionSta
 
 // ---- Node builders --------------------------------------------------------
 
+JNIEXPORT jlongArray JNICALL
+Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeGetCompilerStats(
+        JNIEnv* env, jclass /*cls*/, jlong handle, jint root) {
+    const auto* arena = arena_from(handle);
+    if (!arena) {
+        lattice::jni::throw_illegal_arg(env, "lattice density: null compiler stats arena");
+        return nullptr;
+    }
+    const auto compiled = dfc::compile(*arena, root);
+    const std::array<jlong, 4> values{
+        static_cast<jlong>(compiled.error), compiled.error_node,
+        compiled ? static_cast<jlong>(compiled.program.code.size()) : 0,
+        compiled ? static_cast<jlong>(compiled.program.opaque_count()) : 0,
+    };
+    auto* output = env->NewLongArray(static_cast<jsize>(values.size()));
+    if (!output) return nullptr;
+    env->SetLongArrayRegion(output, 0, static_cast<jsize>(values.size()), values.data());
+    return env->ExceptionCheck() ? nullptr : output;
+}
+
 // Each `add*` returns the NodeRef (>= 0) of the newly-pushed node, or
 // -1 on error (null handle). Operand validation is light — the
 // evaluator's bounds check is the authoritative one.
