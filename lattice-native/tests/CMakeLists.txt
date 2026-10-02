@@ -305,6 +305,27 @@ if(LATTICE_ARCH_X86)
     target_compile_definitions(lattice_test_density_function PRIVATE LATTICE_HAS_DENSITY_AVX2=1 LATTICE_TEST_HAS_DENSITY_AVX2=1)
 endif()
 
+lattice_add_test(density_compile
+    SOURCES  test_density_compile.cpp
+    DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
+             ${_perlin_simd_srcs}
+             ${_perlin_avx512_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/octave_perlin_noise.cpp
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/double_perlin_noise.cpp
+             ${_double_perlin_simd_srcs}
+             ${_double_perlin_avx512_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/simplex_noise.cpp
+             ${_simplex_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/noise/interpolated_noise.cpp
+             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/density_function.cpp
+             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/df_compile.cpp
+             ${_density_simd_srcs}
+             ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp
+             ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+if(LATTICE_ARCH_X86)
+    target_compile_definitions(lattice_test_density_compile PRIVATE LATTICE_HAS_DENSITY_AVX2=1)
+endif()
+
 lattice_add_test(beardifier
     SOURCES  test_beardifier.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp)

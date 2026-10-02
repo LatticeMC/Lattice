@@ -509,6 +509,7 @@ endif()
 # ---------------------------------------------------------------------------
 target_sources(lattice PRIVATE
     src/world/gen/densityfunction/density_function.cpp
+    src/world/gen/densityfunction/df_compile.cpp
     src/world/gen/densityfunction/beardifier.cpp
     jni/density_function.cpp
     jni/beardifier.cpp
