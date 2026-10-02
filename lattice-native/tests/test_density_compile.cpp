@@ -160,6 +160,27 @@ TEST_CASE("density compiler: DAG reuse and dead nodes are compacted") {
           == bits(evaluate(arena, Context{0.0, 4.0, 0.0})));
 }
 
+TEST_CASE("density compiler: installed program is used by the production evaluator") {
+    NodeArena arena;
+    Node gradient{};
+    gradient.kind = NodeKind::kYClampedGradient;
+    gradient.i0 = -8;
+    gradient.i1 = 8;
+    gradient.d0 = -2.0;
+    gradient.d1 = 2.0;
+    const NodeRef source = arena.push(gradient);
+    const NodeRef root = unary(arena, NodeKind::kSqueeze, source);
+    arena.root = root;
+
+    const Context ctx{3.0, 5.0, -7.0};
+    const std::uint64_t recursive_bits = bits(evaluate(arena, root, ctx));
+    CHECK(dfc::install(arena, root));
+    REQUIRE(arena.compiled_program);
+    CHECK(arena.compiled_program_root == root);
+    CHECK(bits(evaluate(arena, root, ctx)) == recursive_bits);
+    CHECK(bits(evaluate(arena, ctx)) == recursive_bits);
+}
+
 TEST_CASE("density compiler: unsupported stateful nodes fail explicitly") {
     NodeArena arena;
     const NodeRef value = constant(arena, 2.0);

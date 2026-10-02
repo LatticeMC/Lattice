@@ -24,10 +24,12 @@
 #include "noise_handle.hpp"
 #include "world/gen/densityfunction/beardifier.hpp"
 #include "world/gen/densityfunction/density_function.hpp"
+#include "world/gen/densityfunction/df_compile.hpp"
 #include "world/gen/noise/double_perlin_noise.hpp"
 #include "world/gen/noise/interpolated_noise.hpp"
 
 namespace df  = lattice::world::gen::densityfunction;
+namespace dfc = lattice::world::gen::densityfunction::dfc;
 namespace pns = lattice::world::gen::noise;
 namespace bf  = lattice::world::gen::densityfunction::beardifier;
 
@@ -237,6 +239,7 @@ JNIEXPORT void lattice_density_set_root(long long handle, int nodeRef) {
     auto* a = arena_from(static_cast<jlong>(handle));
     if (!a) return;
     a->root = static_cast<df::NodeRef>(nodeRef);
+    (void)dfc::install(*a, a->root);
 }
 
 JNIEXPORT long long lattice_density_create_cache(long long arenaHandle) {
@@ -617,6 +620,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeSetRoot(
     auto* a = arena_from(handle);
     if (!a) return;
     a->root = static_cast<df::NodeRef>(nodeRef);
+    (void)dfc::install(*a, a->root);
 }
 
 JNIEXPORT jint JNICALL

@@ -11,6 +11,7 @@
 // `-ffast-math` reassociation.
 
 #include "world/gen/densityfunction/density_function.hpp"
+#include "world/gen/densityfunction/df_compile.hpp"
 
 #include <algorithm>
 #include <array>
@@ -577,6 +578,9 @@ float evaluate_spline(const NodeArena& arena, SplineRef ref,
 
 double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexcept {
     if (root < 0 || root >= static_cast<NodeRef>(arena.nodes.size())) return 0.0;
+    if (arena.compiled_program && root == arena.compiled_program_root) {
+        return dfc::evaluate(*arena.compiled_program, ctx);
+    }
     const Node& n = arena.nodes[root];
     switch (n.kind) {
         case NodeKind::kConstant:

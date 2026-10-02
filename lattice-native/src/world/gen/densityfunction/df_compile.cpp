@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 namespace lattice::world::gen::densityfunction::dfc {
 
@@ -233,6 +234,16 @@ CompileResult compile(const NodeArena& arena, NodeRef root) noexcept {
     program.value_count = static_cast<std::uint32_t>(compact.size());
     program.code = std::move(compact);
     return builder.result;
+}
+
+bool install(NodeArena& arena, NodeRef root) noexcept {
+    arena.compiled_program.reset();
+    arena.compiled_program_root = kNullRef;
+    const CompileResult compiled = compile(arena, root);
+    if (!compiled) return false;
+    arena.compiled_program = std::make_shared<Program>(compiled.program);
+    arena.compiled_program_root = root;
+    return true;
 }
 
 double evaluate(const Program& program, const Context& ctx,

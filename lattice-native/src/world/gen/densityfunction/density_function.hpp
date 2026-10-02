@@ -60,6 +60,10 @@
 
 namespace lattice::world::gen::densityfunction {
 
+namespace dfc {
+struct Program;
+}
+
 enum class NodeKind : std::uint8_t {
     kConstant,          // value
     kAbs,               // unary(input)
@@ -264,6 +268,12 @@ struct NodeArena {
     /// time so the hot JNI row evaluator does not repin an int[] per call.
     std::vector<NodeRef> batch_roots;
 
+    // Optional flat program installed after the tree is frozen. The program
+    // is used only when evaluating compiled_program_root; unsupported trees
+    // leave this empty and continue through the recursive evaluator.
+    std::shared_ptr<const dfc::Program> compiled_program;
+    NodeRef compiled_program_root = kNullRef;
+
     /// Cache-slot counters. Each cache node is assigned a slot id as
     /// it's pushed; the caller's CacheState mirrors these counts.
     int num_cache_2d_slots         = 0;
@@ -292,6 +302,8 @@ struct NodeArena {
     /// Append a node and return its index. Assigns a cache slot to
     /// cache-kind nodes; caller need not do it manually.
     NodeRef push(Node n) {
+        compiled_program.reset();
+        compiled_program_root = kNullRef;
         switch (n.kind) {
             case NodeKind::kCache2D:        n.cache_slot_id = num_cache_2d_slots++;        break;
             case NodeKind::kCacheOnce:      n.cache_slot_id = num_cache_once_slots++;      break;

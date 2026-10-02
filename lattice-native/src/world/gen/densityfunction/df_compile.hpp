@@ -69,6 +69,11 @@ struct CompileResult {
 /// are rejected so flattening cannot change evaluation side effects.
 [[nodiscard]] CompileResult compile(const NodeArena& arena, NodeRef root) noexcept;
 
+/// Compile and install a pure program on an arena after construction. Returns
+/// false for unsupported or invalid graphs; the arena remains on the recursive
+/// evaluator in that case.
+[[nodiscard]] bool install(NodeArena& arena, NodeRef root) noexcept;
+
 [[nodiscard]] double evaluate(const Program& program, const Context& ctx) noexcept;
 [[nodiscard]] double evaluate(const Program& program, const Context& ctx,
                               double* values, std::size_t value_capacity) noexcept;
