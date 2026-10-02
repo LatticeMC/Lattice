@@ -118,6 +118,7 @@ public final class LatticeConfig {
         CommentedConfigurationNode root = load(path);
         warnUnknownKeys(root, "");
         seedProtection = SeedProtectionConfig.parse(root);
+        seedProtection.validateAtStartup();
         for (Setting setting : SETTINGS) {
             String explicit = System.getProperty(setting.property());
             if (explicit != null) {
@@ -198,7 +199,6 @@ public final class LatticeConfig {
                 .append("  seed-protection:\n")
                 .append("    algorithm: 'aes-256-ctr-hkdf-sha256-v1'\n")
                 .append("    master-key-file: 'config/lattice/seed-protection.key'\n")
-                .append("    require-hardware-aes: false\n")
                 .append("    default:\n")
                 .append("      enabled: false\n")
                 .append("      structures:\n")

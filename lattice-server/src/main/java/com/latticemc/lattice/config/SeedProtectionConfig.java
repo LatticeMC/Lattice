@@ -1,21 +1,25 @@
 package com.latticemc.lattice.config;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.serialize.SerializationException;
 
 /** Immutable startup configuration for protected structure random streams. */
 public record SeedProtectionConfig(
         Path masterKeyFile,
-        boolean requireHardwareAes,
         WorldPolicy defaultPolicy,
         Map<String, WorldPolicy> worldsByName) {
+    public static final String ALGORITHM = "aes-256-ctr-hkdf-sha256-v1";
 
     private static final Set<String> BUILTIN_UNDERGROUND_STRUCTURES = Set.of(
             "minecraft:mineshaft",
@@ -24,7 +28,8 @@ public record SeedProtectionConfig(
             "minecraft:ancient_city",
             "minecraft:trial_chambers",
             "minecraft:buried_treasure",
-            "minecraft:nether_fossil");
+            "minecraft:nether_fossil",
+            "minecraft:trail_ruins");
 
     private static final Set<String> BUILTIN_UNDERGROUND_STRUCTURE_SETS = Set.of(
             "minecraft:mineshafts",
@@ -36,14 +41,17 @@ public record SeedProtectionConfig(
             "minecraft:trail_ruins");
 
     public static SeedProtectionConfig defaults() {
-        return new SeedProtectionConfig(Path.of("config/lattice/seed-protection.key"), false,
+        return new SeedProtectionConfig(Path.of("config/lattice/seed-protection.key"),
                 new WorldPolicy(false, Set.of("#lattice:underground_structures"), Set.of()), Map.of());
     }
 
     public static SeedProtectionConfig parse(ConfigurationNode root) {
         ConfigurationNode node = root.node("worldgen", "seed-protection");
+        String algorithm = node.node("algorithm").getString(ALGORITHM);
+        if (!ALGORITHM.equalsIgnoreCase(algorithm.trim())) {
+            throw new IllegalArgumentException("Unsupported worldgen.seed-protection.algorithm: " + algorithm);
+        }
         Path keyFile = Path.of(node.node("master-key-file").getString("config/lattice/seed-protection.key"));
-        boolean requireHardwareAes = node.node("require-hardware-aes").getBoolean(false);
         WorldPolicy defaultPolicy = WorldPolicy.parse(node.node("default"), false, defaults().defaultPolicy());
         Map<String, WorldPolicy> worlds = new LinkedHashMap<>();
         for (String selector : List.of("by-uuid", "by-name")) {
@@ -52,7 +60,33 @@ public record SeedProtectionConfig(
                 worlds.put(selector + ":" + entry.getKey(), WorldPolicy.parse(entry.getValue(), defaultPolicy.enabled(), defaultPolicy));
             }
         }
-        return new SeedProtectionConfig(keyFile, requireHardwareAes, defaultPolicy, Map.copyOf(worlds));
+        return new SeedProtectionConfig(keyFile, defaultPolicy, Map.copyOf(worlds));
+    }
+
+    public boolean enabledAnywhere() {
+        return this.defaultPolicy.enabled() || this.worldsByName.values().stream().anyMatch(WorldPolicy::enabled);
+    }
+
+    public void validateAtStartup() {
+        if (!this.enabledAnywhere()) {
+            return;
+        }
+        Path absolute = this.masterKeyFile.toAbsolutePath().normalize();
+        try {
+            if (!Files.isRegularFile(absolute)) {
+                throw new IllegalStateException("Seed protection is enabled but the key file is missing: " + absolute);
+            }
+            byte[] key = Files.readAllBytes(absolute);
+            if (key.length != 32) {
+                throw new IllegalStateException("Seed protection key must contain exactly 32 bytes: " + absolute);
+            }
+            Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"));
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException("Unable to read seed protection key: " + absolute, exception);
+        } catch (GeneralSecurityException exception) {
+            throw new IllegalStateException("AES-256 is unavailable in the active JCE provider", exception);
+        }
     }
 
     public WorldPolicy policyFor(String worldUuid, String worldName) {

@@ -1,0 +1,60 @@
+From b63fe0d776ae6d4feccb39fa9d37004c737f5780 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 2 Oct 2026 09:32:30 +0800
+Subject: [PATCH] feat(worldgen): isolate structure ring and frequency streams
+
+---
+ .../chunk/ChunkGeneratorStructureState.java   |  3 ++-
+ .../placement/StructurePlacement.java         | 21 ++++++++++++++++++-
+ 2 files changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/net/minecraft/world/level/chunk/ChunkGeneratorStructureState.java b/net/minecraft/world/level/chunk/ChunkGeneratorStructureState.java
+index 3bc151f..85d6a8a 100644
+--- a/net/minecraft/world/level/chunk/ChunkGeneratorStructureState.java
++++ b/net/minecraft/world/level/chunk/ChunkGeneratorStructureState.java
+@@ -205,7 +205,8 @@ public class ChunkGeneratorStructureState {
+             List<CompletableFuture<ChunkPos>> list = new ArrayList<>(count);
+             int spread = placement.spread();
+             HolderSet<Biome> holderSet = placement.preferredBiomes();
+-            RandomSource protectedRandom = com.latticemc.lattice.worldgen.SeedProtection.forStructureSet("minecraft:strongholds", "rings", 0L, 0L);
++            String structureSetKey = structureSet.unwrapKey().map(key -> key.identifier().toString()).orElse("-");
++            RandomSource protectedRandom = com.latticemc.lattice.worldgen.SeedProtection.forStructureSet(structureSetKey, "rings", 0L, 0L);
+             RandomSource randomSource = protectedRandom != null ? protectedRandom : RandomSource.create();
+             // Paper start - Add missing structure set seed configs
+             if (protectedRandom == null && this.conf.strongholdSeed != null && structureSet.is(net.minecraft.world.level.levelgen.structure.BuiltinStructureSets.STRONGHOLDS)) {
+diff --git a/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java b/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
+index 30cd1ec..5a2e476 100644
+--- a/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
++++ b/net/minecraft/world/level/levelgen/structure/placement/StructurePlacement.java
+@@ -99,11 +99,30 @@ public abstract class StructurePlacement {
+             && structureSetKey != null
+             ? randomSpread.lattice$isPlacementChunk(structureState, x, z, structureSetKey)
+             : this.isPlacementChunk(structureState, x, z);
++        boolean frequencyAllowed = this.applyAdditionalChunkRestrictions(x, z, structureState.getLevelSeed(), saltOverride); // Paper - Add missing structure set seed configs
++        if (structureSetKey != null) {
++            String structureSet = structureSetKey.identifier().toString();
++            net.minecraft.util.RandomSource protectedRandom = com.latticemc.lattice.worldgen.SeedProtection.forStructureSet(structureSet, "frequency", x, z);
++            if (protectedRandom != null) {
++                frequencyAllowed = this.lattice$applyProtectedFrequency(protectedRandom);
++            }
++        }
+         return placementChunk
+-            && this.applyAdditionalChunkRestrictions(x, z, structureState.getLevelSeed(), saltOverride) // Paper - Add missing structure set seed configs
++            && frequencyAllowed
+             && this.applyInteractionsWithOtherStructures(structureState, x, z);
+     }
+ 
++    private boolean lattice$applyProtectedFrequency(net.minecraft.util.RandomSource random) {
++        if (this.frequency >= 1.0F) {
++            return true;
++        }
++        return switch (this.frequencyReductionMethod) {
++            case LEGACY_TYPE_1 -> random.nextInt((int)(1.0F / this.frequency)) == 0;
++            case LEGACY_TYPE_3 -> random.nextDouble() < this.frequency;
++            default -> random.nextFloat() < this.frequency;
++        };
++    }
++
+     // Paper start - Add missing structure set seed configs
+     public boolean applyAdditionalChunkRestrictions(int regionX, int regionZ, long levelSeed, @javax.annotation.Nullable Integer saltOverride) {
+         return !(this.frequency < 1.0F) || this.frequencyReductionMethod.shouldGenerate(levelSeed, this.salt, regionX, regionZ, this.frequency, saltOverride);

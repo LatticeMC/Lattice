@@ -13,11 +13,15 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** World-scoped policy and key derivation for protected structure random streams. */
 public final class SeedProtection {
     private static final ThreadLocal<ServerLevel> CURRENT_LEVEL = new ThreadLocal<>();
     private static final ThreadLocal<String> CURRENT_STRUCTURE = new ThreadLocal<>();
+    private static final Logger LOGGER = LoggerFactory.getLogger("SeedProtection");
+    private static volatile boolean missingContextWarningLogged;
     private static volatile KeyMaterial keyMaterial;
 
     private SeedProtection() {
@@ -59,12 +63,20 @@ public final class SeedProtection {
 
     public static boolean protectsSet(String structureSetKey) {
         ServerLevel level = CURRENT_LEVEL.get();
-        return level != null && protects(level, null, structureSetKey);
+        if (level == null) {
+            warnMissingContext("protectsSet(" + structureSetKey + ")");
+            return false;
+        }
+        return protects(level, null, structureSetKey);
     }
 
     public static RandomSource forStructureSet(String structureSetKey, String phase, long x, long z) {
         ServerLevel level = CURRENT_LEVEL.get();
-        return level == null ? null : forContext(level, structureSetKey, null, phase, x, z, 0L);
+        if (level == null) {
+            warnMissingContext("forStructureSet(" + structureSetKey + ", " + phase + ")");
+            return null;
+        }
+        return forContext(level, structureSetKey, null, phase, x, z, 0L);
     }
 
     public static RandomSource forStructure(ServerLevel level, String structureKey, String phase, long x, long z, long extra) {
@@ -73,7 +85,11 @@ public final class SeedProtection {
 
     public static RandomSource forStructure(String structureKey, String phase, long x, long z, long extra) {
         ServerLevel level = CURRENT_LEVEL.get();
-        return level == null ? null : forStructure(level, structureKey, phase, x, z, extra);
+        if (level == null) {
+            warnMissingContext("forStructure(" + structureKey + ", " + phase + ")");
+            return null;
+        }
+        return forStructure(level, structureKey, phase, x, z, extra);
     }
 
     public static RandomSource forCurrentStructure(String phase, long x, long z, long extra) {
@@ -107,6 +123,17 @@ public final class SeedProtection {
 
     private static String value(String value) {
         return value == null ? "-" : value;
+    }
+
+    private static void warnMissingContext(String operation) {
+        if (!missingContextWarningLogged) {
+            synchronized (SeedProtection.class) {
+                if (!missingContextWarningLogged) {
+                    LOGGER.warn("Seed protection context is unavailable for {}; using the vanilla random source for this call", operation);
+                    missingContextWarningLogged = true;
+                }
+            }
+        }
     }
 
     private static KeyMaterial keyMaterial() {

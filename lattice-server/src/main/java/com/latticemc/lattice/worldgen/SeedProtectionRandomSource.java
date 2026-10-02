@@ -1,7 +1,6 @@
 package com.latticemc.lattice.worldgen;
 
 import java.security.GeneralSecurityException;
-import java.util.Arrays;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -16,6 +15,8 @@ public final class SeedProtectionRandomSource implements BitRandomSource {
     private final byte[] key;
     private final Cipher cipher;
     private final byte[] counter = new byte[16];
+    private final byte[] block = new byte[16];
+    private int blockOffset = this.block.length;
     private final MarsagliaPolarGaussian gaussian = new MarsagliaPolarGaussian(this);
 
     public SeedProtectionRandomSource(byte[] key) {
@@ -68,7 +69,7 @@ public final class SeedProtectionRandomSource implements BitRandomSource {
     }
 
     @Override
-    public int next(int bits) {
+    public synchronized int next(int bits) {
         if (bits < 1 || bits > 32) {
             throw new IllegalArgumentException("bits must be between 1 and 32");
         }
@@ -76,22 +77,27 @@ public final class SeedProtectionRandomSource implements BitRandomSource {
     }
 
     @Override
-    public double nextGaussian() {
+    public synchronized double nextGaussian() {
         return this.gaussian.nextGaussian();
     }
 
-    private int nextRawInt() {
-        byte[] block;
-        try {
-            block = this.cipher.doFinal(this.counter);
-        } catch (GeneralSecurityException exception) {
-            throw new IllegalStateException("AES-256 stream generation failed", exception);
+    private synchronized int nextRawInt() {
+        if (this.blockOffset == this.block.length) {
+            try {
+                byte[] encrypted = this.cipher.doFinal(this.counter);
+                System.arraycopy(encrypted, 0, this.block, 0, this.block.length);
+            } catch (GeneralSecurityException exception) {
+                throw new IllegalStateException("AES-256 stream generation failed", exception);
+            }
+            incrementCounter(this.counter);
+            this.blockOffset = 0;
         }
-        incrementCounter(this.counter);
-        return ((block[0] & 0xff) << 24)
-                | ((block[1] & 0xff) << 16)
-                | ((block[2] & 0xff) << 8)
-                | (block[3] & 0xff);
+        int value = ((this.block[this.blockOffset] & 0xff) << 24)
+                | ((this.block[this.blockOffset + 1] & 0xff) << 16)
+                | ((this.block[this.blockOffset + 2] & 0xff) << 8)
+                | (this.block[this.blockOffset + 3] & 0xff);
+        this.blockOffset += Integer.BYTES;
+        return value;
     }
 
     private static void incrementCounter(byte[] value) {
