@@ -340,11 +340,40 @@ CompileResult compile(const NodeArena& arena, NodeRef root) noexcept {
 bool install(NodeArena& arena, NodeRef root) noexcept {
     arena.compiled_program.reset();
     arena.compiled_program_root = kNullRef;
+    arena.compiled_batch_programs.clear();
     const CompileResult compiled = compile(arena, root);
     if (!compiled) return false;
     arena.compiled_program = std::make_shared<Program>(compiled.program);
     arena.compiled_program_root = root;
     return true;
+}
+
+std::size_t install_batch(NodeArena& arena) noexcept {
+    arena.compiled_batch_programs.clear();
+    if (arena.batch_roots.empty()) return 0;
+    arena.compiled_batch_programs.resize(arena.nodes.size());
+    std::size_t installed = 0;
+    for (const NodeRef root : arena.batch_roots) {
+        if (root < 0 || static_cast<std::size_t>(root) >= arena.nodes.size()) continue;
+        auto& program = arena.compiled_batch_programs[root];
+        if (!program) {
+            if (arena.compiled_program && root == arena.compiled_program_root) {
+                program = arena.compiled_program;
+            } else {
+                auto compiled = compile(arena, root);
+                if (compiled) program = std::make_shared<Program>(std::move(compiled.program));
+            }
+        }
+        if (program) ++installed;
+    }
+    return installed;
+}
+
+const Program* find_program(const NodeArena& arena, NodeRef root) noexcept {
+    if (root < 0 || static_cast<std::size_t>(root) >= arena.nodes.size()) return nullptr;
+    if (arena.compiled_program && root == arena.compiled_program_root) return arena.compiled_program.get();
+    return static_cast<std::size_t>(root) < arena.compiled_batch_programs.size()
+        ? arena.compiled_batch_programs[root].get() : nullptr;
 }
 
 double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,

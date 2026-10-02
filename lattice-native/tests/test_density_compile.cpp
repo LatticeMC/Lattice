@@ -60,6 +60,26 @@ void check_once_cache(const CacheState& actual, const CacheState& expected) {
     }
 }
 
+void check_batch_cache(const CacheState& actual, const CacheState& expected) {
+    check_once_cache(actual, expected);
+    REQUIRE(actual.cache_2d.size() == expected.cache_2d.size());
+    for (std::size_t i = 0; i < actual.cache_2d.size(); ++i) {
+        const auto& a = actual.cache_2d[i];
+        const auto& b = expected.cache_2d[i];
+        CHECK(a.valid == b.valid);
+        if (!a.valid || !b.valid) continue;
+        CHECK(a.x == b.x); CHECK(a.z == b.z); CHECK(bits(a.value) == bits(b.value));
+    }
+    REQUIRE(actual.flat_cache.size() == expected.flat_cache.size());
+    for (std::size_t i = 0; i < actual.flat_cache.size(); ++i) {
+        const auto& a = actual.flat_cache[i];
+        const auto& b = expected.flat_cache[i];
+        CHECK(a.valid == b.valid);
+        if (!a.valid || !b.valid) continue;
+        CHECK(a.cellX == b.cellX); CHECK(a.cellZ == b.cellZ); CHECK(bits(a.value) == bits(b.value));
+    }
+}
+
 } // namespace
 
 TEST_CASE("density compiler: flattened arithmetic preserves bits") {
@@ -468,4 +488,186 @@ TEST_CASE("density compiler: validates operands and cycles inside opaque graphs"
     CHECK(dfc::compile(spline_arena, spline_root).error == dfc::CompileError::kInvalidOperand);
     spline_arena.splines[0].breakpoints_start = 100;
     CHECK(dfc::compile(spline_arena, spline_root).error == dfc::CompileError::kInvalidOperand);
+}
+
+TEST_CASE("density compiler: both column entries execute programs with scalar state order") {
+    NodeArena arena;
+    const auto y = gradient(arena);
+    const auto cache2d = unary(arena, NodeKind::kCache2D, y);
+    const auto cached = unary(arena, NodeKind::kCacheOnce, y);
+    Node choice{};
+    choice.kind = NodeKind::kRangeChoice; choice.a = y; choice.b = cache2d;
+    choice.c = constant(arena, -5); choice.d0 = 0; choice.d1 = 4;
+    const auto range = arena.push(choice);
+    Node find{}; find.kind = NodeKind::kFindTopSurface;
+    find.a = cached; find.b = constant(arena, 8); find.i0 = 0; find.i1 = 4;
+    const auto surface = arena.push(find);
+    Node lerp{}; lerp.kind = NodeKind::kLerp;
+    lerp.a = cached; lerp.b = surface; lerp.c = cached;
+    const auto repeated = arena.push(lerp);
+    const auto product = binary(arena, NodeKind::kMul, y,
+        unary(arena, NodeKind::kCacheOnce, constant(arena, 7)));
+    const auto root = binary(arena, NodeKind::kAdd, product, binary(arena, NodeKind::kAdd, range, repeated));
+    REQUIRE(dfc::install(arena, root));
+
+    for (bool fallback : {false, true}) {
+        for (int count : {1, 5, 9}) {
+            for (double dy : {0.0, -0.5, 0.25, 1.0}) {
+                for (bool with_cache : {false, true}) {
+                    CacheState actual, expected;
+                    actual.resize_for(arena); expected.resize_for(arena);
+                    REQUIRE(actual.set_execution_stats_enabled(true));
+                    std::vector<double> out(static_cast<std::size_t>(count));
+                    if (fallback) evaluate_y_column_fallback(arena, root, -3, 0, 4, dy, -1, 2, count,
+                                                            with_cache ? &actual : nullptr, out.data());
+                    else evaluate_y_column(arena, root, -3, 0, 4, dy, -1, 2, count,
+                                           with_cache ? &actual : nullptr, out.data());
+                    for (int iy = 0; iy < count; ++iy) {
+                        Context ctx{-3, 0.0 + static_cast<double>(iy) * dy, 4,
+                                    with_cache ? &expected : nullptr, -1, 2};
+                        CHECK(bits(out[iy]) == bits(evaluate_node(arena, root, ctx)));
+                    }
+                    check_batch_cache(actual, expected);
+                    CHECK(actual.execution_stats->compiled_column_calls == (with_cache ? 1 : 0));
+                    CHECK(actual.execution_stats->compiled_points == (with_cache ? count : 0));
+                    CHECK(actual.execution_stats->avx2_success == 0);
+                    CHECK(actual.execution_stats->generic_success == 0);
+                    CHECK(actual.execution_stats->point_fallback == 0);
+                    if (with_cache && dy == 0) CHECK_FALSE(actual.cache_once[1].valid);
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("density compiler: grid preserves layout warm caches and active interpolation") {
+    NodeArena arena;
+    const auto y = gradient(arena);
+    const auto cached = unary(arena, NodeKind::kCache2D, y);
+    const auto flat = unary(arena, NodeKind::kFlatCache, y);
+    const auto interpolated = unary(arena, NodeKind::kInterpolated, unary(arena, NodeKind::kCacheOnce, y));
+    const auto root = binary(arena, NodeKind::kAdd, cached, binary(arena, NodeKind::kAdd, flat, interpolated));
+    REQUIRE(dfc::install(arena, root));
+    for (bool with_cache : {false, true}) {
+        CacheState actual, expected;
+        actual.resize_for(arena); expected.resize_for(arena);
+        for (auto* cache : {&actual, &expected}) {
+            cache->cache_2d[0].valid = true;
+            cache->cache_2d[0].x = -4; cache->cache_2d[0].z = 4; cache->cache_2d[0].value = 900;
+            cache->is_in_interpolation_loop = true;
+            cache->interpolators[0].result = 100;
+        }
+        REQUIRE(actual.set_execution_stats_enabled(true));
+        std::array<double, 18> out{};
+        evaluate_grid(arena, root, -3.25, 2, 4.75, 0.5, -0.25, -1, -1, 2, 3, 3, 2,
+                      with_cache ? &actual : nullptr, out.data());
+        for (int iy = 0; iy < 3; ++iy) {
+            for (int iz = 0; iz < 2; ++iz) {
+                for (int ix = 0; ix < 3; ++ix) {
+                    Context ctx{-3.25 + static_cast<double>(ix) * 0.5,
+                                2.0 + static_cast<double>(iy) * -0.25,
+                                4.75 + static_cast<double>(iz) * -1.0,
+                                with_cache ? &expected : nullptr, -1 + ix, 2 + iz};
+                    CHECK(bits(out[(iy * 2 + iz) * 3 + ix]) == bits(evaluate_node(arena, root, ctx)));
+                }
+            }
+        }
+        check_batch_cache(actual, expected);
+        CHECK_FALSE(actual.cache_once[0].valid);
+        CHECK(actual.is_in_interpolation_loop);
+        CHECK(actual.execution_stats->cache_clears == 0);
+        CHECK(actual.execution_stats->compiled_grid_calls == (with_cache ? 1 : 0));
+        CHECK(actual.execution_stats->compiled_points == (with_cache ? 18 : 0));
+        std::array<std::int64_t, kExecutionStatsLongCount> snapshot{};
+        snapshot_execution_stats(actual, snapshot.data(), snapshot.size());
+        CHECK(snapshot[kExecutionStatsBaseLongCount] == (with_cache ? 1 : 0));
+        CHECK(snapshot[kExecutionStatsBaseLongCount + 1] == 0);
+        CHECK(snapshot[kExecutionStatsBaseLongCount + 2] == (with_cache ? 18 : 0));
+    }
+}
+
+TEST_CASE("density compiler: multi-root programs preserve XZY ordering and reuse registers") {
+    NodeArena arena;
+    const auto cached = unary(arena, NodeKind::kCache2D, gradient(arena));
+    const auto small = constant(arena, 3);
+    const auto first = binary(arena, NodeKind::kAdd, cached, small);
+    const auto second = binary(arena, NodeKind::kAdd, first, unary(arena, NodeKind::kFlatCache, gradient(arena)));
+    Node unknown{}; unknown.kind = static_cast<NodeKind>(255);
+    const auto failed = arena.push(unknown);
+    arena.root = small;
+    REQUIRE(dfc::install(arena, small));
+    arena.batch_roots = {first, second, first, failed, small};
+    REQUIRE(dfc::install_batch(arena) == 4);
+    CHECK(dfc::find_program(arena, small) == arena.compiled_program.get());
+    REQUIRE(dfc::find_program(arena, first));
+    REQUIRE(dfc::find_program(arena, second));
+    CHECK_FALSE(dfc::find_program(arena, failed));
+    CHECK_FALSE(dfc::find_program(arena, -1));
+    CHECK_FALSE(dfc::find_program(arena, 10000));
+
+    CacheState scratch;
+    scratch.resize_for(arena);
+    std::array<double, 5> column{};
+    evaluate_y_column(arena, small, 1, 2, 3, 1, 0, 0, 5, &scratch, column.data());
+    CHECK(scratch.program_values.size() == 1);
+    evaluate_y_column(arena, second, 1, 2, 3, 1, 0, 0, 5, &scratch, column.data());
+    const auto size = scratch.program_values.size();
+    const auto* registers = scratch.program_values.data();
+    CHECK(size > 1);
+    scratch.clear();
+    evaluate_y_column(arena, small, 1, 2, 3, 1, 0, 0, 5, &scratch, column.data());
+    CHECK(scratch.program_values.size() == size);
+    CHECK(scratch.program_values.data() == registers);
+
+    CacheState actual, expected;
+    actual.resize_for(arena); expected.resize_for(arena);
+    REQUIRE(actual.set_execution_stats_enabled(true));
+    const std::array<NodeRef, 6> roots{first, second, first, small, failed, kNullRef};
+    std::array<double, 6 * 2 * 2 * 5> out{};
+    evaluate_grid_roots(arena, roots.data(), static_cast<int>(roots.size()),
+                        1.25, 3, -2.5, 1, -0.5, 1, -1, 2, 2, 5, 2, &actual, out.data());
+    for (int ix = 0; ix < 2; ++ix) {
+        for (int iz = 0; iz < 2; ++iz) {
+            expected.clear_evaluation_caches();
+            for (std::size_t r = 0; r < roots.size(); ++r) {
+                for (int iy = 0; iy < 5; ++iy) {
+                    Context ctx{1.25 + static_cast<double>(ix), 3.0 + static_cast<double>(iy) * -0.5,
+                                -2.5 + static_cast<double>(iz), &expected, -1 + ix, 2 + iz};
+                    CHECK(bits(out[r * 20 + (ix * 2 + iz) * 5 + iy]) == bits(evaluate_node(arena, roots[r], ctx)));
+                }
+            }
+        }
+    }
+    check_batch_cache(actual, expected);
+    CHECK(actual.execution_stats->compiled_column_calls == 16);
+    CHECK(actual.execution_stats->compiled_points == 80);
+    CHECK(actual.execution_stats->point_fallback == 4);
+
+    NodeArena copied = arena;
+    CHECK(dfc::find_program(copied, second) == dfc::find_program(arena, second));
+    constant(arena, 7);
+    CHECK_FALSE(dfc::find_program(arena, small));
+    CHECK_FALSE(dfc::find_program(arena, second));
+    CHECK(arena.compiled_batch_programs.empty());
+    REQUIRE(dfc::install(copied, small));
+    CHECK_FALSE(dfc::find_program(copied, second));
+}
+
+TEST_CASE("density compiler: empty batches and invalid roots never execute a program") {
+    NodeArena arena;
+    const auto root = constant(arena, 3);
+    REQUIRE(dfc::install(arena, root));
+    CacheState cache;
+    REQUIRE(cache.set_execution_stats_enabled(true));
+    std::array<double, 3> out{9, 9, 9};
+    evaluate_y_column(arena, root, 0, 0, 0, 1, 0, 0, 0, &cache, out.data());
+    evaluate_y_column_fallback(arena, root, 0, 0, 0, 1, 0, 0, 3, &cache, nullptr);
+    evaluate_grid(arena, root, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, &cache, out.data());
+    CHECK(out[0] == 9);
+    evaluate_y_column(arena, -1, 0, 0, 0, 1, 0, 0, 3, &cache, out.data());
+    CHECK(out == std::array<double, 3>{0, 0, 0});
+    evaluate_grid(arena, 10000, 0, 0, 0, 1, 1, 1, 0, 0, 3, 1, 1, &cache, out.data());
+    CHECK(out == std::array<double, 3>{0, 0, 0});
+    CHECK(cache.execution_stats->compiled_points == 0);
+    CHECK(cache.program_values.empty());
 }

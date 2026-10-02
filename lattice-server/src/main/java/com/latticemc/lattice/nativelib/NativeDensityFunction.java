@@ -149,7 +149,8 @@ public final class NativeDensityFunction {
             "FlatCache", "Interpolated", "WeirdScaledSampler", "EndIslands", "Clamp", "BlendAlpha",
             "BlendOffset", "BlendDensity", "Spline", "FindTopSurface", "InterpolatedNoise", "Beardifier"
     };
-    private static final int EXECUTION_STATS_LONGS = EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length * 2;
+    private static final int EXECUTION_STATS_BASE_LONGS = EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length * 2;
+    private static final int EXECUTION_STATS_LONGS = EXECUTION_STATS_BASE_LONGS + 3;
 
     private final long handle;
     private final long cacheHandle;
@@ -1477,6 +1478,11 @@ public final class NativeDensityFunction {
             return EMPTY;
         }
 
+        public long columnCalls() { return values[0]; }
+        public long compiledGridCalls() { return values[EXECUTION_STATS_BASE_LONGS]; }
+        public long compiledColumnCalls() { return values[EXECUTION_STATS_BASE_LONGS + 1]; }
+        public long compiledPoints() { return values[EXECUTION_STATS_BASE_LONGS + 2]; }
+
         public ExecutionStatsSnapshot plus(ExecutionStatsSnapshot other) {
             if (!this.enabled) return other;
             if (!other.enabled) return this;
@@ -1506,6 +1512,9 @@ public final class NativeDensityFunction {
                     + " executionRangeMixed=" + values[10]
                     + " segmentedRangeRuns=" + values[11]
                     + " segmentedRangePoints=" + values[12]
+                    + " executionCompiledGridCalls=" + compiledGridCalls()
+                    + " executionCompiledColumnCalls=" + compiledColumnCalls()
+                    + " executionCompiledPoints=" + compiledPoints()
                     + " executionAvx2Rejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS)
                     + " executionGenericRejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length);
         }
@@ -1526,6 +1535,27 @@ public final class NativeDensityFunction {
             }
             return result.append('}').toString();
         }
+    }
+
+    // Pure layout adapter: old native libraries retain their original node
+    // offsets, and unknown layouts must never be interpreted as valid counters.
+    static long[] normalizeExecutionStats(long[] values) {
+        final int legacyLength = EXECUTION_STATS_LEGACY_HEADER_LONGS + EXECUTION_NODE_KINDS.length * 2;
+        if (values == null || (values.length != legacyLength
+                && values.length != EXECUTION_STATS_BASE_LONGS && values.length != EXECUTION_STATS_LONGS)) return null;
+        final boolean hasSegmentedRangeCounters = values.length >= EXECUTION_STATS_BASE_LONGS;
+        final int sourceNodeOffset = hasSegmentedRangeCounters ? EXECUTION_STATS_HEADER_LONGS : EXECUTION_STATS_LEGACY_HEADER_LONGS;
+        long[] normalized = new long[EXECUTION_STATS_LONGS];
+        System.arraycopy(values, 0, normalized, 0, EXECUTION_STATS_LEGACY_HEADER_LONGS);
+        if (hasSegmentedRangeCounters) {
+            normalized[11] = ExecutionStatsSnapshot.nonNegativeCounter(values[11]);
+            normalized[12] = ExecutionStatsSnapshot.nonNegativeCounter(values[12]);
+        }
+        System.arraycopy(values, sourceNodeOffset, normalized, EXECUTION_STATS_HEADER_LONGS, EXECUTION_NODE_KINDS.length * 2);
+        if (values.length == EXECUTION_STATS_LONGS) {
+            System.arraycopy(values, EXECUTION_STATS_BASE_LONGS, normalized, EXECUTION_STATS_BASE_LONGS, 3);
+        }
+        return normalized;
     }
 
     private static final class ExecutionStatsSample {
@@ -1552,39 +1582,17 @@ public final class NativeDensityFunction {
             long countedCaches = 0L;
             try {
                 for (int index = 0; index < size; index++) {
-                    long[] values = nativeGetExecutionStats(cacheHandles[index]);
-                    if (values == null || (values.length != EXECUTION_STATS_LONGS
-                            && values.length != EXECUTION_STATS_LEGACY_HEADER_LONGS
-                                + EXECUTION_NODE_KINDS.length * 2)) {
+                    long[] values = normalizeExecutionStats(nativeGetExecutionStats(cacheHandles[index]));
+                    if (values == null) {
                         return ExecutionStatsSnapshot.disabled();
                     }
-                    // Only the exact legacy (83-long) and current (85-long) layouts
-                    // are safe to interpret; unknown lengths must not shift node data.
-                    final boolean hasSegmentedRangeCounters = values.length == EXECUTION_STATS_LONGS;
-                    final int sourceNodeOffset = hasSegmentedRangeCounters
-                        ? EXECUTION_STATS_HEADER_LONGS : EXECUTION_STATS_LEGACY_HEADER_LONGS;
                     long priorDepth = totals[6];
                     long priorBytes = totals[7];
-                    for (int field = 0; field < EXECUTION_STATS_LEGACY_HEADER_LONGS; field++) {
+                    for (int field = 0; field < EXECUTION_STATS_LONGS; field++) {
                         totals[field] += values[field];
                     }
-                    if (hasSegmentedRangeCounters) {
-                        totals[11] = ExecutionStatsSnapshot.nonNegativeCounter(
-                            totals[11] + ExecutionStatsSnapshot.nonNegativeCounter(values[11]));
-                        totals[12] = ExecutionStatsSnapshot.nonNegativeCounter(
-                            totals[12] + ExecutionStatsSnapshot.nonNegativeCounter(values[12]));
-                    }
-                    final int nodeValues = Math.min(EXECUTION_NODE_KINDS.length * 2,
-                        values.length - sourceNodeOffset);
-                    final int avx2Values = Math.min(EXECUTION_NODE_KINDS.length, nodeValues);
-                    for (int field = 0; field < avx2Values; field++) {
-                        totals[EXECUTION_STATS_HEADER_LONGS + field] += values[sourceNodeOffset + field];
-                    }
-                    final int genericValues = Math.max(0, nodeValues - EXECUTION_NODE_KINDS.length);
-                    for (int field = 0; field < genericValues; field++) {
-                        totals[EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length + field]
-                            += values[sourceNodeOffset + EXECUTION_NODE_KINDS.length + field];
-                    }
+                    totals[11] = ExecutionStatsSnapshot.nonNegativeCounter(totals[11]);
+                    totals[12] = ExecutionStatsSnapshot.nonNegativeCounter(totals[12]);
                     totals[6] = Math.max(priorDepth, values[6]);
                     totals[7] = Math.max(priorBytes, values[7]);
                     countedCaches++;

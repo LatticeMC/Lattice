@@ -636,6 +636,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeConfigureShared
     if (!root_data) return 0;
 
     const std::size_t node_count = arena->nodes.size();
+    arena->compiled_batch_programs.clear();
     arena->batch_roots.clear();
     arena->batch_roots.reserve(static_cast<std::size_t>(count));
     for (jint i = 0; i < count; ++i) {
@@ -650,6 +651,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeConfigureShared
     }
     if (count <= 1) {
         root_data.release_ro();
+        (void)dfc::install_batch(*arena);
         return 0;
     }
     std::vector<std::uint8_t> reach_count(node_count, 0);
@@ -696,6 +698,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeConfigureShared
         if (node.shared_batch_leaf) ++marked;
     }
     root_data.release_ro();
+    (void)dfc::install_batch(*arena);
     return marked;
 }
 

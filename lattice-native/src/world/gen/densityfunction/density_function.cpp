@@ -209,6 +209,39 @@ struct ColumnScratchLease {
     ColumnScratchLease& operator=(const ColumnScratchLease&) = delete;
 };
 
+struct ProgramScratch {
+    std::vector<double> local;
+    double* values = nullptr;
+    std::size_t capacity = 0;
+
+    ProgramScratch(const dfc::Program* program, CacheState* cache) {
+        if (!program) return;
+        auto& storage = cache ? cache->program_values : local;
+        if (storage.size() < program->value_count) storage.resize(program->value_count);
+        values = storage.data();
+        capacity = storage.size();
+    }
+};
+
+bool evaluate_compiled_column(const NodeArena& arena, NodeRef root,
+                              double x, double y0, double z, double dy,
+                              int cellX, int cellZ, int ny,
+                              CacheState* cache, double* out) noexcept {
+    const auto* program = dfc::find_program(arena, root);
+    if (!program) return false;
+    ProgramScratch scratch(program, cache);
+    Context ctx{x, y0, z, cache, cellX, cellZ};
+    for (int iy = 0; iy < ny; ++iy) {
+        ctx.y = y0 + static_cast<double>(iy) * dy;
+        out[iy] = dfc::evaluate(*program, arena, ctx, scratch.values, scratch.capacity);
+    }
+    if (cache && cache->execution_stats) {
+        ++cache->execution_stats->compiled_column_calls;
+        cache->execution_stats->compiled_points += static_cast<std::uint64_t>(ny);
+    }
+    return true;
+}
+
 bool evaluate_y_column_fast(const NodeArena& arena, NodeRef root,
                             const Context& base,
                             double y0, double dy, int ny,
@@ -577,8 +610,8 @@ float evaluate_spline(const NodeArena& arena, SplineRef ref,
 } // namespace
 
 double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexcept {
-    if (arena.compiled_program && root == arena.compiled_program_root) {
-        return dfc::evaluate(*arena.compiled_program, arena, ctx);
+    if (const auto* program = dfc::find_program(arena, root)) {
+        return dfc::evaluate(*program, arena, ctx);
     }
     return evaluate_node(arena, root, ctx);
 }
@@ -967,6 +1000,8 @@ void evaluate_grid(const NodeArena& arena, NodeRef root,
     // hot inner loop walks ix — which matches the typical FlatCache
     // hit pattern (cellX changes per ix; the cache keys on (cellX, cellZ)
     // and stays warm as iz steps).
+    const auto* program = dfc::find_program(arena, root);
+    ProgramScratch scratch(program, cache);
     for (int iy = 0; iy < ny; ++iy) {
         ctx.y = y0 + static_cast<double>(iy) * dy;
         for (int iz = 0; iz < nz; ++iz) {
@@ -977,9 +1012,15 @@ void evaluate_grid(const NodeArena& arena, NodeRef root,
             for (int ix = 0; ix < nx; ++ix) {
                 ctx.x     = x0 + static_cast<double>(ix) * dx;
                 ctx.cellX = cellX0 + ix;
-                row[ix]   = evaluate(arena, root, ctx);
+                row[ix] = program ? dfc::evaluate(*program, arena, ctx, scratch.values, scratch.capacity)
+                                  : evaluate_node(arena, root, ctx);
             }
         }
+    }
+    if (program && cache && cache->execution_stats) {
+        ++cache->execution_stats->compiled_grid_calls;
+        cache->execution_stats->compiled_points += static_cast<std::uint64_t>(nx)
+            * static_cast<std::uint64_t>(ny) * static_cast<std::uint64_t>(nz);
     }
 }
 
@@ -1031,6 +1072,7 @@ void evaluate_y_column(const NodeArena& arena, NodeRef root,
         return;
     }
     if (cache && cache->execution_stats) ++cache->execution_stats->column_calls;
+    if (evaluate_compiled_column(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) return;
 #if defined(LATTICE_HAS_DENSITY_AVX2)
     if (lattice::cpu::features().avx2) {
         if (evaluate_y_column_avx2(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) {
@@ -1075,6 +1117,7 @@ void evaluate_y_column_fallback(const NodeArena& arena, NodeRef root,
         for (int i = 0; i < ny; ++i) out[i] = 0.0;
         return;
     }
+    if (evaluate_compiled_column(arena, root, x, y0, z, dy, cellX, cellZ, ny, cache, out)) return;
 
     Context ctx{};
     ctx.cache = cache;

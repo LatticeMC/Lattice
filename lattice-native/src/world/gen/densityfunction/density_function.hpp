@@ -198,6 +198,9 @@ struct ExecutionStats {
     std::uint64_t range_mixed = 0;
     std::uint64_t segmented_range_runs = 0;
     std::uint64_t segmented_range_points = 0;
+    std::uint64_t compiled_grid_calls = 0;
+    std::uint64_t compiled_column_calls = 0;
+    std::uint64_t compiled_points = 0;
     std::array<std::uint64_t, kNodeKindCount> avx2_rejects{};
     std::array<std::uint64_t, kNodeKindCount> generic_rejects{};
 
@@ -207,8 +210,9 @@ struct ExecutionStats {
 };
 
 inline constexpr std::size_t kExecutionStatsHeaderLongs = 13u;
-inline constexpr std::size_t kExecutionStatsLongCount =
+inline constexpr std::size_t kExecutionStatsBaseLongCount =
     kExecutionStatsHeaderLongs + kNodeKindCount * 2u;
+inline constexpr std::size_t kExecutionStatsLongCount = kExecutionStatsBaseLongCount + 3u;
 // Java decodes this fixed layout by NodeKind ordinal. Keep an explicit guard
 // here so adding a node cannot silently relabel diagnostics.
 static_assert(kNodeKindCount == 36u, "update the Java execution-stats NodeKind layout");
@@ -273,6 +277,9 @@ struct NodeArena {
     // leave this empty and continue through the recursive evaluator.
     std::shared_ptr<const dfc::Program> compiled_program;
     NodeRef compiled_program_root = kNullRef;
+    // Additional frozen batch roots, indexed by NodeRef. Empty outside batch
+    // arenas; entries share immutable programs across per-chunk caches.
+    std::vector<std::shared_ptr<const dfc::Program>> compiled_batch_programs;
 
     /// Cache-slot counters. Each cache node is assigned a slot id as
     /// it's pushed; the caller's CacheState mirrors these counts.
@@ -304,6 +311,7 @@ struct NodeArena {
     NodeRef push(Node n) {
         compiled_program.reset();
         compiled_program_root = kNullRef;
+        compiled_batch_programs.clear();
         switch (n.kind) {
             case NodeKind::kCache2D:        n.cache_slot_id = num_cache_2d_slots++;        break;
             case NodeKind::kCacheOnce:      n.cache_slot_id = num_cache_once_slots++;      break;
@@ -566,6 +574,9 @@ struct CacheState {
     std::vector<double> scratch_y;
     std::vector<double> scratch_z;
     std::vector<double> scratch_value;
+    /// Scalar Program registers, reused across all points/roots of a batch.
+    /// Opaque evaluation stays recursive and never re-enters this buffer.
+    std::vector<double> program_values;
     std::vector<std::vector<double>> scratch_columns;
     std::size_t scratch_column_depth = 0;
     /// Benchmark-only experiment: for a mixed RangeChoice column, evaluate
@@ -720,6 +731,9 @@ inline void snapshot_execution_stats(const CacheState& cache, std::int64_t* outp
         output[kExecutionStatsHeaderLongs + i] = static_cast<std::int64_t>(stats.avx2_rejects[i]);
         output[kExecutionStatsHeaderLongs + kNodeKindCount + i] = static_cast<std::int64_t>(stats.generic_rejects[i]);
     }
+    output[kExecutionStatsBaseLongCount] = static_cast<std::int64_t>(stats.compiled_grid_calls);
+    output[kExecutionStatsBaseLongCount + 1] = static_cast<std::int64_t>(stats.compiled_column_calls);
+    output[kExecutionStatsBaseLongCount + 2] = static_cast<std::int64_t>(stats.compiled_points);
 }
 
 /// Sampling context: 3D coordinates of the point being evaluated.

@@ -91,6 +91,12 @@ struct CompileResult {
 /// evaluator in that case.
 [[nodiscard]] bool install(NodeArena& arena, NodeRef root) noexcept;
 
+/// Install the frozen arena.batch_roots independently. Returns the number of
+/// successful root entries (including duplicates); failed roots keep fallback.
+[[nodiscard]] std::size_t install_batch(NodeArena& arena) noexcept;
+
+[[nodiscard]] const Program* find_program(const NodeArena& arena, NodeRef root) noexcept;
+
 /// Pass the arena from which program was compiled (or its unchanged copy).
 [[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx) noexcept;
 [[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,

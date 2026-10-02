@@ -123,17 +123,31 @@ public final class NativeDensityFunctionWorldgenBenchmark {
 
     private static void verifyParity(final Config config, final Shape shape) throws Exception {
         for (final boolean lazyMixedRange : new boolean[] {false, true}) {
-            configureNative(true, true, lazyMixedRange, false, false);
+            configureNative(true, true, lazyMixedRange, false, true);
             NativeDensityFunction.setIntOption("parityInterval", 1);
             for (final Path path : Path.values()) {
                 NativeDensityFunction.resetStats();
-                execute(path, config.seed, 0, shape);
+                NativeDensityFunction.beginExecutionStatsSample();
+                final NativeDensityFunction.ExecutionStatsSnapshot execution;
+                try {
+                    execute(path, config.seed, 0, shape);
+                } finally {
+                    execution = NativeDensityFunction.finishExecutionStatsSample();
+                }
                 final String status = NativeDensityFunction.status();
                 if (!status.contains("parity={checks=") || status.contains("parity={checks=0,") || !status.contains("failures=0")) {
                     throw new IllegalStateException("Native worldgen parity failed or was unavailable for " + path + ": " + status);
                 }
                 System.out.printf("PARITY mode=%s path=%s coverage=%s status=%s%n",
                     lazyMixedRange ? "lazy" : "eager", path, coverage(path, status), status);
+                System.out.printf("PROGRAM mode=%s path=%s %s%n",
+                    lazyMixedRange ? "lazy" : "eager", path, execution.benchmarkFields());
+                if (execution.compiledPoints() <= 0
+                        || (path == Path.GRID && execution.compiledGridCalls() <= 0)
+                        || (path == Path.SLICE && (execution.compiledColumnCalls() <= 0
+                            || execution.compiledColumnCalls() != execution.columnCalls()))) {
+                    throw new IllegalStateException("Compiled batch path did not cover " + path + ": " + execution.benchmarkFields());
+                }
             }
         }
         configureNative(false, false, false, false, false);
