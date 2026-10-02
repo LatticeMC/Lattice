@@ -320,7 +320,7 @@ if(LATTICE_ARCH_X86)
 endif()
 
 lattice_add_test(density_compile
-    SOURCES  test_density_compile.cpp
+    SOURCES  test_density_compile.cpp test_density_optimization.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/noise/perlin_noise.cpp
              ${_perlin_simd_srcs}
              ${_perlin_avx512_srcs}

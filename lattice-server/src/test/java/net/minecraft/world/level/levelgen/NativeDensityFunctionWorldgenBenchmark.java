@@ -85,11 +85,13 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             noise.height() / noise.getCellHeight(), 0, 0, 0, 0);
         final NoiseChunk chunk = newChunk(random, 0, shape);
         final NoiseRouter router = random.router().mapAll(chunk::wrap);
-        System.out.println("compiler source=vanilla-overworld wrapped=NoiseChunk blender=empty; error: -1=java-arena, 0=none, 1=root, 2=unsupported, 3=operand");
+        System.out.println("compiler source=vanilla-overworld wrapped=NoiseChunk blender=empty; error: -1=java-arena, 0=none, 1=root, 2=unsupported, 3=operand, 4=program-too-large");
         int roots = 0;
         int compiled = 0;
         long instructions = 0;
         long opaque = 0;
+        long cseHits = 0;
+        long deadInstructions = 0;
         for (final var component : NoiseRouter.class.getRecordComponents()) {
             final DensityFunction function = (DensityFunction) component.getAccessor().invoke(router);
             final var stats = NativeDensityFunction.compilerStats(function);
@@ -97,14 +99,16 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             if (stats.compiled()) compiled++;
             instructions += stats.instructions();
             opaque += stats.opaqueOps();
-            System.out.printf("COMPILER root=%s arena-built=%s compiled=%s error=%d error-node=%d instructions=%d opaque=%d opaque-ratio=%.6f%n",
+            cseHits += stats.cseHits();
+            deadInstructions += stats.deadInstructions();
+            System.out.printf("COMPILER root=%s arena-built=%s compiled=%s error=%d error-node=%d instructions=%d opaque=%d opaque-ratio=%.6f cse=%d dead=%d%n",
                 component.getName(), stats.arenaBuilt(), stats.compiled(), stats.error(), stats.errorNode(),
-                stats.instructions(), stats.opaqueOps(), stats.opaqueRatio());
+                stats.instructions(), stats.opaqueOps(), stats.opaqueRatio(), stats.cseHits(), stats.deadInstructions());
         }
         final double coverage = roots == 0 ? 0.0 : (double) compiled / roots;
         final double opaqueRatio = instructions == 0 ? Double.NaN : (double) opaque / instructions;
-        System.out.printf("COMPILER_SUMMARY roots=%d compiled=%d compile-ratio=%.6f instructions=%d opaque=%d opaque-ratio=%.6f target-met=%s%n",
-            roots, compiled, coverage, instructions, opaque, opaqueRatio, coverage >= 0.9 && opaqueRatio <= 0.3);
+        System.out.printf("COMPILER_SUMMARY roots=%d compiled=%d compile-ratio=%.6f instructions=%d opaque=%d opaque-ratio=%.6f target-met=%s cse=%d dead=%d%n",
+            roots, compiled, coverage, instructions, opaque, opaqueRatio, coverage >= 0.9 && opaqueRatio <= 0.3, cseHits, deadInstructions);
     }
 
     private static void bootstrap() {

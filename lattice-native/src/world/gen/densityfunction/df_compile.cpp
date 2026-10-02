@@ -1,10 +1,13 @@
 #include "world/gen/densityfunction/df_compile.hpp"
 #include "world/gen/densityfunction/df_compile_noise.hpp"
+#include "world/gen/densityfunction/df_compile_spline.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <bit>
+#include <map>
 #include "lattice/dispatch.hpp"
 
 namespace lattice::world::gen::densityfunction::dfc {
@@ -20,10 +23,16 @@ inline double quarter_negative(double v) noexcept;
 inline double squeeze(double v) noexcept;
 inline double map_range(double v, double a, double b, double c, double d) noexcept;
 inline double clamp_d(double v, double lo, double hi) noexcept;
+unsigned operands(Op op) noexcept;
+
+bool pure_operation(Op op) noexcept {
+    return op <= Op::kClamp || (op >= Op::kNoise && op <= Op::kInterpolatedNoise);
+}
 
 struct Builder {
     const NodeArena& arena;
     bool cacheless;
+    CompileOptions options;
     CompileResult result;
     std::vector<std::uint32_t> slots;
     std::vector<std::uint8_t> visiting;
@@ -31,8 +40,11 @@ struct Builder {
     std::vector<std::uint8_t> spline_visiting;
     std::vector<std::uint8_t> is_constant;
     std::vector<double> constant_values;
+    std::vector<std::uint8_t> pure_values;
+    using Expression = std::array<std::uint64_t, 9>;
+    std::map<Expression, std::uint32_t> expressions;
 
-    explicit Builder(const NodeArena& input, bool without_cache = false) : arena(input), cacheless(without_cache),
+    explicit Builder(const NodeArena& input, bool without_cache, CompileOptions settings) : arena(input), cacheless(without_cache), options(settings),
         slots(input.nodes.size(), std::numeric_limits<std::uint32_t>::max()),
         visiting(input.nodes.size(), 0), pure(input.nodes.size(), 0),
         spline_visiting(input.splines.size(), 0) {}
@@ -171,10 +183,26 @@ struct Builder {
             copy.op = Op::kConstant;
             copy.imm0 = folded;
         }
+        bool reusable = pure_operation(copy.op);
+        const auto n = operands(copy.op);
+        if (n > 0) reusable &= pure_values[copy.s0] != 0;
+        if (n > 1) reusable &= pure_values[copy.s1] != 0;
+        if (n > 2) reusable &= pure_values[copy.s2] != 0;
+        const Expression key{static_cast<std::uint64_t>(copy.op),
+            n > 0 ? copy.s0 : 0u, n > 1 ? copy.s1 : 0u, n > 2 ? copy.s2 : 0u,
+            std::bit_cast<std::uint64_t>(copy.imm0), std::bit_cast<std::uint64_t>(copy.imm1),
+            std::bit_cast<std::uint64_t>(copy.imm2), std::bit_cast<std::uint64_t>(copy.imm3),
+            copy.op <= Op::kClamp ? 0u : static_cast<std::uint32_t>(copy.ref)};
+        if (reusable) {
+            const auto found = expressions.find(key);
+            if (found != expressions.end()) { ++result.program.cse_hits; return found->second; }
+        }
         copy.dst = result.program.value_count++;
         result.program.code.push_back(copy);
         is_constant.push_back(copy.op == Op::kConstant);
         constant_values.push_back(copy.op == Op::kConstant ? copy.imm0 : 0.0);
+        pure_values.push_back(reusable);
+        if (reusable) expressions.emplace(key, copy.dst);
         return copy.dst;
     }
 
@@ -186,8 +214,10 @@ struct Builder {
     // A conditionally executed definition cannot dominate code after the join.
     std::uint32_t conditional_child(NodeRef ref) {
         const auto before = slots;
+        const auto before_expressions = expressions;
         const auto value = child(ref);
         slots = before;
+        expressions = before_expressions;
         return value;
     }
 
@@ -230,6 +260,10 @@ struct Builder {
             case NodeKind::kAdd: case NodeKind::kMul: case NodeKind::kMin: case NodeKind::kMax: {
                 if (node.kind == NodeKind::kMul && node.a != node.b && !pure[node.b]) {
                     instr.s0 = child(node.a); instr.op = Op::kBranchZero;
+                    if (result.error != CompileError::kNone) return 0;
+                    if (is_constant[instr.s0] && constant_values[instr.s0] == 0.0) {
+                        Instr zero{}; value = emit(zero); break;
+                    }
                     const auto branch = result.program.code.size();
                     value = emit(instr);
                     const auto rhs = conditional_child(node.b);
@@ -287,7 +321,11 @@ struct Builder {
                 const auto probe = result.program.code.size();
                 value = emit(instr);
                 std::uint32_t input;
-                if (node.a == kNullRef) { Instr zero{}; input = emit(zero); }
+                if (node.a == kNullRef) {
+                    const auto before = expressions;
+                    Instr zero{}; input = emit(zero);
+                    expressions = before;
+                }
                 else input = conditional_child(node.a);
                 if (result.error != CompileError::kNone) return 0;
                 write_result(Op::kCacheStore, value, input, ref);
@@ -295,6 +333,16 @@ struct Builder {
                 break;
             }
             case NodeKind::kSpline:
+                if (options.experimental_spline_coefficients_f32) {
+                    ++result.program.spline_candidates;
+                    auto coefficients = detail::spline_coefficients(arena, node.i0);
+                    if (coefficients) {
+                        instr.op = Op::kSplineCoefficientsF32; instr.ref = ref;
+                        instr.auxiliary = static_cast<std::uint32_t>(result.program.spline_coefficients.size());
+                        result.program.spline_coefficients.push_back(std::move(*coefficients));
+                        value = emit(instr); break;
+                    }
+                }
                 instr.op = Op::kOpaqueSpline; instr.ref = ref; value = emit(instr); break;
             case NodeKind::kBeardifier:
                 instr.op = Op::kOpaqueBeardifier; instr.ref = ref; value = emit(instr); break;
@@ -306,7 +354,13 @@ struct Builder {
                 instr.op = Op::kOpaqueFindTopSurface; instr.ref = ref; value = emit(instr); break;
             case NodeKind::kRangeChoice: {
                 instr.s0 = child(node.a); instr.op = Op::kBranchRange;
+                if (result.error != CompileError::kNone) return 0;
                 if (node.b == node.c) { value = child(node.b); break; }
+                if (is_constant[instr.s0]) {
+                    const auto selector = constant_values[instr.s0];
+                    value = child(selector >= node.d0 && selector < node.d1 ? node.b : node.c);
+                    break;
+                }
                 instr.imm0 = node.d0; instr.imm1 = node.d1;
                 const auto branch = result.program.code.size();
                 value = emit(instr);
@@ -372,8 +426,8 @@ bool jumps(Op op) noexcept {
         || op == Op::kBranchRange || op == Op::kJump;
 }
 
-CompileResult compile_one(const NodeArena& arena, NodeRef root, bool cacheless) {
-    Builder builder(arena, cacheless);
+CompileResult compile_one(const NodeArena& arena, NodeRef root, bool cacheless, CompileOptions options) {
+    Builder builder(arena, cacheless, options);
     if (root < 0 || root >= static_cast<NodeRef>(arena.nodes.size())) {
         builder.result.error = CompileError::kInvalidRoot;
         builder.result.error_node = root;
@@ -389,7 +443,7 @@ CompileResult compile_one(const NodeArena& arena, NodeRef root, bool cacheless) 
     used[program.result] = 1;
     // State and control instructions are roots of liveness in their own right.
     for (const auto& instr : program.code)
-        if (instr.op >= Op::kOpaqueNoise && instr.op != Op::kCopy) used[instr.dst] = 1;
+        if (!pure_operation(instr.op) && instr.op != Op::kCopy) used[instr.dst] = 1;
     for (auto it = program.code.rbegin(); it != program.code.rend(); ++it) {
         if (!used[it->dst]) continue;
         const unsigned n = operands(it->op);
@@ -422,6 +476,7 @@ CompileResult compile_one(const NodeArena& arena, NodeRef root, bool cacheless) 
     }
     program.result = remap[program.result];
     program.value_count = count;
+    program.dead_instructions = program.code.size() - compact.size();
     program.code = std::move(compact);
     std::vector<unsigned> definitions(count, 0);
     for (const auto& instr : program.code) ++definitions[instr.dst];
@@ -429,7 +484,7 @@ CompileResult compile_one(const NodeArena& arena, NodeRef root, bool cacheless) 
     for (std::size_t pc = 0; pc < program.code.size(); ++pc) {
         const auto& instr = program.code[pc];
         if (definitions[instr.dst] != 1) continue;
-        if (!(instr.op <= Op::kClamp || instr.op >= Op::kNoise)) continue;
+        if (!pure_operation(instr.op)) continue;
         const auto n = operands(instr.op);
         if (n > 0 && program.pure_definitions[instr.s0] == absent) continue;
         if (n > 1 && program.pure_definitions[instr.s1] == absent) continue;
@@ -440,10 +495,10 @@ CompileResult compile_one(const NodeArena& arena, NodeRef root, bool cacheless) 
 }
 } // namespace
 
-CompileResult compile(const NodeArena& arena, NodeRef root) noexcept {
-    auto result = compile_one(arena, root, false);
+CompileResult compile(const NodeArena& arena, NodeRef root, CompileOptions options) noexcept {
+    auto result = compile_one(arena, root, false, options);
     if (result) {
-        auto no_cache = compile_one(arena, root, true);
+        auto no_cache = compile_one(arena, root, true, options);
         if (no_cache && no_cache.program.eliminated_caches > result.program.eliminated_caches)
             result.program.cacheless = std::make_shared<Program>(std::move(no_cache.program));
     }
@@ -738,6 +793,9 @@ double run(const Program& program, const NodeArena& arena, const Context& ctx,
                 value = evaluate_node(arena, instr.ref, ctx); break;
             case Op::kNoise: case Op::kShiftedNoise: case Op::kWeirdNoise: case Op::kInterpolatedNoise:
                 value = detail::scalar_noise(arena.nodes[instr.ref], ctx, a, b, c); break;
+            case Op::kSplineCoefficientsF32:
+                value = detail::evaluate_spline_coefficients(program.spline_coefficients[instr.auxiliary],
+                    arena, arena.nodes[instr.ref].i0, ctx); break;
             default: value = scalar_math(instr, ctx, a, b, c); break;
         }
         if (instr.dst < program.value_count) values[instr.dst] = value;

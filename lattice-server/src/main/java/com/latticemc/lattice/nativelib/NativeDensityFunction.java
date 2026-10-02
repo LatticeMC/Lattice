@@ -1298,17 +1298,19 @@ public final class NativeDensityFunction {
         if (handle == 0L) throw new OutOfMemoryError("density compiler stats arena");
         try {
             int root = new Compiler(handle, function, false, true).compile(function);
-            if (root < 0) return new CompilerStats(false, -1, root, 0, 0);
+            if (root < 0) return new CompilerStats(false, -1, root, 0, 0, 0, 0);
             long[] values = nativeGetCompilerStats(handle, root);
-            if (values == null || values.length != 4) throw new IllegalStateException("Invalid density compiler stats");
-            return new CompilerStats(true, (int) values[0], (int) values[1], values[2], values[3]);
+            if (values == null || (values.length != 4 && values.length != 6)) throw new IllegalStateException("Invalid density compiler stats");
+            return new CompilerStats(true, (int) values[0], (int) values[1], values[2], values[3],
+                values.length == 6 ? values[4] : 0, values.length == 6 ? values[5] : 0);
         } finally {
             destroyArena(handle);
             java.lang.ref.Reference.reachabilityFence(function);
         }
     }
 
-    public record CompilerStats(boolean arenaBuilt, int error, int errorNode, long instructions, long opaqueOps) {
+    public record CompilerStats(boolean arenaBuilt, int error, int errorNode, long instructions, long opaqueOps,
+                                long cseHits, long deadInstructions) {
         public boolean compiled() { return arenaBuilt && error == 0; }
         public double opaqueRatio() { return instructions == 0 ? Double.NaN : (double) opaqueOps / instructions; }
     }

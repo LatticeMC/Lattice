@@ -47,6 +47,7 @@ enum class Op : std::uint8_t {
     kShiftedNoise,
     kWeirdNoise,
     kInterpolatedNoise,
+    kSplineCoefficientsF32,
 };
 
 struct Instr {
@@ -61,6 +62,16 @@ struct Instr {
     double imm3 = 0.0;
     NodeRef ref = kNullRef;
     std::uint32_t target = 0; // Absolute forward instruction index.
+    std::uint32_t auxiliary = 0;
+};
+
+struct SplineSegmentF32 {
+    float reciprocal_span;
+    float left_slope_span;
+    float neg_right_slope_span;
+};
+struct SplineCoefficientsF32 {
+    std::vector<SplineSegmentF32> segments;
 };
 
 struct Program {
@@ -72,6 +83,10 @@ struct Program {
     std::size_t eliminated_caches = 0;
     // Final slot -> sole context-pure producer PC, or UINT32_MAX.
     std::vector<std::uint32_t> pure_definitions;
+    std::size_t cse_hits = 0;
+    std::size_t dead_instructions = 0;
+    std::size_t spline_candidates = 0;
+    std::vector<SplineCoefficientsF32> spline_coefficients;
 
     [[nodiscard]] std::size_t opaque_count() const noexcept {
         std::size_t count = 0;
@@ -103,7 +118,10 @@ struct CompileResult {
 
 /// Compile arithmetic around opaque recursive subtrees. Only fully pure
 /// subtrees may reuse values. The source arena must stay frozen during use.
-[[nodiscard]] CompileResult compile(const NodeArena& arena, NodeRef root) noexcept;
+struct CompileOptions {
+    bool experimental_spline_coefficients_f32 = false;
+};
+[[nodiscard]] CompileResult compile(const NodeArena& arena, NodeRef root, CompileOptions options = {}) noexcept;
 
 /// Compile and install a hybrid program on an arena after construction. Returns
 /// false for unknown kinds or invalid graphs; the arena remains on the recursive

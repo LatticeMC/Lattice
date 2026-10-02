@@ -922,10 +922,12 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeGetCompilerStat
         return nullptr;
     }
     const auto compiled = dfc::compile(*arena, root);
-    const std::array<jlong, 4> values{
+    const std::array<jlong, 6> values{
         static_cast<jlong>(compiled.error), compiled.error_node,
         compiled ? static_cast<jlong>(compiled.program.code.size()) : 0,
         compiled ? static_cast<jlong>(compiled.program.opaque_count()) : 0,
+        compiled ? static_cast<jlong>(compiled.program.cse_hits) : 0,
+        compiled ? static_cast<jlong>(compiled.program.dead_instructions) : 0,
     };
     auto* output = env->NewLongArray(static_cast<jsize>(values.size()));
     if (!output) return nullptr;
