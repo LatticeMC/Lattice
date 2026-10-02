@@ -150,7 +150,7 @@ public final class NativeDensityFunction {
             "BlendOffset", "BlendDensity", "Spline", "FindTopSurface", "InterpolatedNoise", "Beardifier"
     };
     private static final int EXECUTION_STATS_BASE_LONGS = EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length * 2;
-    private static final int EXECUTION_STATS_LONGS = EXECUTION_STATS_BASE_LONGS + 5;
+    private static final int EXECUTION_STATS_LONGS = EXECUTION_STATS_BASE_LONGS + 7;
 
     private final long handle;
     private final long cacheHandle;
@@ -1484,6 +1484,8 @@ public final class NativeDensityFunction {
         public long compiledPoints() { return values[EXECUTION_STATS_BASE_LONGS + 2]; }
         public long compiledNoiseBatches() { return values[EXECUTION_STATS_BASE_LONGS + 3]; }
         public long compiledNoisePoints() { return values[EXECUTION_STATS_BASE_LONGS + 4]; }
+        public long compiledAvx2Ops() { return values[EXECUTION_STATS_BASE_LONGS + 5]; }
+        public long compiledAvx2Lanes() { return values[EXECUTION_STATS_BASE_LONGS + 6]; }
 
         public ExecutionStatsSnapshot plus(ExecutionStatsSnapshot other) {
             if (!this.enabled) return other;
@@ -1519,6 +1521,8 @@ public final class NativeDensityFunction {
                     + " executionCompiledPoints=" + compiledPoints()
                     + " executionCompiledNoiseBatches=" + compiledNoiseBatches()
                     + " executionCompiledNoisePoints=" + compiledNoisePoints()
+                    + " executionCompiledAvx2Ops=" + compiledAvx2Ops()
+                    + " executionCompiledAvx2Lanes=" + compiledAvx2Lanes()
                     + " executionAvx2Rejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS)
                     + " executionGenericRejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length);
         }
@@ -1547,7 +1551,7 @@ public final class NativeDensityFunction {
         final int legacyLength = EXECUTION_STATS_LEGACY_HEADER_LONGS + EXECUTION_NODE_KINDS.length * 2;
         if (values == null || (values.length != legacyLength
                 && values.length != EXECUTION_STATS_BASE_LONGS && values.length != EXECUTION_STATS_BASE_LONGS + 3
-                && values.length != EXECUTION_STATS_LONGS)) return null;
+                && values.length != EXECUTION_STATS_BASE_LONGS + 5 && values.length != EXECUTION_STATS_LONGS)) return null;
         final boolean hasSegmentedRangeCounters = values.length >= EXECUTION_STATS_BASE_LONGS;
         final int sourceNodeOffset = hasSegmentedRangeCounters ? EXECUTION_STATS_HEADER_LONGS : EXECUTION_STATS_LEGACY_HEADER_LONGS;
         long[] normalized = new long[EXECUTION_STATS_LONGS];

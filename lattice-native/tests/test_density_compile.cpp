@@ -7,6 +7,7 @@
 #include <string>
 
 #include <doctest/doctest.h>
+#include "lattice/dispatch.hpp"
 
 #include "world/gen/densityfunction/df_compile.hpp"
 
@@ -910,6 +911,56 @@ TEST_CASE("density compiler: batch noise retains empty octave-array semantics") 
         for (std::size_t i = 0; i < points.size(); ++i) {
             CHECK(bits(output[i]) == bits(evaluate_node(arena, root, points[i])));
             CHECK(output[i] == 0);
+        }
+    }
+}
+
+
+TEST_CASE("density compiler: AVX2 arithmetic preserves every scalar opcode bit pattern") {
+    NodeArena arena;
+    const double nan = std::bit_cast<double>(std::uint64_t{0x7ff8000000000042});
+    const double nan2 = std::bit_cast<double>(std::uint64_t{0x7ff8000000000013});
+    const double inf = std::numeric_limits<double>::infinity();
+    for (unsigned opcode = 0; opcode <= static_cast<unsigned>(dfc::Op::kClamp); ++opcode) {
+        dfc::Program program;
+        for (unsigned i = 0; i < 3; ++i) {
+            dfc::Instr coordinate{}; coordinate.op = static_cast<dfc::Op>(static_cast<unsigned>(dfc::Op::kCoordX) + i);
+            coordinate.dst = i; program.code.push_back(coordinate);
+        }
+        dfc::Instr instr{}; instr.op = static_cast<dfc::Op>(opcode); instr.dst = 3;
+        instr.s0 = 0; instr.s1 = 1; instr.s2 = 2;
+        instr.imm0 = -1.3; instr.imm1 = 9.7; instr.imm2 = -2.1; instr.imm3 = 3.4;
+        program.code.push_back(instr); program.value_count = 4; program.result = 3;
+        program.pure_definitions = {0, 1, 2, 3};
+        for (int group = 0; group < 5; ++group) {
+            CacheState state; state.execution_stats = std::make_unique<ExecutionStats>();
+            std::array<Context, 7> points{{{nan, nan2, 1, &state}, {-0.0, 0.0, -0.0, &state},
+                {inf, -inf, 0, &state}, {1.2345678901, -9.8765432109, 0.3, &state},
+                {-0.3, 0.7, 1.1, &state}, {0, 0, 0, &state}, {-inf, nan, 0, &state}}};
+            if (group == 1) for (auto& point : points) std::swap(point.x, point.y);
+            if (group == 2) for (std::size_t i = 0; i < points.size(); ++i) {
+                points[i].x = 0.17 * double(i) - 0.37; points[i].y = -0.3 * double(i); points[i].z = 0.33;
+            }
+            if (group == 3) for (std::size_t i = 0; i < points.size(); ++i) {
+                points[i].x = i % 2 ? 0.0 : -0.0; points[i].y = i % 2 ? -0.0 : 0.0; points[i].z = -0.0;
+            }
+            if (group == 4) for (std::size_t i = 0; i < points.size(); ++i) {
+                points[i].x = i % 2 ? std::numeric_limits<double>::max() : -std::numeric_limits<double>::max();
+                points[i].y = points[i].x; points[i].z = 0.0;
+            }
+            std::array<double, 7> output, scalar_batch;
+            dfc::BatchScratch scratch;
+            dfc::evaluate_batch(program, arena, points.data(), points.size(), output.data(), scratch);
+            CHECK((state.execution_stats->compiled_avx2_ops > 0) == lattice::cpu::features().avx2);
+            const auto ops = state.execution_stats->compiled_avx2_ops;
+            if (group >= 2) CHECK(ops == (lattice::cpu::features().avx2 ? 4 : 0)); // Three coordinates AND the target opcode.
+            dfc::evaluate_batch(program, arena, points.data(), points.size(), scalar_batch.data(), scratch, dfc::BatchBackend::kScalar);
+            CHECK(state.execution_stats->compiled_avx2_ops == ops);
+            for (std::size_t i = 0; i < points.size(); ++i) {
+                INFO(opcode, " group=", group, " lane=", i);
+                CHECK(bits(output[i]) == bits(dfc::evaluate(program, arena, points[i])));
+                CHECK(bits(output[i]) == bits(scalar_batch[i]));
+            }
         }
     }
 }

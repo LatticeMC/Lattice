@@ -208,6 +208,8 @@ struct ExecutionStats {
     std::uint64_t compiled_points = 0;
     std::uint64_t compiled_noise_batches = 0;
     std::uint64_t compiled_noise_points = 0;
+    std::uint64_t compiled_avx2_ops = 0;
+    std::uint64_t compiled_avx2_lanes = 0;
     std::array<std::uint64_t, kNodeKindCount> avx2_rejects{};
     std::array<std::uint64_t, kNodeKindCount> generic_rejects{};
 
@@ -219,7 +221,7 @@ struct ExecutionStats {
 inline constexpr std::size_t kExecutionStatsHeaderLongs = 13u;
 inline constexpr std::size_t kExecutionStatsBaseLongCount =
     kExecutionStatsHeaderLongs + kNodeKindCount * 2u;
-inline constexpr std::size_t kExecutionStatsLongCount = kExecutionStatsBaseLongCount + 5u;
+inline constexpr std::size_t kExecutionStatsLongCount = kExecutionStatsBaseLongCount + 7u;
 // Java decodes this fixed layout by NodeKind ordinal. Keep an explicit guard
 // here so adding a node cannot silently relabel diagnostics.
 static_assert(kNodeKindCount == 36u, "update the Java execution-stats NodeKind layout");
@@ -743,6 +745,8 @@ inline void snapshot_execution_stats(const CacheState& cache, std::int64_t* outp
     output[kExecutionStatsBaseLongCount + 2] = static_cast<std::int64_t>(stats.compiled_points);
     output[kExecutionStatsBaseLongCount + 3] = static_cast<std::int64_t>(stats.compiled_noise_batches);
     output[kExecutionStatsBaseLongCount + 4] = static_cast<std::int64_t>(stats.compiled_noise_points);
+    output[kExecutionStatsBaseLongCount + 5] = static_cast<std::int64_t>(stats.compiled_avx2_ops);
+    output[kExecutionStatsBaseLongCount + 6] = static_cast<std::int64_t>(stats.compiled_avx2_lanes);
 }
 
 /// Sampling context: 3D coordinates of the point being evaluated.

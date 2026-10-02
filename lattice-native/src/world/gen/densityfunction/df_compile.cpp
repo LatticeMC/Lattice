@@ -5,8 +5,13 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include "lattice/dispatch.hpp"
 
 namespace lattice::world::gen::densityfunction::dfc {
+
+#if defined(LATTICE_HAS_DENSITY_AVX2)
+bool evaluate_math_avx2(const Instr&, const Context*, const double*, const double*, const double*, double*) noexcept;
+#endif
 
 namespace {
 
@@ -606,6 +611,7 @@ struct BatchState {
     const Context* contexts;
     std::size_t count;
     BatchScratch& scratch;
+    bool vector_math;
 
     bool is_pure(std::uint32_t slot) const noexcept {
         return slot < program.pure_definitions.size()
@@ -654,6 +660,21 @@ struct BatchState {
                 ++stats.compiled_noise_batches; stats.compiled_noise_points += active;
             }
         } else {
+#if defined(LATTICE_HAS_DENSITY_AVX2)
+            if (vector_math && count == 4 && mask == 15
+                && evaluate_math_avx2(instr, contexts,
+                    n > 0 ? &scratch.memo[inputs[0] * 4u] : nullptr,
+                    n > 1 ? &scratch.memo[inputs[1] * 4u] : nullptr,
+                    n > 2 ? &scratch.memo[inputs[2] * 4u] : nullptr,
+                    &scratch.memo[slot * 4u])) {
+                scratch.ready[slot] = 15;
+                if (contexts[0].cache && contexts[0].cache->execution_stats) {
+                    auto& stats = *contexts[0].cache->execution_stats;
+                    ++stats.compiled_avx2_ops; stats.compiled_avx2_lanes += 4;
+                }
+                return;
+            }
+#endif
             for (std::size_t lane = 0; lane < count; ++lane) if (mask & (1u << lane)) {
                 scratch.memo[slot * 4u + lane] = scalar_math(instr, contexts[lane], source(0, lane), source(1, lane), source(2, lane));
                 scratch.ready[slot] |= static_cast<std::uint8_t>(1u << lane);
@@ -737,7 +758,8 @@ double evaluate(const Program& program, const NodeArena& arena, const Context& c
 }
 
 void evaluate_batch(const Program& program, const NodeArena& arena,
-                    const Context* contexts, std::size_t count, double* out, BatchScratch& scratch) noexcept {
+                    const Context* contexts, std::size_t count, double* out, BatchScratch& scratch,
+                    BatchBackend backend) noexcept {
     if (!contexts || !out || count == 0) return;
     for (std::size_t first = 0; first < count;) {
         const bool cacheless = !contexts[first].cache && program.cacheless;
@@ -748,7 +770,8 @@ void evaluate_batch(const Program& program, const NodeArena& arena,
         if (scratch.values.size() < selected.value_count) scratch.values.resize(selected.value_count);
         if (scratch.memo.size() < selected.value_count * 4u) scratch.memo.resize(selected.value_count * 4u);
         scratch.ready.assign(selected.value_count, 0);
-        BatchState state{selected, arena, contexts + first, lanes, scratch};
+        BatchState state{selected, arena, contexts + first, lanes, scratch,
+            backend == BatchBackend::kAuto && lattice::cpu::features().avx2};
         for (std::size_t lane = 0; lane < lanes; ++lane)
             out[first + lane] = run(selected, arena, contexts[first + lane], scratch.values.data(), scratch.values.size(), &state, lane);
         first += lanes;

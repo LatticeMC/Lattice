@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 class NativeDensityExecutionStatsTestSuite {
     @Test
     void preservesNodeOffsetsAndAppendsProgramCountersForEachKnownLayout() {
-        for (int length : new int[] {83, 85, 88, 90}) {
+        for (int length : new int[] {83, 85, 88, 90, 92}) {
             long[] input = new long[length];
             int nodeOffset = length == 83 ? 11 : 13;
             input[0] = 7;
@@ -24,10 +24,11 @@ class NativeDensityExecutionStatsTestSuite {
                 input[86] = 23;
                 input[87] = 29;
             }
-            if (length == 90) { input[88] = 31; input[89] = 37; }
+            if (length >= 90) { input[88] = 31; input[89] = 37; }
+            if (length == 92) { input[90] = 41; input[91] = 43; }
             long[] result = NativeDensityFunction.normalizeExecutionStats(input);
             assertNotNull(result);
-            assertEquals(90, result.length);
+            assertEquals(92, result.length);
             assertEquals(7, result[0]);
             assertEquals(3, result[6]);
             for (int node = 0; node < 72; node++) assertEquals(100 + node, result[13 + node]);
@@ -36,15 +37,17 @@ class NativeDensityExecutionStatsTestSuite {
             assertEquals(length >= 88 ? 19 : 0, result[85]);
             assertEquals(length >= 88 ? 23 : 0, result[86]);
             assertEquals(length >= 88 ? 29 : 0, result[87]);
-            assertEquals(length == 90 ? 31 : 0, result[88]);
-            assertEquals(length == 90 ? 37 : 0, result[89]);
+            assertEquals(length >= 90 ? 31 : 0, result[88]);
+            assertEquals(length >= 90 ? 37 : 0, result[89]);
+            assertEquals(length == 92 ? 41 : 0, result[90]);
+            assertEquals(length == 92 ? 43 : 0, result[91]);
         }
     }
 
     @Test
     void rejectsUnknownLayoutsAndRetainsSegmentedCounterNormalization() {
         assertNull(NativeDensityFunction.normalizeExecutionStats(null));
-        for (int length : new int[] {0, 82, 84, 86, 87, 89}) {
+        for (int length : new int[] {0, 82, 84, 86, 87, 89, 91, 93}) {
             assertNull(NativeDensityFunction.normalizeExecutionStats(new long[length]));
         }
         long[] input = new long[85];

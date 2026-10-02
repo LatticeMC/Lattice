@@ -122,9 +122,10 @@ struct CompileResult {
                               double* values, std::size_t value_capacity) noexcept;
 
 /// Keeps cache/opaque execution point-major; batches only pure dependencies.
+enum class BatchBackend : std::uint8_t { kAuto, kScalar };
 void evaluate_batch(const Program& program, const NodeArena& arena,
                     const Context* contexts, std::size_t count, double* out,
-                    BatchScratch& scratch) noexcept;
+                    BatchScratch& scratch, BatchBackend backend = BatchBackend::kAuto) noexcept;
 
 [[nodiscard]] const char* compile_error_name(CompileError error) noexcept;
 

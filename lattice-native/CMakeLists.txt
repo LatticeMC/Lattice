@@ -520,11 +520,13 @@ if(LATTICE_ARCH_X86 AND LATTICE_ENABLE_SIMD)
     if(MSVC)
         lattice_add_simd_object(lattice_density_function_avx2
             SOURCES src/world/gen/densityfunction/density_function_avx2.cpp
-            FLAGS   /arch:AVX2)
+                    src/world/gen/densityfunction/df_compile_avx2.cpp
+            FLAGS   /arch:AVX2 /fp:strict)
     else()
         lattice_add_simd_object(lattice_density_function_avx2
             SOURCES src/world/gen/densityfunction/density_function_avx2.cpp
-            FLAGS   -mavx2)
+                    src/world/gen/densityfunction/df_compile_avx2.cpp
+            FLAGS   -mavx2 -ffp-contract=off)
     endif()
 endif()
 
