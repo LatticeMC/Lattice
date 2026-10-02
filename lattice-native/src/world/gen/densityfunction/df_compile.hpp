@@ -43,6 +43,10 @@ enum class Op : std::uint8_t {
     kBranchRange,
     kJump,
     kCopy,
+    kNoise,
+    kShiftedNoise,
+    kWeirdNoise,
+    kInterpolatedNoise,
 };
 
 struct Instr {
@@ -66,6 +70,8 @@ struct Program {
     // Selected only when Context::cache is null; never discards warm state.
     std::shared_ptr<const Program> cacheless;
     std::size_t eliminated_caches = 0;
+    // Final slot -> sole context-pure producer PC, or UINT32_MAX.
+    std::vector<std::uint32_t> pure_definitions;
 
     [[nodiscard]] std::size_t opaque_count() const noexcept {
         std::size_t count = 0;
@@ -114,6 +120,11 @@ struct CompileResult {
 [[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx) noexcept;
 [[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
                               double* values, std::size_t value_capacity) noexcept;
+
+/// Keeps cache/opaque execution point-major; batches only pure dependencies.
+void evaluate_batch(const Program& program, const NodeArena& arena,
+                    const Context* contexts, std::size_t count, double* out,
+                    BatchScratch& scratch) noexcept;
 
 [[nodiscard]] const char* compile_error_name(CompileError error) noexcept;
 

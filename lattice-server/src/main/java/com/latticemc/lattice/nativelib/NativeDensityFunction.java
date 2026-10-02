@@ -150,7 +150,7 @@ public final class NativeDensityFunction {
             "BlendOffset", "BlendDensity", "Spline", "FindTopSurface", "InterpolatedNoise", "Beardifier"
     };
     private static final int EXECUTION_STATS_BASE_LONGS = EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length * 2;
-    private static final int EXECUTION_STATS_LONGS = EXECUTION_STATS_BASE_LONGS + 3;
+    private static final int EXECUTION_STATS_LONGS = EXECUTION_STATS_BASE_LONGS + 5;
 
     private final long handle;
     private final long cacheHandle;
@@ -1482,6 +1482,8 @@ public final class NativeDensityFunction {
         public long compiledGridCalls() { return values[EXECUTION_STATS_BASE_LONGS]; }
         public long compiledColumnCalls() { return values[EXECUTION_STATS_BASE_LONGS + 1]; }
         public long compiledPoints() { return values[EXECUTION_STATS_BASE_LONGS + 2]; }
+        public long compiledNoiseBatches() { return values[EXECUTION_STATS_BASE_LONGS + 3]; }
+        public long compiledNoisePoints() { return values[EXECUTION_STATS_BASE_LONGS + 4]; }
 
         public ExecutionStatsSnapshot plus(ExecutionStatsSnapshot other) {
             if (!this.enabled) return other;
@@ -1515,6 +1517,8 @@ public final class NativeDensityFunction {
                     + " executionCompiledGridCalls=" + compiledGridCalls()
                     + " executionCompiledColumnCalls=" + compiledColumnCalls()
                     + " executionCompiledPoints=" + compiledPoints()
+                    + " executionCompiledNoiseBatches=" + compiledNoiseBatches()
+                    + " executionCompiledNoisePoints=" + compiledNoisePoints()
                     + " executionAvx2Rejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS)
                     + " executionGenericRejects=" + nodeKindCounts(EXECUTION_STATS_HEADER_LONGS + EXECUTION_NODE_KINDS.length);
         }
@@ -1542,7 +1546,8 @@ public final class NativeDensityFunction {
     static long[] normalizeExecutionStats(long[] values) {
         final int legacyLength = EXECUTION_STATS_LEGACY_HEADER_LONGS + EXECUTION_NODE_KINDS.length * 2;
         if (values == null || (values.length != legacyLength
-                && values.length != EXECUTION_STATS_BASE_LONGS && values.length != EXECUTION_STATS_LONGS)) return null;
+                && values.length != EXECUTION_STATS_BASE_LONGS && values.length != EXECUTION_STATS_BASE_LONGS + 3
+                && values.length != EXECUTION_STATS_LONGS)) return null;
         final boolean hasSegmentedRangeCounters = values.length >= EXECUTION_STATS_BASE_LONGS;
         final int sourceNodeOffset = hasSegmentedRangeCounters ? EXECUTION_STATS_HEADER_LONGS : EXECUTION_STATS_LEGACY_HEADER_LONGS;
         long[] normalized = new long[EXECUTION_STATS_LONGS];
@@ -1552,8 +1557,8 @@ public final class NativeDensityFunction {
             normalized[12] = ExecutionStatsSnapshot.nonNegativeCounter(values[12]);
         }
         System.arraycopy(values, sourceNodeOffset, normalized, EXECUTION_STATS_HEADER_LONGS, EXECUTION_NODE_KINDS.length * 2);
-        if (values.length == EXECUTION_STATS_LONGS) {
-            System.arraycopy(values, EXECUTION_STATS_BASE_LONGS, normalized, EXECUTION_STATS_BASE_LONGS, 3);
+        if (values.length > EXECUTION_STATS_BASE_LONGS) {
+            System.arraycopy(values, EXECUTION_STATS_BASE_LONGS, normalized, EXECUTION_STATS_BASE_LONGS, values.length - EXECUTION_STATS_BASE_LONGS);
         }
         return normalized;
     }

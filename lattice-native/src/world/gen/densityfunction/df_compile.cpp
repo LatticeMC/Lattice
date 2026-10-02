@@ -1,4 +1,5 @@
 #include "world/gen/densityfunction/df_compile.hpp"
+#include "world/gen/densityfunction/df_compile_noise.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -251,9 +252,22 @@ struct Builder {
             case NodeKind::kClamp:
                 instr.op = Op::kClamp; instr.s0 = child(node.a); instr.imm0 = node.d0; instr.imm1 = node.d1;
                 value = emit(instr); break;
-            case NodeKind::kNoise: case NodeKind::kShiftedNoise:
-            case NodeKind::kShiftA: case NodeKind::kShiftB: case NodeKind::kShift:
-            case NodeKind::kWeirdScaledSampler: case NodeKind::kEndIslands: case NodeKind::kInterpolatedNoise:
+            case NodeKind::kNoise: case NodeKind::kShiftA: case NodeKind::kShiftB: case NodeKind::kShift:
+                instr.op = node.noise_ptr ? Op::kNoise : Op::kConstant;
+                instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kShiftedNoise:
+                if (!node.noise_ptr) { value = emit(instr); break; }
+                instr.op = Op::kShiftedNoise; instr.ref = ref;
+                instr.s0 = child(node.a); instr.s1 = child(node.b); instr.s2 = child(node.c);
+                value = emit(instr); break;
+            case NodeKind::kWeirdScaledSampler:
+                if (!node.noise_ptr) { value = child(node.a); break; }
+                instr.op = Op::kWeirdNoise; instr.ref = ref; instr.s0 = child(node.a);
+                value = emit(instr); break;
+            case NodeKind::kInterpolatedNoise:
+                instr.op = node.interp_noise_ptr ? Op::kInterpolatedNoise : Op::kConstant;
+                instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kEndIslands:
                 instr.op = Op::kOpaqueNoise; instr.ref = ref; value = emit(instr); break;
             case NodeKind::kCache2D: case NodeKind::kCacheOnce:
             case NodeKind::kCacheAllInCell: case NodeKind::kFlatCache:
@@ -342,9 +356,9 @@ unsigned operands(Op op) noexcept {
         case Op::kAbs: case Op::kSquare: case Op::kCube: case Op::kHalfNegative:
         case Op::kQuarterNegative: case Op::kInvert: case Op::kSqueeze:
         case Op::kMapRange: case Op::kClamp: case Op::kCopy: case Op::kCacheStore:
-        case Op::kBranchZero: case Op::kBranchRange: return 1;
+        case Op::kBranchZero: case Op::kBranchRange: case Op::kWeirdNoise: return 1;
         case Op::kAdd: case Op::kMul: case Op::kMin: case Op::kMax: return 2;
-        case Op::kLerp: return 3;
+        case Op::kLerp: case Op::kShiftedNoise: return 3;
         default: return 0;
     }
 }
@@ -404,6 +418,19 @@ CompileResult compile_one(const NodeArena& arena, NodeRef root, bool cacheless) 
     program.result = remap[program.result];
     program.value_count = count;
     program.code = std::move(compact);
+    std::vector<unsigned> definitions(count, 0);
+    for (const auto& instr : program.code) ++definitions[instr.dst];
+    program.pure_definitions.assign(count, absent);
+    for (std::size_t pc = 0; pc < program.code.size(); ++pc) {
+        const auto& instr = program.code[pc];
+        if (definitions[instr.dst] != 1) continue;
+        if (!(instr.op <= Op::kClamp || instr.op >= Op::kNoise)) continue;
+        const auto n = operands(instr.op);
+        if (n > 0 && program.pure_definitions[instr.s0] == absent) continue;
+        if (n > 1 && program.pure_definitions[instr.s1] == absent) continue;
+        if (n > 2 && program.pure_definitions[instr.s2] == absent) continue;
+        program.pure_definitions[instr.dst] = static_cast<std::uint32_t>(pc);
+    }
     return std::move(builder.result);
 }
 } // namespace
@@ -547,10 +574,96 @@ void cache_store(const Node& n, const Context& ctx, double value) noexcept {
 }
 } // namespace
 
-double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
-                double* values, std::size_t value_capacity) noexcept {
-    if (!ctx.cache && program.cacheless)
-        return evaluate(*program.cacheless, arena, ctx, values, value_capacity);
+namespace {
+double scalar_math(const Instr& instr, const Context& ctx, double a, double b, double c) noexcept {
+    switch (instr.op) {
+            case Op::kConstant: return instr.imm0;
+            case Op::kCoordX: return ctx.x;
+            case Op::kCoordY: return ctx.y;
+            case Op::kCoordZ: return ctx.z;
+            case Op::kAbs: return std::abs(a);
+            case Op::kSquare: return a * a;
+            case Op::kCube: return a * a * a;
+            case Op::kHalfNegative: return half_negative(a);
+            case Op::kQuarterNegative: return quarter_negative(a);
+            case Op::kInvert: return 1.0 / a;
+            case Op::kSqueeze: return squeeze(a);
+            case Op::kAdd: return a + b;
+            case Op::kMul: return a == 0.0 ? 0.0 : a * b;
+            case Op::kMin: return std::min(a, b);
+            case Op::kMax: return std::max(a, b);
+            case Op::kYClampedGradient: return y_gradient(instr.imm0, instr.imm1, instr.imm2, instr.imm3, ctx.y);
+            case Op::kMapRange: return map_range(a, instr.imm0, instr.imm1, instr.imm2, instr.imm3);
+            case Op::kLerp: return b + a * (c - b);
+            case Op::kClamp: return clamp_d(a, instr.imm0, instr.imm1);
+        default: return 0.0;
+    }
+}
+
+struct BatchState {
+    const Program& program;
+    const NodeArena& arena;
+    const Context* contexts;
+    std::size_t count;
+    BatchScratch& scratch;
+
+    bool is_pure(std::uint32_t slot) const noexcept {
+        return slot < program.pure_definitions.size()
+            && program.pure_definitions[slot] != std::numeric_limits<std::uint32_t>::max();
+    }
+
+    void prepare(std::uint32_t slot) noexcept {
+        if (!is_pure(slot)) return;
+        const unsigned all = (1u << count) - 1u;
+        if (scratch.ready[slot] == all) return;
+        const Instr& instr = program.code[program.pure_definitions[slot]];
+        const auto n = operands(instr.op);
+        unsigned mask = all;
+        const std::uint32_t inputs[]{instr.s0, instr.s1, instr.s2};
+        for (unsigned i = 0; i < n; ++i) {
+            prepare(inputs[i]); mask &= scratch.ready[inputs[i]];
+        }
+        mask &= ~scratch.ready[slot];
+        if (mask == 0) return;
+        const auto source = [&](unsigned i, std::size_t lane) {
+            return i < n ? scratch.memo[inputs[i] * 4u + lane] : 0.0;
+        };
+        if (instr.op >= Op::kNoise && instr.op <= Op::kInterpolatedNoise) {
+            const Node& node = arena.nodes[instr.ref];
+            if (node.kind == NodeKind::kWeirdScaledSampler
+                && (!std::isfinite(node.d0) || node.d0 < -2147483648.0 || node.d0 >= 2147483648.0)) return;
+            double x[4], y[4], z[4], scales[4], output[4];
+            std::size_t lanes[4], active = 0;
+            for (std::size_t lane = 0; lane < count; ++lane) {
+                if (!(mask & (1u << lane))) continue;
+                const auto point = detail::noise_point(node, contexts[lane], source(0, lane), source(1, lane), source(2, lane));
+                if (!detail::safe_noise(node, point)) continue;
+                lanes[active] = lane; x[active] = point.x; y[active] = point.y;
+                z[active] = point.z; scales[active++] = point.scale;
+            }
+            if (active == 0) return;
+            if (node.kind == NodeKind::kInterpolatedNoise)
+                noise::sample_batch(*node.interp_noise_ptr, x, y, z, active, output);
+            else noise::sample_batch(*node.noise_ptr, x, y, z, active, output);
+            for (std::size_t i = 0; i < active; ++i) {
+                scratch.memo[slot * 4u + lanes[i]] = detail::finish_noise(node, output[i], scales[i]);
+                scratch.ready[slot] |= static_cast<std::uint8_t>(1u << lanes[i]);
+            }
+            if (contexts[0].cache && contexts[0].cache->execution_stats) {
+                auto& stats = *contexts[0].cache->execution_stats;
+                ++stats.compiled_noise_batches; stats.compiled_noise_points += active;
+            }
+        } else {
+            for (std::size_t lane = 0; lane < count; ++lane) if (mask & (1u << lane)) {
+                scratch.memo[slot * 4u + lane] = scalar_math(instr, contexts[lane], source(0, lane), source(1, lane), source(2, lane));
+                scratch.ready[slot] |= static_cast<std::uint8_t>(1u << lane);
+            }
+        }
+    }
+};
+
+double run(const Program& program, const NodeArena& arena, const Context& ctx,
+           double* values, std::size_t value_capacity, BatchState* batch, std::size_t lane) noexcept {
     if (!values || value_capacity < program.value_count
         || program.value_count == 0 || program.result >= program.value_count) return 0.0;
     const auto read_slot = [&](std::uint32_t slot) noexcept {
@@ -558,41 +671,31 @@ double evaluate(const Program& program, const NodeArena& arena, const Context& c
     };
     for (std::size_t pc = 0; pc < program.code.size();) {
         const Instr& instr = program.code[pc++];
+        if (batch && batch->is_pure(instr.dst)) {
+            batch->prepare(instr.dst);
+            if (batch->scratch.ready[instr.dst] & (1u << lane)) {
+                values[instr.dst] = batch->scratch.memo[instr.dst * 4u + lane];
+                continue;
+            }
+        }
         double value = 0.0;
         // Read only real operands: leaf/opaque instructions can be first in a
         // caller-provided, uninitialised scratch buffer.
         double a = 0.0, b = 0.0, c = 0.0;
         switch (instr.op) {
+            case Op::kShiftedNoise:
+                a = read_slot(instr.s0); b = read_slot(instr.s1); c = read_slot(instr.s2); break;
             case Op::kLerp: c = read_slot(instr.s2); [[fallthrough]];
             case Op::kAdd: case Op::kMul: case Op::kMin: case Op::kMax:
                 b = read_slot(instr.s1); [[fallthrough]];
             case Op::kAbs: case Op::kSquare: case Op::kCube:
             case Op::kHalfNegative: case Op::kQuarterNegative: case Op::kInvert:
             case Op::kSqueeze: case Op::kMapRange: case Op::kClamp:
-            case Op::kCacheStore: case Op::kBranchZero: case Op::kBranchRange: case Op::kCopy:
+            case Op::kWeirdNoise: case Op::kCacheStore: case Op::kBranchZero: case Op::kBranchRange: case Op::kCopy:
                 a = read_slot(instr.s0); break;
             default: break;
         }
         switch (instr.op) {
-            case Op::kConstant: value = instr.imm0; break;
-            case Op::kCoordX: value = ctx.x; break;
-            case Op::kCoordY: value = ctx.y; break;
-            case Op::kCoordZ: value = ctx.z; break;
-            case Op::kAbs: value = std::abs(a); break;
-            case Op::kSquare: value = a * a; break;
-            case Op::kCube: value = a * a * a; break;
-            case Op::kHalfNegative: value = half_negative(a); break;
-            case Op::kQuarterNegative: value = quarter_negative(a); break;
-            case Op::kInvert: value = 1.0 / a; break;
-            case Op::kSqueeze: value = squeeze(a); break;
-            case Op::kAdd: value = a + b; break;
-            case Op::kMul: value = a == 0.0 ? 0.0 : a * b; break;
-            case Op::kMin: value = std::min(a, b); break;
-            case Op::kMax: value = std::max(a, b); break;
-            case Op::kYClampedGradient: value = y_gradient(instr.imm0, instr.imm1, instr.imm2, instr.imm3, ctx.y); break;
-            case Op::kMapRange: value = map_range(a, instr.imm0, instr.imm1, instr.imm2, instr.imm3); break;
-            case Op::kLerp: value = b + a * (c - b); break;
-            case Op::kClamp: value = clamp_d(a, instr.imm0, instr.imm1); break;
             case Op::kCopy: value = a; break;
             case Op::kCacheProbe:
                 if (cache_probe(arena.nodes[instr.ref], ctx, value)) pc = instr.target;
@@ -612,10 +715,44 @@ double evaluate(const Program& program, const NodeArena& arena, const Context& c
             case Op::kOpaqueSpline: case Op::kOpaqueBeardifier: case Op::kOpaqueBlend:
             case Op::kOpaqueFindTopSurface: case Op::kOpaqueRangeChoice: case Op::kOpaqueMul:
                 value = evaluate_node(arena, instr.ref, ctx); break;
+            case Op::kNoise: case Op::kShiftedNoise: case Op::kWeirdNoise: case Op::kInterpolatedNoise:
+                value = detail::scalar_noise(arena.nodes[instr.ref], ctx, a, b, c); break;
+            default: value = scalar_math(instr, ctx, a, b, c); break;
         }
         if (instr.dst < program.value_count) values[instr.dst] = value;
+        if (batch && batch->is_pure(instr.dst)) {
+            batch->scratch.memo[instr.dst * 4u + lane] = value;
+            batch->scratch.ready[instr.dst] |= static_cast<std::uint8_t>(1u << lane);
+        }
     }
     return values[program.result];
+}
+
+} // namespace
+
+double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
+                double* values, std::size_t value_capacity) noexcept {
+    const auto& selected = !ctx.cache && program.cacheless ? *program.cacheless : program;
+    return run(selected, arena, ctx, values, value_capacity, nullptr, 0);
+}
+
+void evaluate_batch(const Program& program, const NodeArena& arena,
+                    const Context* contexts, std::size_t count, double* out, BatchScratch& scratch) noexcept {
+    if (!contexts || !out || count == 0) return;
+    for (std::size_t first = 0; first < count;) {
+        const bool cacheless = !contexts[first].cache && program.cacheless;
+        std::size_t lanes = 1;
+        while (lanes < 4 && first + lanes < count
+            && (!contexts[first + lanes].cache && program.cacheless) == cacheless) ++lanes;
+        const Program& selected = cacheless ? *program.cacheless : program;
+        if (scratch.values.size() < selected.value_count) scratch.values.resize(selected.value_count);
+        if (scratch.memo.size() < selected.value_count * 4u) scratch.memo.resize(selected.value_count * 4u);
+        scratch.ready.assign(selected.value_count, 0);
+        BatchState state{selected, arena, contexts + first, lanes, scratch};
+        for (std::size_t lane = 0; lane < lanes; ++lane)
+            out[first + lane] = run(selected, arena, contexts[first + lane], scratch.values.data(), scratch.values.size(), &state, lane);
+        first += lanes;
+    }
 }
 
 double evaluate(const Program& program, const NodeArena& arena, const Context& ctx) noexcept {

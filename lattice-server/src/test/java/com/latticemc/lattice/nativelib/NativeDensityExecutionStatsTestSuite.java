@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 class NativeDensityExecutionStatsTestSuite {
     @Test
     void preservesNodeOffsetsAndAppendsProgramCountersForEachKnownLayout() {
-        for (int length : new int[] {83, 85, 88}) {
+        for (int length : new int[] {83, 85, 88, 90}) {
             long[] input = new long[length];
             int nodeOffset = length == 83 ? 11 : 13;
             input[0] = 7;
@@ -19,22 +19,25 @@ class NativeDensityExecutionStatsTestSuite {
                 input[11] = 13;
                 input[12] = 17;
             }
-            if (length == 88) {
+            if (length >= 88) {
                 input[85] = 19;
                 input[86] = 23;
                 input[87] = 29;
             }
+            if (length == 90) { input[88] = 31; input[89] = 37; }
             long[] result = NativeDensityFunction.normalizeExecutionStats(input);
             assertNotNull(result);
-            assertEquals(88, result.length);
+            assertEquals(90, result.length);
             assertEquals(7, result[0]);
             assertEquals(3, result[6]);
             for (int node = 0; node < 72; node++) assertEquals(100 + node, result[13 + node]);
             assertEquals(length >= 85 ? 13 : 0, result[11]);
             assertEquals(length >= 85 ? 17 : 0, result[12]);
-            assertEquals(length == 88 ? 19 : 0, result[85]);
-            assertEquals(length == 88 ? 23 : 0, result[86]);
-            assertEquals(length == 88 ? 29 : 0, result[87]);
+            assertEquals(length >= 88 ? 19 : 0, result[85]);
+            assertEquals(length >= 88 ? 23 : 0, result[86]);
+            assertEquals(length >= 88 ? 29 : 0, result[87]);
+            assertEquals(length == 90 ? 31 : 0, result[88]);
+            assertEquals(length == 90 ? 37 : 0, result[89]);
         }
     }
 

@@ -210,17 +210,9 @@ struct ColumnScratchLease {
 };
 
 struct ProgramScratch {
-    std::vector<double> local;
-    double* values = nullptr;
-    std::size_t capacity = 0;
-
-    ProgramScratch(const dfc::Program* program, CacheState* cache) {
-        if (!program) return;
-        auto& storage = cache ? cache->program_values : local;
-        if (storage.size() < program->value_count) storage.resize(program->value_count);
-        values = storage.data();
-        capacity = storage.size();
-    }
+    dfc::BatchScratch local;
+    dfc::BatchScratch& batch;
+    ProgramScratch(const dfc::Program*, CacheState* cache) : batch(cache ? cache->program_batch : local) {}
 };
 
 bool evaluate_compiled_column(const NodeArena& arena, NodeRef root,
@@ -230,10 +222,13 @@ bool evaluate_compiled_column(const NodeArena& arena, NodeRef root,
     const auto* program = dfc::find_program(arena, root);
     if (!program) return false;
     ProgramScratch scratch(program, cache);
-    Context ctx{x, y0, z, cache, cellX, cellZ};
-    for (int iy = 0; iy < ny; ++iy) {
-        ctx.y = y0 + static_cast<double>(iy) * dy;
-        out[iy] = dfc::evaluate(*program, arena, ctx, scratch.values, scratch.capacity);
+    for (int iy = 0; iy < ny;) {
+        Context points[4];
+        const int count = std::min(4, ny - iy);
+        for (int lane = 0; lane < count; ++lane)
+            points[lane] = Context{x, y0 + static_cast<double>(iy + lane) * dy, z, cache, cellX, cellZ};
+        dfc::evaluate_batch(*program, arena, points, static_cast<std::size_t>(count), out + iy, scratch.batch);
+        iy += count;
     }
     if (cache && cache->execution_stats) {
         ++cache->execution_stats->compiled_column_calls;
@@ -1002,6 +997,8 @@ void evaluate_grid(const NodeArena& arena, NodeRef root,
     // and stays warm as iz steps).
     const auto* program = dfc::find_program(arena, root);
     ProgramScratch scratch(program, cache);
+    Context points[4];
+    std::size_t pending = 0, completed = 0;
     for (int iy = 0; iy < ny; ++iy) {
         ctx.y = y0 + static_cast<double>(iy) * dy;
         for (int iz = 0; iz < nz; ++iz) {
@@ -1012,11 +1009,17 @@ void evaluate_grid(const NodeArena& arena, NodeRef root,
             for (int ix = 0; ix < nx; ++ix) {
                 ctx.x     = x0 + static_cast<double>(ix) * dx;
                 ctx.cellX = cellX0 + ix;
-                row[ix] = program ? dfc::evaluate(*program, arena, ctx, scratch.values, scratch.capacity)
-                                  : evaluate_node(arena, root, ctx);
+                if (program) {
+                    points[pending++] = ctx;
+                    if (pending == 4) {
+                        dfc::evaluate_batch(*program, arena, points, pending, out + completed, scratch.batch);
+                        completed += pending; pending = 0;
+                    }
+                } else row[ix] = evaluate_node(arena, root, ctx);
             }
         }
     }
+    if (program && pending) dfc::evaluate_batch(*program, arena, points, pending, out + completed, scratch.batch);
     if (program && cache && cache->execution_stats) {
         ++cache->execution_stats->compiled_grid_calls;
         cache->execution_stats->compiled_points += static_cast<std::uint64_t>(nx)

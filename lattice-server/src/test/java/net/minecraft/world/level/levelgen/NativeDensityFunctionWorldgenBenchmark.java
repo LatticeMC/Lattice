@@ -143,6 +143,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                 System.out.printf("PROGRAM mode=%s path=%s %s%n",
                     lazyMixedRange ? "lazy" : "eager", path, execution.benchmarkFields());
                 if (execution.compiledPoints() <= 0
+                        || execution.compiledNoiseBatches() <= 0 || execution.compiledNoisePoints() <= 0
                         || (path == Path.GRID && execution.compiledGridCalls() <= 0)
                         || (path == Path.SLICE && (execution.compiledColumnCalls() <= 0
                             || execution.compiledColumnCalls() != execution.columnCalls()))) {

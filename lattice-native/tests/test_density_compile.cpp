@@ -452,7 +452,9 @@ TEST_CASE("density compiler: all opaque families preserve seeded arithmetic pari
             refs.push_back(root);
         }
         REQUIRE(dfc::install(arena, root));
-        CHECK((arena.compiled_program->opaque_count() > 0) == (kind != NodeKind::kBlendDensity));
+        CHECK((arena.compiled_program->opaque_count() > 0) == (kind == NodeKind::kEndIslands
+            || kind == NodeKind::kBeardifier || kind == NodeKind::kBlendAlpha
+            || kind == NodeKind::kBlendOffset || kind == NodeKind::kSpline));
         for (int i = 0; i < 32; ++i) {
             const Context ctx{static_cast<double>(random() % 40), static_cast<double>(random() % 32) - 16,
                               -static_cast<double>(random() % 40)};
@@ -611,15 +613,15 @@ TEST_CASE("density compiler: multi-root programs preserve XZY ordering and reuse
     scratch.resize_for(arena);
     std::array<double, 5> column{};
     evaluate_y_column(arena, small, 1, 2, 3, 1, 0, 0, 5, &scratch, column.data());
-    CHECK(scratch.program_values.size() == 1);
+    CHECK(scratch.program_batch.values.size() == 1);
     evaluate_y_column(arena, second, 1, 2, 3, 1, 0, 0, 5, &scratch, column.data());
-    const auto size = scratch.program_values.size();
-    const auto* registers = scratch.program_values.data();
+    const auto size = scratch.program_batch.values.size();
+    const auto* registers = scratch.program_batch.values.data();
     CHECK(size > 1);
     scratch.clear();
     evaluate_y_column(arena, small, 1, 2, 3, 1, 0, 0, 5, &scratch, column.data());
-    CHECK(scratch.program_values.size() == size);
-    CHECK(scratch.program_values.data() == registers);
+    CHECK(scratch.program_batch.values.size() == size);
+    CHECK(scratch.program_batch.values.data() == registers);
 
     CacheState actual, expected;
     actual.resize_for(arena); expected.resize_for(arena);
@@ -671,7 +673,7 @@ TEST_CASE("density compiler: empty batches and invalid roots never execute a pro
     evaluate_grid(arena, 10000, 0, 0, 0, 1, 1, 1, 0, 0, 3, 1, 1, &cache, out.data());
     CHECK(out == std::array<double, 3>{0, 0, 0});
     CHECK(cache.execution_stats->compiled_points == 0);
-    CHECK(cache.program_values.empty());
+    CHECK(cache.program_batch.values.empty());
 }
 
 
@@ -791,4 +793,123 @@ TEST_CASE("density compiler: shared branch DAG expansion is bounded") {
     CHECK_FALSE(dfc::install(exponential, root));
     CHECK_FALSE(exponential.compiled_program);
     CHECK(evaluate(exponential, root, Context{0, 0, 0}) == 7);
+}
+
+
+TEST_CASE("density compiler: batch noise kernels match point-order oracle including tails") {
+    namespace noise = lattice::world::gen::noise;
+    noise::PerlinNoiseSampler perlin{};
+    perlin.origin_x = 12.3; perlin.origin_y = 34.5; perlin.origin_z = 56.7;
+    for (int i = 0; i < 256; ++i) perlin.permutation[i] = static_cast<std::uint8_t>(i * 23);
+    const std::array<noise::PerlinNoiseSampler, 2> octaves{perlin, perlin};
+    const std::array<double, 2> amplitudes{1, 0.5};
+    noise::OctavePerlinNoiseSampler octave{octaves.data(), amplitudes.data(), 2, 0.5, 0.75};
+    noise::DoublePerlinNoiseSampler sampler{octave, octave, 1.125};
+    noise::InterpolatedNoiseSampler legacy{&octave, &octave, &octave, 1, 1, 80, 160, 8};
+    for (auto kind : {NodeKind::kNoise, NodeKind::kShiftA, NodeKind::kShiftB, NodeKind::kShift,
+                      NodeKind::kShiftedNoise, NodeKind::kWeirdScaledSampler, NodeKind::kInterpolatedNoise}) {
+        for (const bool wrapped : {false, true}) {
+            NodeArena arena;
+            Node n{}; n.kind = kind; n.noise_ptr = &sampler; n.interp_noise_ptr = &legacy;
+            n.a = gradient(arena); n.b = constant(arena, 0); n.c = n.a;
+            n.d0 = 0.123; n.d1 = 0.234;
+            auto root = arena.push(n);
+            root = binary(arena, NodeKind::kAdd, unary(arena, NodeKind::kSquare, root), gradient(arena));
+            if (wrapped) root = unary(arena, NodeKind::kCache2D, root);
+            const auto compiled = dfc::compile(arena, root); REQUIRE(compiled);
+            CacheState actual, expected; actual.resize_for(arena); expected.resize_for(arena);
+            actual.execution_stats = std::make_unique<ExecutionStats>();
+            std::array<Context, 7> points;
+            std::array<double, 7> output;
+            dfc::BatchScratch scratch;
+            for (int repetition = 0; repetition < 2; ++repetition) {
+                for (std::size_t i = 0; i < points.size(); ++i)
+                    points[i] = Context{1.25 + double(i / 3), 7.75 - double(i) * 0.3, -4.5, &actual};
+                dfc::evaluate_batch(compiled.program, arena, points.data(), points.size(), output.data(), scratch);
+                for (std::size_t i = 0; i < points.size(); ++i) {
+                    auto point = points[i]; point.cache = &expected;
+                    CHECK(bits(output[i]) == bits(evaluate_node(arena, root, point)));
+                }
+                check_batch_cache(actual, expected);
+            }
+            CHECK(actual.execution_stats->compiled_noise_batches > 0);
+            CHECK(actual.execution_stats->compiled_noise_points >= 7);
+        }
+    }
+}
+
+TEST_CASE("density compiler: batch state barriers retain whole-point order") {
+    for (bool two_d : {false, true}) {
+        NodeArena arena;
+        const auto cache = unary(arena, two_d ? NodeKind::kCache2D : NodeKind::kCacheOnce, gradient(arena));
+        const auto root = two_d ? cache : binary(arena, NodeKind::kAdd, cache, unary(arena, NodeKind::kAbs, cache));
+        const auto compiled = dfc::compile(arena, root); REQUIRE(compiled);
+        CacheState actual, expected; actual.resize_for(arena); expected.resize_for(arena);
+        if (!two_d) for (auto* state : {&actual, &expected}) {
+            auto& entry = state->cache_once[0]; entry.valid = true; entry.value = 900;
+        }
+        const std::array<Context, 4> points{{{0, 0, 0, &actual}, {0, 1, 0, &actual}, {0, 0, 0, &actual}, {0, -1, 0, &actual}}};
+        std::array<double, 4> output;
+        dfc::BatchScratch scratch;
+        dfc::evaluate_batch(compiled.program, arena, points.data(), points.size(), output.data(), scratch);
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            auto point = points[i]; point.cache = &expected;
+            CHECK(bits(output[i]) == bits(evaluate_node(arena, root, point)));
+        }
+        CHECK(output[0] == (two_d ? 0.0 : 1800.0));
+        CHECK(output[1] == (two_d ? 0.0 : 2.0));
+        check_batch_cache(actual, expected);
+    }
+}
+
+TEST_CASE("density compiler: skipped nonfinite shifted-noise lanes are not speculatively sampled") {
+    namespace noise = lattice::world::gen::noise;
+    noise::PerlinNoiseSampler perlin{};
+    for (int i = 0; i < 256; ++i) perlin.permutation[i] = static_cast<std::uint8_t>(i * 23);
+    const double amplitude = 1;
+    noise::OctavePerlinNoiseSampler octave{&perlin, &amplitude, 1, 1, 1};
+    noise::DoublePerlinNoiseSampler sampler{octave, octave, 1};
+    NodeArena arena;
+    const auto y = gradient(arena);
+    Node n{}; n.kind = NodeKind::kShiftedNoise; n.noise_ptr = &sampler; n.d0 = 1; n.d1 = 1;
+    n.a = unary(arena, NodeKind::kInvert, y); n.b = constant(arena, 0); n.c = n.b;
+    const auto noisy = arena.push(n);
+    Node choice{}; choice.kind = NodeKind::kRangeChoice; choice.a = y; choice.b = noisy;
+    choice.c = constant(arena, 7); choice.d0 = 0.1; choice.d1 = 16;
+    const auto root = arena.push(choice);
+    const auto compiled = dfc::compile(arena, root); REQUIRE(compiled);
+    CacheState cache; cache.resize_for(arena); cache.execution_stats = std::make_unique<ExecutionStats>();
+    const std::array<Context, 4> points{{{1, 1, 2, &cache}, {1, 0, 2, &cache}, {1, -1, 2, &cache}, {1, 2, 2, &cache}}};
+    std::array<double, 4> output;
+    dfc::BatchScratch scratch;
+    dfc::evaluate_batch(compiled.program, arena, points.data(), points.size(), output.data(), scratch);
+    for (std::size_t i = 0; i < points.size(); ++i)
+        CHECK(bits(output[i]) == bits(evaluate_node(arena, root, points[i])));
+    CHECK(output[1] == 7);
+    CHECK(cache.execution_stats->compiled_noise_batches == 1);
+    CHECK(cache.execution_stats->compiled_noise_points == 3);
+}
+
+
+TEST_CASE("density compiler: batch noise retains empty octave-array semantics") {
+    namespace noise = lattice::world::gen::noise;
+    const noise::PerlinNoiseSampler perlin{};
+    const double amplitude = 1;
+    for (int missing = 0; missing < 3; ++missing) {
+        noise::OctavePerlinNoiseSampler octave{missing == 0 ? &perlin : nullptr,
+            missing == 1 ? &amplitude : nullptr, 1, 1, 1};
+        noise::DoublePerlinNoiseSampler sampler{octave, octave, 1};
+        NodeArena arena;
+        Node n{}; n.kind = NodeKind::kNoise; n.noise_ptr = &sampler; n.d0 = 1; n.d1 = 1;
+        const auto root = arena.push(n);
+        const auto compiled = dfc::compile(arena, root); REQUIRE(compiled);
+        const std::array<Context, 4> points{{{1, 2, 3}, {2, 3, 4}, {-1, 0, 1}, {7, 8, 9}}};
+        std::array<double, 4> output;
+        dfc::BatchScratch scratch;
+        dfc::evaluate_batch(compiled.program, arena, points.data(), points.size(), output.data(), scratch);
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            CHECK(bits(output[i]) == bits(evaluate_node(arena, root, points[i])));
+            CHECK(output[i] == 0);
+        }
+    }
 }

@@ -329,7 +329,7 @@ lattice_add_test(density_compile
              ${CMAKE_SOURCE_DIR}/src/world/gen/densityfunction/beardifier.cpp
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 if(LATTICE_ARCH_X86)
-    target_compile_definitions(lattice_test_density_compile PRIVATE LATTICE_HAS_DENSITY_AVX2=1)
+    target_compile_definitions(lattice_test_density_compile PRIVATE LATTICE_HAS_DENSITY_AVX2=1 LATTICE_HAS_PERLIN_AVX2=1 LATTICE_HAS_DOUBLE_PERLIN_AVX2=1)
 endif()
 
 lattice_add_test(beardifier

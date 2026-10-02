@@ -62,6 +62,11 @@ namespace lattice::world::gen::densityfunction {
 
 namespace dfc {
 struct Program;
+struct BatchScratch {
+    std::vector<double> values;
+    std::vector<double> memo;
+    std::vector<std::uint8_t> ready;
+};
 }
 
 enum class NodeKind : std::uint8_t {
@@ -201,6 +206,8 @@ struct ExecutionStats {
     std::uint64_t compiled_grid_calls = 0;
     std::uint64_t compiled_column_calls = 0;
     std::uint64_t compiled_points = 0;
+    std::uint64_t compiled_noise_batches = 0;
+    std::uint64_t compiled_noise_points = 0;
     std::array<std::uint64_t, kNodeKindCount> avx2_rejects{};
     std::array<std::uint64_t, kNodeKindCount> generic_rejects{};
 
@@ -212,7 +219,7 @@ struct ExecutionStats {
 inline constexpr std::size_t kExecutionStatsHeaderLongs = 13u;
 inline constexpr std::size_t kExecutionStatsBaseLongCount =
     kExecutionStatsHeaderLongs + kNodeKindCount * 2u;
-inline constexpr std::size_t kExecutionStatsLongCount = kExecutionStatsBaseLongCount + 3u;
+inline constexpr std::size_t kExecutionStatsLongCount = kExecutionStatsBaseLongCount + 5u;
 // Java decodes this fixed layout by NodeKind ordinal. Keep an explicit guard
 // here so adding a node cannot silently relabel diagnostics.
 static_assert(kNodeKindCount == 36u, "update the Java execution-stats NodeKind layout");
@@ -576,7 +583,7 @@ struct CacheState {
     std::vector<double> scratch_value;
     /// Scalar Program registers, reused across all points/roots of a batch.
     /// Opaque evaluation stays recursive and never re-enters this buffer.
-    std::vector<double> program_values;
+    dfc::BatchScratch program_batch;
     std::vector<std::vector<double>> scratch_columns;
     std::size_t scratch_column_depth = 0;
     /// Benchmark-only experiment: for a mixed RangeChoice column, evaluate
@@ -734,6 +741,8 @@ inline void snapshot_execution_stats(const CacheState& cache, std::int64_t* outp
     output[kExecutionStatsBaseLongCount] = static_cast<std::int64_t>(stats.compiled_grid_calls);
     output[kExecutionStatsBaseLongCount + 1] = static_cast<std::int64_t>(stats.compiled_column_calls);
     output[kExecutionStatsBaseLongCount + 2] = static_cast<std::int64_t>(stats.compiled_points);
+    output[kExecutionStatsBaseLongCount + 3] = static_cast<std::int64_t>(stats.compiled_noise_batches);
+    output[kExecutionStatsBaseLongCount + 4] = static_cast<std::int64_t>(stats.compiled_noise_points);
 }
 
 /// Sampling context: 3D coordinates of the point being evaluated.
