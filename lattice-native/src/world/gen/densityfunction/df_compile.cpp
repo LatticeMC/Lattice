@@ -575,6 +575,9 @@ bool cache_probe(const Node& n, const Context& ctx, double& value) noexcept {
             }
             break;
         case NodeKind::kInterpolated:
+            if (ctx.interpolated_results && id < ctx.interpolated_result_count) {
+                value = ctx.interpolated_results[id]; return true;
+            }
             if (ctx.cache->is_in_interpolation_loop && id < ctx.cache->interpolators.size()) {
                 value = ctx.cache->interpolators[id].result; return true;
             }

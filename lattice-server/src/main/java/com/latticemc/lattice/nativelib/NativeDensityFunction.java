@@ -753,10 +753,13 @@ public final class NativeDensityFunction {
         logStatusOnce();
         if (!ENABLED || !CELL_ENABLED) return false;
         if (bypassRootNative(function)) return false;
-        if (bypassCellNative(function)) return false;
+        if (bypassCellNative(function)
+                && !(direct && function instanceof NativeCacheAllInCellAccess)) return false;
         boolean profiling = PROFILING_ENABLED;
         long start = profiling ? System.nanoTime() : 0L;
-        NativeDensityFunction compiled = direct ? tryCompileDirect(function) : tryCompileCell(function);
+        DensityFunction compileFunction = direct && function instanceof NativeCacheAllInCellAccess access
+                ? access.lattice$noiseFiller() : function;
+        NativeDensityFunction compiled = direct ? tryCompileDirect(compileFunction) : tryCompileCell(function);
         if (compiled == null) return false;
         trackExecutionStatsCache(compiled.cacheHandle);
         if (compiled.clearsCachePerCell && !direct) return false;

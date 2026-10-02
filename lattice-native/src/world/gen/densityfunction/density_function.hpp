@@ -586,6 +586,8 @@ struct CacheState {
     /// Scalar Program registers, reused across all points/roots of a batch.
     /// Opaque evaluation stays recursive and never re-enters this buffer.
     dfc::BatchScratch program_batch;
+    /// Four lane snapshots used by interpolated Program column batches.
+    std::vector<double> program_interpolated_results;
     std::vector<std::vector<double>> scratch_columns;
     std::size_t scratch_column_depth = 0;
     /// Benchmark-only experiment: for a mixed RangeChoice column, evaluate
@@ -770,6 +772,13 @@ struct Context {
     int inCellZ = 0;
     int cellWidth = 0;
     int cellHeight = 0;
+
+    /// Optional per-lane snapshot of interpolator results. Interpolated
+    /// columns update the shared CacheState once per point before a four-lane
+    /// Program batch; this view keeps kInterpolated lane-local while cache
+    /// probes/stores continue to use the shared cache in point order.
+    const double* interpolated_results = nullptr;
+    std::size_t interpolated_result_count = 0;
 };
 
 /// Evaluate the tree rooted at `arena.root` at the given context.

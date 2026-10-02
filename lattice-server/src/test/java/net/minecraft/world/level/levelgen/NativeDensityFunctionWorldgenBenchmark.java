@@ -150,6 +150,8 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                         || execution.compiledNoiseBatches() <= 0 || execution.compiledNoisePoints() <= 0
                         || (path == Path.GRID && execution.compiledGridCalls() <= 0)
                         || (path == Path.SLICE && (execution.compiledColumnCalls() <= 0
+                            || execution.compiledColumnCalls() != execution.columnCalls()))
+                        || (path == Path.COLUMN && (execution.compiledColumnCalls() <= 0
                             || execution.compiledColumnCalls() != execution.columnCalls()))) {
                     throw new IllegalStateException("Compiled batch path did not cover " + path + ": " + execution.benchmarkFields());
                 }

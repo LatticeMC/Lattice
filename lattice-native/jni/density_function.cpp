@@ -1904,6 +1904,104 @@ bool fill_interpolated_root_column(df::NodeArena& arena,
     return true;
 }
 
+// Evaluate a compiled interpolated root in four Z lanes. The interpolation
+// object is mutable and shared by the recursive evaluator, so each lane first
+// advances interpolateZ and snapshots the resulting values. The Program then
+// reads that lane-local view while cache probes/stores still execute in the
+// original point order against the shared CacheState.
+bool fill_interpolated_program_column(df::NodeArena& arena,
+                                      df::CacheState& cache,
+                                      int cell_x,
+                                      int first_cell_z,
+                                      double z0,
+                                      double y_min,
+                                      bool clear_per_cell,
+                                      int cell_width,
+                                      int cell_height,
+                                      int cell_count_xz,
+                                      int cell_count_y,
+                                      const CellColumnCoordinates& coordinates,
+                                      double* dst) noexcept {
+    if (!dst) return false;
+    const auto* program = dfc::find_program(arena, arena.root);
+    if (!program) return false;
+
+    const std::size_t interpolator_count = cache.interpolators.size();
+    cache.program_interpolated_results.resize(interpolator_count * 4u);
+    df::Context points[4]{};
+    const std::size_t cell_value_count = static_cast<std::size_t>(cell_width)
+                                       * static_cast<std::size_t>(cell_height)
+                                       * static_cast<std::size_t>(cell_width);
+    for (int lz = 0; lz < cell_count_xz; ++lz) {
+        const int cell_z = first_cell_z + lz;
+        const double cell_z0 = z0 + static_cast<double>(lz * cell_width);
+        for (int ly = 0; ly < cell_count_y; ++ly) {
+            if (clear_per_cell) cache.clear_evaluation_caches();
+            df::start_interpolation(cache);
+            df::on_sampled_cell_corners(cache, ly, lz);
+            const double y_top = y_min + static_cast<double>(ly * cell_height + cell_height - 1);
+            const std::size_t base = (static_cast<std::size_t>(lz) * static_cast<std::size_t>(cell_count_y)
+                                     + static_cast<std::size_t>(ly)) * cell_value_count;
+            for (std::size_t slot = 0; slot < cache.cache_all_in_cell_array_offsets.size(); ++slot) {
+                if (cache.cache_all_in_cell_arrays[slot]) cache.cache_all_in_cell_array_offsets[slot] = base;
+            }
+            for (int iy = 0; iy < cell_height; ++iy) {
+                const int in_cell_y = cell_height - 1 - iy;
+                const double y = y_top - coordinates.offset[static_cast<std::size_t>(iy)];
+                df::interpolate_y(cache, coordinates.vertical_fraction[static_cast<std::size_t>(iy)]);
+                for (int ix = 0; ix < cell_width; ++ix) {
+                    const double x = coordinates.x[static_cast<std::size_t>(ix)];
+                    df::interpolate_x(cache, coordinates.horizontal_fraction[static_cast<std::size_t>(ix)]);
+                    int iz = 0;
+                    while (iz < cell_width) {
+                        const int count = std::min(4, cell_width - iz);
+                        for (int lane = 0; lane < count; ++lane) {
+                            const int in_cell_z = iz + lane;
+                            df::interpolate_z(cache, coordinates.horizontal_fraction[static_cast<std::size_t>(in_cell_z)]);
+                            auto& point = points[lane];
+                            point = df::Context{};
+                            point.x = x;
+                            point.y = y;
+                            point.z = cell_z0 + coordinates.offset[static_cast<std::size_t>(in_cell_z)];
+                            point.cache = &cache;
+                            point.cellX = cell_x;
+                            point.cellZ = cell_z;
+                            point.inCellX = ix;
+                            point.inCellY = in_cell_y;
+                            point.inCellZ = in_cell_z;
+                            point.cellWidth = cell_width;
+                            point.cellHeight = cell_height;
+                            point.interpolated_results = interpolator_count == 0
+                                ? nullptr : cache.program_interpolated_results.data()
+                                    + static_cast<std::size_t>(lane) * interpolator_count;
+                            point.interpolated_result_count = interpolator_count;
+                            for (std::size_t slot = 0; slot < interpolator_count; ++slot) {
+                                cache.program_interpolated_results[static_cast<std::size_t>(lane) * interpolator_count + slot]
+                                    = cache.interpolators[slot].result;
+                            }
+                        }
+                        const std::size_t index = base
+                            + (static_cast<std::size_t>(iy) * static_cast<std::size_t>(cell_width)
+                               + static_cast<std::size_t>(ix)) * static_cast<std::size_t>(cell_width)
+                            + static_cast<std::size_t>(iz);
+                        dfc::evaluate_batch(*program, arena, points, static_cast<std::size_t>(count),
+                                            dst + index, cache.program_batch);
+                        iz += count;
+                    }
+                }
+            }
+            df::stop_interpolation(cache);
+        }
+    }
+    if (cache.execution_stats) {
+        ++cache.execution_stats->compiled_column_calls;
+        cache.execution_stats->compiled_points += static_cast<std::uint64_t>(cell_count_xz)
+            * static_cast<std::uint64_t>(cell_count_y)
+            * static_cast<std::uint64_t>(cell_value_count);
+    }
+    return true;
+}
+
 JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateYColumnsFlat(
         JNIEnv* env, jclass /*cls*/,
@@ -2245,6 +2343,20 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
     ctx.cellHeight = static_cast<int>(cellHeight);
 
     double* dst = reinterpret_cast<double*>(buf.data());
+    if (fill_interpolated_program_column(*a, *cache,
+                                       static_cast<int>(cellX),
+                                       static_cast<int>(firstCellZ),
+                                       static_cast<double>(z0),
+                                       static_cast<double>(yMin),
+                                       clearPerCell == JNI_TRUE,
+                                       static_cast<int>(cellWidth),
+                                       static_cast<int>(cellHeight),
+                                       static_cast<int>(cellCountXZ),
+                                       static_cast<int>(cellCountY),
+                                       coordinates, dst)) {
+        unbind_cache_all_in_cell_arrays(*cache);
+        return;
+    }
     if (fill_interpolated_root_column(*a, *cache,
                                       static_cast<int>(cellWidth),
                                       static_cast<int>(cellHeight),
@@ -2379,7 +2491,20 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
                 ctx.cellHeight = static_cast<int>(cellHeight);
 
                 double* dst = reinterpret_cast<double*>(buf.data());
-                if (fill_interpolated_root_column(*a, *cache,
+                if (fill_interpolated_program_column(*a, *cache,
+                                                   static_cast<int>(cellX),
+                                                   static_cast<int>(firstCellZ),
+                                                   static_cast<double>(z0),
+                                                   static_cast<double>(yMin),
+                                                   false,
+                                                   static_cast<int>(cellWidth),
+                                                   static_cast<int>(cellHeight),
+                                                   static_cast<int>(cellCountXZ),
+                                                   static_cast<int>(cellCountY),
+                                                   coordinates, dst)) {
+                    completed = true;
+                }
+                if (!completed && fill_interpolated_root_column(*a, *cache,
                                                   static_cast<int>(cellWidth),
                                                   static_cast<int>(cellHeight),
                                                   static_cast<int>(cellCountXZ),

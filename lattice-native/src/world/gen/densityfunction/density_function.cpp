@@ -816,6 +816,11 @@ double evaluate_node(const NodeArena& arena, NodeRef root, const Context& ctx) n
         }
 
         case NodeKind::kInterpolated: {
+            if (ctx.interpolated_results
+                && n.cache_slot_id >= 0
+                && n.cache_slot_id < static_cast<int>(ctx.interpolated_result_count)) {
+                return ctx.interpolated_results[static_cast<std::size_t>(n.cache_slot_id)];
+            }
             // Mojang's `DensityInterpolator.sample(pos)`:
             //   if (pos != ChunkNoiseSampler.this) return delegate.sample(pos);
             //   if (!isInInterpolationLoop) throw IllegalStateException(...);
