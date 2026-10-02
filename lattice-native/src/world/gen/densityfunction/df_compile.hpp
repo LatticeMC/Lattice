@@ -37,6 +37,12 @@ enum class Op : std::uint8_t {
     kOpaqueFindTopSurface,
     kOpaqueRangeChoice,
     kOpaqueMul,
+    kCacheProbe,
+    kCacheStore,
+    kBranchZero,
+    kBranchRange,
+    kJump,
+    kCopy,
 };
 
 struct Instr {
@@ -50,17 +56,21 @@ struct Instr {
     double imm2 = 0.0;
     double imm3 = 0.0;
     NodeRef ref = kNullRef;
+    std::uint32_t target = 0; // Absolute forward instruction index.
 };
 
 struct Program {
     std::vector<Instr> code;
     std::uint32_t value_count = 0;
     std::uint32_t result = 0;
+    // Selected only when Context::cache is null; never discards warm state.
+    std::shared_ptr<const Program> cacheless;
+    std::size_t eliminated_caches = 0;
 
     [[nodiscard]] std::size_t opaque_count() const noexcept {
         std::size_t count = 0;
-        // Opaque operations follow the original scalar operations.
-        for (const Instr& instr : code) count += instr.op > Op::kClamp;
+        for (const Instr& instr : code)
+            count += instr.op >= Op::kOpaqueNoise && instr.op <= Op::kOpaqueMul;
         return count;
     }
 };
@@ -70,7 +80,10 @@ enum class CompileError : std::uint8_t {
     kInvalidRoot,
     kUnsupportedNode,
     kInvalidOperand,
+    kProgramTooLarge,
 };
+
+inline constexpr std::size_t kMaxProgramInstructions = 65536;
 
 struct CompileResult {
     Program program;

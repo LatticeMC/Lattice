@@ -17,6 +17,7 @@ inline double clamp_d(double v, double lo, double hi) noexcept;
 
 struct Builder {
     const NodeArena& arena;
+    bool cacheless;
     CompileResult result;
     std::vector<std::uint32_t> slots;
     std::vector<std::uint8_t> visiting;
@@ -25,7 +26,7 @@ struct Builder {
     std::vector<std::uint8_t> is_constant;
     std::vector<double> constant_values;
 
-    explicit Builder(const NodeArena& input) : arena(input),
+    explicit Builder(const NodeArena& input, bool without_cache = false) : arena(input), cacheless(without_cache),
         slots(input.nodes.size(), std::numeric_limits<std::uint32_t>::max()),
         visiting(input.nodes.size(), 0), pure(input.nodes.size(), 0),
         spline_visiting(input.splines.size(), 0) {}
@@ -116,6 +117,9 @@ struct Builder {
     }
 
     std::uint32_t emit(const Instr& instr) {
+        if (result.error != CompileError::kNone) return 0;
+        if (result.program.code.size() >= kMaxProgramInstructions)
+            return fail(CompileError::kProgramTooLarge, kNullRef);
         Instr copy = instr;
         bool fold = false;
         double folded = 0.0;
@@ -173,7 +177,30 @@ struct Builder {
         return compile_node(ref);
     }
 
+    // A conditionally executed definition cannot dominate code after the join.
+    std::uint32_t conditional_child(NodeRef ref) {
+        const auto before = slots;
+        const auto value = child(ref);
+        slots = before;
+        return value;
+    }
+
+    void write_result(Op op, std::uint32_t dst, std::uint32_t src, NodeRef ref = kNullRef) {
+        Instr instr{};
+        instr.op = op; instr.dst = dst; instr.s0 = src; instr.ref = ref;
+        append(instr);
+    }
+
+    void append(const Instr& instr) {
+        if (result.error != CompileError::kNone) return;
+        if (result.program.code.size() >= kMaxProgramInstructions) {
+            fail(CompileError::kProgramTooLarge, instr.ref); return;
+        }
+        result.program.code.push_back(instr);
+    }
+
     std::uint32_t compile_node(NodeRef ref) {
+        if (result.error != CompileError::kNone) return 0;
         if (!valid(ref)) return fail(CompileError::kInvalidOperand, ref);
         const std::size_t index = static_cast<std::size_t>(ref);
         if (pure[index] && slots[index] != std::numeric_limits<std::uint32_t>::max()) return slots[index];
@@ -196,7 +223,16 @@ struct Builder {
             }
             case NodeKind::kAdd: case NodeKind::kMul: case NodeKind::kMin: case NodeKind::kMax: {
                 if (node.kind == NodeKind::kMul && node.a != node.b && !pure[node.b]) {
-                    instr.op = Op::kOpaqueMul; instr.ref = ref; value = emit(instr); break;
+                    instr.s0 = child(node.a); instr.op = Op::kBranchZero;
+                    const auto branch = result.program.code.size();
+                    value = emit(instr);
+                    const auto rhs = conditional_child(node.b);
+                    if (result.error != CompileError::kNone) return 0;
+                    Instr multiply{}; multiply.op = Op::kMul;
+                    multiply.dst = value; multiply.s0 = instr.s0; multiply.s1 = rhs;
+                    append(multiply);
+                    result.program.code[branch].target = static_cast<std::uint32_t>(result.program.code.size());
+                    break;
                 }
                 instr.op = static_cast<Op>(static_cast<std::uint8_t>(Op::kAdd)
                     + (static_cast<std::uint8_t>(node.kind) - static_cast<std::uint8_t>(NodeKind::kAdd)));
@@ -221,19 +257,53 @@ struct Builder {
                 instr.op = Op::kOpaqueNoise; instr.ref = ref; value = emit(instr); break;
             case NodeKind::kCache2D: case NodeKind::kCacheOnce:
             case NodeKind::kCacheAllInCell: case NodeKind::kFlatCache:
-                instr.op = Op::kOpaqueCache; instr.ref = ref; value = emit(instr); break;
-            case NodeKind::kInterpolated:
-                instr.op = Op::kOpaqueInterpolated; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kInterpolated: {
+                if (cacheless || node.cache_slot_id < 0) {
+                    ++result.program.eliminated_caches;
+                    if (node.a == kNullRef) { instr.op = Op::kConstant; value = emit(instr); }
+                    else value = child(node.a);
+                    break;
+                }
+                instr.op = Op::kCacheProbe; instr.ref = ref;
+                const auto probe = result.program.code.size();
+                value = emit(instr);
+                std::uint32_t input;
+                if (node.a == kNullRef) { Instr zero{}; input = emit(zero); }
+                else input = conditional_child(node.a);
+                if (result.error != CompileError::kNone) return 0;
+                write_result(Op::kCacheStore, value, input, ref);
+                result.program.code[probe].target = static_cast<std::uint32_t>(result.program.code.size());
+                break;
+            }
             case NodeKind::kSpline:
                 instr.op = Op::kOpaqueSpline; instr.ref = ref; value = emit(instr); break;
             case NodeKind::kBeardifier:
                 instr.op = Op::kOpaqueBeardifier; instr.ref = ref; value = emit(instr); break;
-            case NodeKind::kBlendAlpha: case NodeKind::kBlendOffset: case NodeKind::kBlendDensity:
+            case NodeKind::kBlendDensity:
+                value = child(node.a); break; // Current arena contract is NO_BLENDING.
+            case NodeKind::kBlendAlpha: case NodeKind::kBlendOffset:
                 instr.op = Op::kOpaqueBlend; instr.ref = ref; value = emit(instr); break;
             case NodeKind::kFindTopSurface:
                 instr.op = Op::kOpaqueFindTopSurface; instr.ref = ref; value = emit(instr); break;
-            case NodeKind::kRangeChoice:
-                instr.op = Op::kOpaqueRangeChoice; instr.ref = ref; value = emit(instr); break;
+            case NodeKind::kRangeChoice: {
+                instr.s0 = child(node.a); instr.op = Op::kBranchRange;
+                if (node.b == node.c) { value = child(node.b); break; }
+                instr.imm0 = node.d0; instr.imm1 = node.d1;
+                const auto branch = result.program.code.size();
+                value = emit(instr);
+                const auto yes = conditional_child(node.b);
+                if (result.error != CompileError::kNone) return 0;
+                write_result(Op::kCopy, value, yes);
+                const auto jump = result.program.code.size();
+                Instr exit{}; exit.op = Op::kJump; emit(exit);
+                if (result.error != CompileError::kNone) return 0;
+                result.program.code[branch].target = static_cast<std::uint32_t>(result.program.code.size());
+                const auto no = conditional_child(node.c);
+                if (result.error != CompileError::kNone) return 0;
+                write_result(Op::kCopy, value, no);
+                result.program.code[jump].target = static_cast<std::uint32_t>(result.program.code.size());
+                break;
+            }
             default:
                 value = fail(CompileError::kUnsupportedNode, ref); break;
         }
@@ -266,8 +336,25 @@ inline double y_gradient(double from_y, double to_y, double from_v, double to_v,
 
 } // namespace
 
-CompileResult compile(const NodeArena& arena, NodeRef root) noexcept {
-    Builder builder(arena);
+namespace {
+unsigned operands(Op op) noexcept {
+    switch (op) {
+        case Op::kAbs: case Op::kSquare: case Op::kCube: case Op::kHalfNegative:
+        case Op::kQuarterNegative: case Op::kInvert: case Op::kSqueeze:
+        case Op::kMapRange: case Op::kClamp: case Op::kCopy: case Op::kCacheStore:
+        case Op::kBranchZero: case Op::kBranchRange: return 1;
+        case Op::kAdd: case Op::kMul: case Op::kMin: case Op::kMax: return 2;
+        case Op::kLerp: return 3;
+        default: return 0;
+    }
+}
+bool jumps(Op op) noexcept {
+    return op == Op::kCacheProbe || op == Op::kBranchZero
+        || op == Op::kBranchRange || op == Op::kJump;
+}
+
+CompileResult compile_one(const NodeArena& arena, NodeRef root, bool cacheless) {
+    Builder builder(arena, cacheless);
     if (root < 0 || root >= static_cast<NodeRef>(arena.nodes.size())) {
         builder.result.error = CompileError::kInvalidRoot;
         builder.result.error_node = root;
@@ -281,60 +368,54 @@ CompileResult compile(const NodeArena& arena, NodeRef root) noexcept {
     Program& program = builder.result.program;
     std::vector<std::uint8_t> used(program.value_count, 0);
     used[program.result] = 1;
+    // State and control instructions are roots of liveness in their own right.
+    for (const auto& instr : program.code)
+        if (instr.op >= Op::kOpaqueNoise && instr.op != Op::kCopy) used[instr.dst] = 1;
     for (auto it = program.code.rbegin(); it != program.code.rend(); ++it) {
         if (!used[it->dst]) continue;
-        switch (it->op) {
-            case Op::kAbs: case Op::kSquare: case Op::kCube:
-            case Op::kHalfNegative: case Op::kQuarterNegative: case Op::kInvert:
-            case Op::kSqueeze: case Op::kMapRange: case Op::kClamp:
-                used[it->s0] = 1;
-                break;
-            case Op::kAdd: case Op::kMul: case Op::kMin: case Op::kMax:
-                used[it->s0] = 1;
-                used[it->s1] = 1;
-                break;
-            case Op::kLerp:
-                used[it->s0] = 1;
-                used[it->s1] = 1;
-                used[it->s2] = 1;
-                break;
-            default: break;
-        }
+        const unsigned n = operands(it->op);
+        if (n > 0) used[it->s0] = 1;
+        if (n > 1) used[it->s1] = 1;
+        if (n > 2) used[it->s2] = 1;
     }
 
-    std::vector<std::uint32_t> remap(program.value_count, std::numeric_limits<std::uint32_t>::max());
+    constexpr auto absent = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> remap(program.value_count, absent);
+    std::vector<std::uint32_t> pc_map(program.code.size() + 1);
     std::vector<Instr> compact;
-    compact.reserve(program.code.size());
-    for (const Instr& instr : program.code) {
+    std::uint32_t count = 0;
+    for (std::size_t pc = 0; pc < program.code.size(); ++pc) {
+        pc_map[pc] = static_cast<std::uint32_t>(compact.size());
+        const auto& instr = program.code[pc];
         if (!used[instr.dst]) continue;
         Instr copy = instr;
-        copy.dst = static_cast<std::uint32_t>(compact.size());
-        remap[instr.dst] = copy.dst;
+        if (remap[instr.dst] == absent) remap[instr.dst] = count++;
+        copy.dst = remap[instr.dst];
         compact.push_back(copy);
     }
+    pc_map.back() = static_cast<std::uint32_t>(compact.size());
     for (Instr& instr : compact) {
-        switch (instr.op) {
-            case Op::kAbs: case Op::kSquare: case Op::kCube:
-            case Op::kHalfNegative: case Op::kQuarterNegative: case Op::kInvert:
-            case Op::kSqueeze: case Op::kMapRange: case Op::kClamp:
-                instr.s0 = remap[instr.s0];
-                break;
-            case Op::kAdd: case Op::kMul: case Op::kMin: case Op::kMax:
-                instr.s0 = remap[instr.s0];
-                instr.s1 = remap[instr.s1];
-                break;
-            case Op::kLerp:
-                instr.s0 = remap[instr.s0];
-                instr.s1 = remap[instr.s1];
-                instr.s2 = remap[instr.s2];
-                break;
-            default: break;
-        }
+        const unsigned n = operands(instr.op);
+        if (n > 0) instr.s0 = remap[instr.s0];
+        if (n > 1) instr.s1 = remap[instr.s1];
+        if (n > 2) instr.s2 = remap[instr.s2];
+        if (jumps(instr.op)) instr.target = pc_map[instr.target];
     }
     program.result = remap[program.result];
-    program.value_count = static_cast<std::uint32_t>(compact.size());
+    program.value_count = count;
     program.code = std::move(compact);
-    return builder.result;
+    return std::move(builder.result);
+}
+} // namespace
+
+CompileResult compile(const NodeArena& arena, NodeRef root) noexcept {
+    auto result = compile_one(arena, root, false);
+    if (result) {
+        auto no_cache = compile_one(arena, root, true);
+        if (no_cache && no_cache.program.eliminated_caches > result.program.eliminated_caches)
+            result.program.cacheless = std::make_shared<Program>(std::move(no_cache.program));
+    }
+    return result;
 }
 
 bool install(NodeArena& arena, NodeRef root) noexcept {
@@ -376,14 +457,107 @@ const Program* find_program(const NodeArena& arena, NodeRef root) noexcept {
         ? arena.compiled_batch_programs[root].get() : nullptr;
 }
 
+namespace {
+std::uint64_t cell_key(const Context& ctx) noexcept {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ctx.cellX) & 0xFFFFFFu) << 40)
+        | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ctx.cellZ) & 0xFFFFFFu) << 16)
+        | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(static_cast<int>(ctx.y)) & 0xFFFFu));
+}
+
+bool cache_probe(const Node& n, const Context& ctx, double& value) noexcept {
+    if (!ctx.cache || n.cache_slot_id < 0) return false;
+    const auto id = static_cast<std::size_t>(n.cache_slot_id);
+    switch (n.kind) {
+        case NodeKind::kCache2D:
+            if (id < ctx.cache->cache_2d.size()) {
+                const auto& s = ctx.cache->cache_2d[id];
+                if (s.valid && s.x == static_cast<int>(std::floor(ctx.x))
+                    && s.z == static_cast<int>(std::floor(ctx.z))) { value = s.value; return true; }
+            }
+            break;
+        case NodeKind::kCacheOnce:
+            if (id < ctx.cache->cache_once.size()) {
+                const auto& s = ctx.cache->cache_once[id];
+                if (s.valid && s.x == ctx.x && s.y == ctx.y && s.z == ctx.z) { value = s.value; return true; }
+            }
+            break;
+        case NodeKind::kFlatCache:
+            if (id < ctx.cache->flat_cache.size()) {
+                const auto& s = ctx.cache->flat_cache[id];
+                if (s.valid && s.cellX == ctx.cellX && s.cellZ == ctx.cellZ) { value = s.value; return true; }
+            }
+            break;
+        case NodeKind::kInterpolated:
+            if (ctx.cache->is_in_interpolation_loop && id < ctx.cache->interpolators.size()) {
+                value = ctx.cache->interpolators[id].result; return true;
+            }
+            break;
+        case NodeKind::kCacheAllInCell:
+            if (id >= ctx.cache->cache_all_in_cell.size()) break;
+            if (id < ctx.cache->cache_all_in_cell_arrays.size()) {
+                const auto* data = ctx.cache->cache_all_in_cell_arrays[id];
+                const auto length = ctx.cache->cache_all_in_cell_array_lengths[id];
+                const auto offset = ctx.cache->cache_all_in_cell_array_offsets[id];
+                if (data && ctx.inCellX >= 0 && ctx.inCellY >= 0 && ctx.inCellZ >= 0
+                    && ctx.inCellX < ctx.cellWidth && ctx.inCellY < ctx.cellHeight && ctx.inCellZ < ctx.cellWidth) {
+                    const auto index = (static_cast<std::size_t>(ctx.cellHeight - 1 - ctx.inCellY)
+                        * static_cast<std::size_t>(ctx.cellWidth) + static_cast<std::size_t>(ctx.inCellX))
+                        * static_cast<std::size_t>(ctx.cellWidth) + static_cast<std::size_t>(ctx.inCellZ);
+                    if (offset <= length && index < length - offset) { value = data[offset + index]; return true; }
+                }
+            }
+            if (n.a == kNullRef) { value = 0.0; return true; }
+            if (const auto* found = ctx.cache->cache_all_in_cell[id].find(cell_key(ctx))) {
+                value = *found; return true;
+            }
+            break;
+        default: break;
+    }
+    return false;
+}
+
+void cache_store(const Node& n, const Context& ctx, double value) noexcept {
+    if (!ctx.cache || n.cache_slot_id < 0) return;
+    const auto id = static_cast<std::size_t>(n.cache_slot_id);
+    switch (n.kind) {
+        case NodeKind::kCache2D:
+            if (id < ctx.cache->cache_2d.size()) {
+                auto& s = ctx.cache->cache_2d[id]; s.valid = true;
+                s.x = static_cast<int>(std::floor(ctx.x)); s.z = static_cast<int>(std::floor(ctx.z)); s.value = value;
+            }
+            break;
+        case NodeKind::kCacheOnce:
+            if (id < ctx.cache->cache_once.size()) {
+                auto& s = ctx.cache->cache_once[id]; s.valid = true;
+                s.x = ctx.x; s.y = ctx.y; s.z = ctx.z; s.value = value;
+            }
+            break;
+        case NodeKind::kFlatCache:
+            if (id < ctx.cache->flat_cache.size()) {
+                auto& s = ctx.cache->flat_cache[id]; s.valid = true;
+                s.cellX = ctx.cellX; s.cellZ = ctx.cellZ; s.value = value;
+            }
+            break;
+        case NodeKind::kCacheAllInCell:
+            if (n.a != kNullRef && id < ctx.cache->cache_all_in_cell.size())
+                ctx.cache->cache_all_in_cell[id].get_or_insert(cell_key(ctx)) = value;
+            break;
+        default: break;
+    }
+}
+} // namespace
+
 double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
                 double* values, std::size_t value_capacity) noexcept {
+    if (!ctx.cache && program.cacheless)
+        return evaluate(*program.cacheless, arena, ctx, values, value_capacity);
     if (!values || value_capacity < program.value_count
         || program.value_count == 0 || program.result >= program.value_count) return 0.0;
     const auto read_slot = [&](std::uint32_t slot) noexcept {
         return slot < program.value_count ? values[slot] : 0.0;
     };
-    for (const Instr& instr : program.code) {
+    for (std::size_t pc = 0; pc < program.code.size();) {
+        const Instr& instr = program.code[pc++];
         double value = 0.0;
         // Read only real operands: leaf/opaque instructions can be first in a
         // caller-provided, uninitialised scratch buffer.
@@ -395,6 +569,7 @@ double evaluate(const Program& program, const NodeArena& arena, const Context& c
             case Op::kAbs: case Op::kSquare: case Op::kCube:
             case Op::kHalfNegative: case Op::kQuarterNegative: case Op::kInvert:
             case Op::kSqueeze: case Op::kMapRange: case Op::kClamp:
+            case Op::kCacheStore: case Op::kBranchZero: case Op::kBranchRange: case Op::kCopy:
                 a = read_slot(instr.s0); break;
             default: break;
         }
@@ -418,6 +593,21 @@ double evaluate(const Program& program, const NodeArena& arena, const Context& c
             case Op::kMapRange: value = map_range(a, instr.imm0, instr.imm1, instr.imm2, instr.imm3); break;
             case Op::kLerp: value = b + a * (c - b); break;
             case Op::kClamp: value = clamp_d(a, instr.imm0, instr.imm1); break;
+            case Op::kCopy: value = a; break;
+            case Op::kCacheProbe:
+                if (cache_probe(arena.nodes[instr.ref], ctx, value)) pc = instr.target;
+                else continue;
+                break;
+            case Op::kCacheStore:
+                value = a; cache_store(arena.nodes[instr.ref], ctx, value); break;
+            case Op::kBranchZero:
+                if (a == 0.0) { value = 0.0; pc = instr.target; }
+                else continue;
+                break;
+            case Op::kBranchRange:
+                if (!(a >= instr.imm0 && a < instr.imm1)) pc = instr.target;
+                continue;
+            case Op::kJump: pc = instr.target; continue;
             case Op::kOpaqueNoise: case Op::kOpaqueCache: case Op::kOpaqueInterpolated:
             case Op::kOpaqueSpline: case Op::kOpaqueBeardifier: case Op::kOpaqueBlend:
             case Op::kOpaqueFindTopSurface: case Op::kOpaqueRangeChoice: case Op::kOpaqueMul:
@@ -439,6 +629,7 @@ const char* compile_error_name(CompileError error) noexcept {
         case CompileError::kInvalidRoot: return "invalid-root";
         case CompileError::kUnsupportedNode: return "unsupported-node";
         case CompileError::kInvalidOperand: return "invalid-operand";
+        case CompileError::kProgramTooLarge: return "program-too-large";
     }
     return "unknown";
 }

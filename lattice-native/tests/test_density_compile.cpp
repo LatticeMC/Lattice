@@ -222,7 +222,7 @@ TEST_CASE("density compiler: installed program is used by the production evaluat
     CHECK(bits(evaluate(arena, ctx)) == recursive_bits);
 }
 
-TEST_CASE("density compiler: opaque root installs without recursive redispatch") {
+TEST_CASE("density compiler: cache root installs with a cacheless specialization") {
     NodeArena arena;
     const NodeRef value = constant(arena, 2.0);
     Node cache{};
@@ -232,8 +232,10 @@ TEST_CASE("density compiler: opaque root installs without recursive redispatch")
 
     const dfc::CompileResult compiled = dfc::compile(arena, root);
     REQUIRE(compiled);
-    CHECK(compiled.program.code.size() == 1);
-    CHECK(compiled.program.opaque_count() == 1);
+    CHECK(compiled.program.code.size() == 3);
+    CHECK(compiled.program.opaque_count() == 0);
+    REQUIRE(compiled.program.cacheless);
+    CHECK(compiled.program.cacheless->code.size() == 1);
     REQUIRE(dfc::install(arena, root));
     CHECK(evaluate(arena, root, Context{0, 0, 0}) == 2.0);
 }
@@ -282,15 +284,15 @@ TEST_CASE("density compiler: clamp and squeeze preserve NaN and signed zero") {
     CHECK(bits(dfc::evaluate(zero_compiled.program, zero_arena, ctx)) == bits(evaluate(zero_arena, ctx)));
 }
 
-TEST_CASE("density compiler: mixed arithmetic folds constants without removing opaque calls") {
+TEST_CASE("density compiler: mixed arithmetic folds constants while preserving cache control flow") {
     NodeArena arena;
     const auto sum = binary(arena, NodeKind::kAdd, constant(arena, 2), constant(arena, 3));
     const auto cached = unary(arena, NodeKind::kCacheOnce, gradient(arena));
     const auto root = binary(arena, NodeKind::kAdd, sum, cached);
     const auto compiled = dfc::compile(arena, root);
     REQUIRE(compiled);
-    CHECK(compiled.program.code.size() == 3);
-    CHECK(compiled.program.opaque_count() == 1);
+    CHECK(compiled.program.code.size() == 5);
+    CHECK(compiled.program.opaque_count() == 0);
     CHECK(compiled.program.code[0].op == dfc::Op::kConstant);
     CHECK(compiled.program.code[0].imm0 == 5.0);
     std::array<double, 3> scratch; // Intentionally uninitialised; no leaf reads operands.
@@ -334,7 +336,7 @@ TEST_CASE("density compiler: repeated stateful DAG observes intervening coordina
     lerp.kind = NodeKind::kLerp; lerp.a = shared; lerp.b = surface; lerp.c = shared;
     const auto root = arena.push(lerp);
     REQUIRE(dfc::install(arena, root));
-    CHECK(arena.compiled_program->opaque_count() == 3);
+    CHECK(arena.compiled_program->opaque_count() == 1);
     CacheState expected, actual;
     expected.resize_for(arena); actual.resize_for(arena);
     CHECK(bits(evaluate(arena, root, Context{1, 2, 3, &actual}))
@@ -408,7 +410,7 @@ TEST_CASE("density compiler: same-ref binary operations preserve signed zero and
             const auto child = unary(arena, NodeKind::kCacheOnce, constant(arena, value));
             const auto root = binary(arena, kind, child, child);
             REQUIRE(dfc::install(arena, root));
-            CHECK(arena.compiled_program->opaque_count() == 1);
+            CHECK(arena.compiled_program->opaque_count() == 0);
             CHECK(bits(evaluate(arena, root, Context{0, 0, 0})) == bits(evaluate_node(arena, root, Context{0, 0, 0})));
         }
     }
@@ -450,7 +452,7 @@ TEST_CASE("density compiler: all opaque families preserve seeded arithmetic pari
             refs.push_back(root);
         }
         REQUIRE(dfc::install(arena, root));
-        CHECK(arena.compiled_program->opaque_count() > 0);
+        CHECK((arena.compiled_program->opaque_count() > 0) == (kind != NodeKind::kBlendDensity));
         for (int i = 0; i < 32; ++i) {
             const Context ctx{static_cast<double>(random() % 40), static_cast<double>(random() % 32) - 16,
                               -static_cast<double>(random() % 40)};
@@ -670,4 +672,123 @@ TEST_CASE("density compiler: empty batches and invalid roots never execute a pro
     CHECK(out == std::array<double, 3>{0, 0, 0});
     CHECK(cache.execution_stats->compiled_points == 0);
     CHECK(cache.program_values.empty());
+}
+
+
+TEST_CASE("density compiler: cache and branch joins never reuse skipped definitions") {
+    for (int shape = 0; shape < 3; ++shape) {
+        NodeArena arena;
+        const auto y = gradient(arena);
+        const auto cached = unary(arena, NodeKind::kCacheOnce, y);
+        NodeRef left = cached;
+        if (shape != 0) {
+            Node branch{}; branch.kind = NodeKind::kRangeChoice;
+            branch.a = y; branch.b = cached; branch.c = unary(arena, NodeKind::kSquare, y);
+            branch.d0 = 0; branch.d1 = 1;
+            left = arena.push(branch);
+            if (shape == 2) left = binary(arena, NodeKind::kMul, y, left);
+        }
+        const auto root = binary(arena, NodeKind::kAdd, left, y);
+        const auto compiled = dfc::compile(arena, root);
+        REQUIRE(compiled);
+        CacheState actual, expected;
+        actual.resize_for(arena); expected.resize_for(arena);
+        for (auto* state : {&actual, &expected}) {
+            auto& entry = state->cache_once[0];
+            entry.valid = true; entry.x = 1; entry.y = 0; entry.z = 2; entry.value = 900;
+        }
+        std::vector<double> scratch(compiled.program.value_count, -12345);
+        for (const double yy : {0.0, 1.0, 0.5, -1.0, 0.0}) {
+            CHECK(bits(dfc::evaluate(compiled.program, arena, Context{1, yy, 2, &actual}, scratch.data(), scratch.size()))
+                == bits(evaluate_node(arena, root, Context{1, yy, 2, &expected})));
+            check_once_cache(actual, expected);
+        }
+    }
+}
+
+TEST_CASE("density compiler: cacheless elimination folds while warm state remains authoritative") {
+    for (const auto kind : {NodeKind::kCache2D, NodeKind::kCacheOnce, NodeKind::kFlatCache,
+                            NodeKind::kCacheAllInCell, NodeKind::kInterpolated}) {
+        NodeArena arena;
+        const auto inner = binary(arena, NodeKind::kAdd, constant(arena, 2), constant(arena, 3));
+        const auto cached = unary(arena, kind, inner);
+        const auto root = binary(arena, NodeKind::kAdd, cached, constant(arena, 7));
+        const auto compiled = dfc::compile(arena, root);
+        REQUIRE(compiled); REQUIRE(compiled.program.cacheless);
+        CHECK(compiled.program.cacheless->code.size() == 1);
+        CHECK(compiled.program.cacheless->eliminated_caches == 1);
+        CHECK(dfc::evaluate(compiled.program, arena, Context{0, 0, 0}) == 12);
+        CacheState actual, expected;
+        actual.resize_for(arena); expected.resize_for(arena);
+        for (auto* state : {&actual, &expected}) {
+            if (kind == NodeKind::kCache2D) { auto& e = state->cache_2d[0]; e.valid = true; e.value = 900; }
+            if (kind == NodeKind::kCacheOnce) { auto& e = state->cache_once[0]; e.valid = true; e.value = 900; }
+            if (kind == NodeKind::kFlatCache) { auto& e = state->flat_cache[0]; e.valid = true; e.value = 900; }
+            if (kind == NodeKind::kCacheAllInCell) state->cache_all_in_cell[0].get_or_insert(0) = 900;
+            if (kind == NodeKind::kInterpolated) { state->is_in_interpolation_loop = true; state->interpolators[0].result = 900; }
+        }
+        CHECK(dfc::evaluate(compiled.program, arena, Context{0, 0, 0, &actual}) == 907);
+        CHECK(evaluate_node(arena, root, Context{0, 0, 0, &expected}) == 907);
+        check_batch_cache(actual, expected);
+    }
+}
+
+TEST_CASE("density compiler: nested shared cache slots and truncated cell keys preserve state") {
+    for (const auto kind : {NodeKind::kCache2D, NodeKind::kCacheOnce, NodeKind::kFlatCache, NodeKind::kCacheAllInCell}) {
+        NodeArena arena;
+        const auto y = gradient(arena);
+        const auto a = unary(arena, kind, y);
+        const auto b = unary(arena, kind, binary(arena, NodeKind::kAdd, a, constant(arena, 7)));
+        arena.nodes[b].cache_slot_id = arena.nodes[a].cache_slot_id;
+        const auto root = binary(arena, NodeKind::kAdd, b, a);
+        const auto compiled = dfc::compile(arena, root); REQUIRE(compiled);
+        CacheState actual, expected; actual.resize_for(arena); expected.resize_for(arena);
+        for (int i = 0; i < 40; ++i) {
+            const double yv = (i % 5 == 0) ? 65536.0 : static_cast<double>(i % 13);
+            Context ac{-0.75, yv, 2.5, &actual, i % 4, i % 7};
+            Context ec = ac; ec.cache = &expected;
+            CHECK(bits(dfc::evaluate(compiled.program, arena, ac)) == bits(evaluate_node(arena, root, ec)));
+            check_batch_cache(actual, expected);
+            if (kind == NodeKind::kCacheAllInCell) {
+                const auto& want = expected.cache_all_in_cell[0];
+                CHECK(actual.cache_all_in_cell[0].used == want.used);
+                for (const auto& e : want.entries) if (e.generation == want.generation) {
+                    auto* v = actual.cache_all_in_cell[0].find(e.key); REQUIRE(v); CHECK(bits(*v) == bits(e.value));
+                }
+            }
+        }
+    }
+}
+
+
+TEST_CASE("density compiler: shared branch DAG expansion is bounded") {
+    NodeArena same;
+    const auto selector = unary(same, NodeKind::kCacheOnce, gradient(same));
+    auto root = constant(same, 7);
+    for (int i = 0; i < 24; ++i) {
+        Node n{}; n.kind = NodeKind::kRangeChoice; n.a = selector; n.b = root; n.c = root; n.d0 = 0; n.d1 = 1;
+        root = same.push(n);
+    }
+    const auto compiled = dfc::compile(same, root); REQUIRE(compiled);
+    CHECK(compiled.program.code.size() < 100);
+    CacheState actual, expected; actual.resize_for(same); expected.resize_for(same);
+    CHECK(bits(dfc::evaluate(compiled.program, same, Context{0, 0, 0, &actual}))
+        == bits(evaluate_node(same, root, Context{0, 0, 0, &expected})));
+    check_once_cache(actual, expected);
+
+    NodeArena exponential;
+    const auto y = gradient(exponential);
+    const auto one = constant(exponential, 1);
+    root = constant(exponential, 7);
+    for (int i = 0; i < 20; ++i) {
+        Node n{}; n.kind = NodeKind::kRangeChoice; n.a = y; n.b = root;
+        n.c = binary(exponential, NodeKind::kAdd, root, one); n.d0 = 0; n.d1 = 1;
+        root = exponential.push(n);
+    }
+    const auto rejected = dfc::compile(exponential, root);
+    CHECK(rejected.error == dfc::CompileError::kProgramTooLarge);
+    CHECK(rejected.program.code.size() <= dfc::kMaxProgramInstructions);
+    CHECK_FALSE(dfc::install(exponential, root));
+    CHECK_FALSE(exponential.compiled_program);
+    CHECK(evaluate(exponential, root, Context{0, 0, 0}) == 7);
 }
