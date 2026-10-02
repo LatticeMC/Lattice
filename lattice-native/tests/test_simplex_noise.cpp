@@ -90,21 +90,35 @@ TEST_CASE("simplex: AVX2 batch paths match scalar reference") {
     s.origin_y = -3.5;
     s.origin_z = 7.75;
 
-    constexpr std::size_t count = 19;
+    constexpr std::size_t count = 67;
     std::vector<double> x(count), y(count), z(count), scalar(count), avx2(count);
     for (std::size_t i = 0; i < count; ++i) {
         const double fi = static_cast<double>(i);
-        x[i] = -8.0 + fi * 0.37;
-        y[i] =  6.0 - fi * 0.41;
-        z[i] = -4.0 + fi * 0.43;
+        x[i] = -31.0 + fi * 0.731;
+        y[i] =  17.0 - fi * 0.577;
+        z[i] = -11.0 + fi * 0.413;
     }
 
-    sample_2d_batch_scalar(s, x.data(), y.data(), count, scalar.data());
-    sample_2d_batch_avx2(s, x.data(), y.data(), count, avx2.data());
-    for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
+    // Exercise the 2D diagonal and all six 3D simplex orderings, including
+    // equality boundaries whose comparisons intentionally differ in strictness.
+    x[0] = 0.25; y[0] = 0.25; z[0] = 0.25;
+    x[1] = 0.40; y[1] = 0.25; z[1] = 0.10;
+    x[2] = 0.40; y[2] = 0.10; z[2] = 0.25;
+    x[3] = 0.25; y[3] = 0.10; z[3] = 0.40;
+    x[4] = 0.10; y[4] = 0.25; z[4] = 0.40;
+    x[5] = 0.10; y[5] = 0.40; z[5] = 0.25;
+    x[6] = 0.25; y[6] = 0.40; z[6] = 0.10;
+    x[7] = 0.40; y[7] = 0.40; z[7] = 0.10;
+    x[8] = 0.10; y[8] = 0.40; z[8] = 0.40;
 
-    sample_3d_batch_scalar(s, x.data(), y.data(), z.data(), count, scalar.data());
-    sample_3d_batch_avx2(s, x.data(), y.data(), z.data(), count, avx2.data());
-    for (std::size_t i = 0; i < count; ++i) CHECK(avx2[i] == scalar[i]);
+    for (std::size_t batch_count = 0; batch_count <= count; ++batch_count) {
+        sample_2d_batch_scalar(s, x.data(), y.data(), batch_count, scalar.data());
+        sample_2d_batch_avx2(s, x.data(), y.data(), batch_count, avx2.data());
+        for (std::size_t i = 0; i < batch_count; ++i) CHECK(avx2[i] == scalar[i]);
+
+        sample_3d_batch_scalar(s, x.data(), y.data(), z.data(), batch_count, scalar.data());
+        sample_3d_batch_avx2(s, x.data(), y.data(), z.data(), batch_count, avx2.data());
+        for (std::size_t i = 0; i < batch_count; ++i) CHECK(avx2[i] == scalar[i]);
+    }
 }
 #endif

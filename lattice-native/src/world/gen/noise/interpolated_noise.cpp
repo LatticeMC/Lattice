@@ -38,8 +38,12 @@ const PerlinNoiseSampler* get_octave(const OctavePerlinNoiseSampler* opn,
     return &opn->octaves[idx];
 }
 
-struct InterpolatedColumnScratch {
+struct InterpolatedBatchScratch {
+    std::vector<double> base_x;
+    std::vector<double> base_z;
+    std::vector<double> x;
     std::vector<double> y;
+    std::vector<double> z;
     std::vector<double> y_max;
     std::vector<double> tmp;
     std::vector<double> e;
@@ -49,7 +53,7 @@ struct InterpolatedColumnScratch {
     std::vector<double> upper;
     std::vector<double> q;
 
-    void resize(std::size_t count) {
+    void resize_common(std::size_t count) {
         y.resize(count);
         y_max.resize(count);
         tmp.resize(count);
@@ -60,9 +64,17 @@ struct InterpolatedColumnScratch {
         upper.assign(count, 0.0);
         q.resize(count);
     }
+
+    void resize_batch(std::size_t count) {
+        resize_common(count);
+        base_x.resize(count);
+        base_z.resize(count);
+        x.resize(count);
+        z.resize(count);
+    }
 };
 
-thread_local InterpolatedColumnScratch g_interpolated_column_scratch;
+thread_local InterpolatedBatchScratch g_interpolated_batch_scratch;
 
 } // namespace
 
@@ -139,8 +151,105 @@ void sample_batch(const InterpolatedNoiseSampler& s,
                   const double* block_z,
                   std::size_t count, double* out) noexcept {
     if (!block_x || !block_y || !block_z || !out) return;
+    if (count == 0) return;
+    constexpr double kScaleConst = 684.412;
+    const double scaled_xz_scale = kScaleConst * s.xz_scale;
+    const double scaled_y_scale  = kScaleConst * s.y_scale;
+    const double j = scaled_y_scale * s.smear_scale_multiplier;
+    const double k = j / s.y_factor;
+
+    InterpolatedBatchScratch& scratch = g_interpolated_batch_scratch;
+    scratch.resize_batch(count);
+
     for (std::size_t i = 0; i < count; ++i) {
-        out[i] = sample(s, block_x[i], block_y[i], block_z[i]);
+        const double d = block_x[i] * scaled_xz_scale;
+        const double e = block_y[i] * scaled_y_scale;
+        const double f = block_z[i] * scaled_xz_scale;
+        scratch.base_x[i] = d / s.xz_factor;
+        scratch.e[i] = e;
+        scratch.h[i] = e / s.y_factor;
+        scratch.base_z[i] = f / s.xz_factor;
+    }
+
+    double o = 1.0;
+    for (int p = 0; p < 8; ++p) {
+        const PerlinNoiseSampler* lv = get_octave(s.interpolation_noise, p);
+        if (lv) {
+            for (std::size_t i = 0; i < count; ++i) {
+                scratch.x[i] = maintain_precision(scratch.base_x[i] * o);
+                scratch.y[i] = maintain_precision(scratch.h[i] * o);
+                scratch.z[i] = maintain_precision(scratch.base_z[i] * o);
+                scratch.y_max[i] = scratch.h[i] * o;
+            }
+            sample_y_scaled_batch_ymax(*lv,
+                                       scratch.x.data(), scratch.y.data(), scratch.z.data(),
+                                       k * o, scratch.y_max.data(), count, scratch.tmp.data());
+            for (std::size_t i = 0; i < count; ++i) scratch.interpolation[i] += scratch.tmp[i] / o;
+        }
+        o /= 2.0;
+    }
+
+    bool any_lower = false;
+    bool any_upper = false;
+    bool all_lower = true;
+    bool all_upper = true;
+    for (std::size_t i = 0; i < count; ++i) {
+        const double q = (scratch.interpolation[i] / 10.0 + 1.0) / 2.0;
+        scratch.q[i] = q;
+        const bool needs_lower = q < 1.0;
+        const bool needs_upper = q > 0.0;
+        any_lower = any_lower || needs_lower;
+        any_upper = any_upper || needs_upper;
+        all_lower = all_lower && needs_lower;
+        all_upper = all_upper && needs_upper;
+        scratch.base_x[i] = block_x[i] * scaled_xz_scale;
+        scratch.base_z[i] = block_z[i] * scaled_xz_scale;
+    }
+
+    o = 1.0;
+    for (int r = 0; r < 16; ++r) {
+        const PerlinNoiseSampler* lower = get_octave(s.lower_interpolated_noise, r);
+        const PerlinNoiseSampler* upper = get_octave(s.upper_interpolated_noise, r);
+        const bool need_lower = any_lower && lower;
+        const bool need_upper = any_upper && upper;
+        if (need_lower || need_upper) {
+            for (std::size_t i = 0; i < count; ++i) {
+                scratch.x[i] = maintain_precision(scratch.base_x[i] * o);
+                scratch.y[i] = maintain_precision(scratch.e[i] * o);
+                scratch.z[i] = maintain_precision(scratch.base_z[i] * o);
+                scratch.y_max[i] = scratch.e[i] * o;
+            }
+
+            if (need_lower) {
+                sample_y_scaled_batch_ymax(*lower,
+                                           scratch.x.data(), scratch.y.data(), scratch.z.data(),
+                                           j * o, scratch.y_max.data(), count, scratch.tmp.data());
+                if (all_lower) {
+                    for (std::size_t i = 0; i < count; ++i) scratch.lower[i] += scratch.tmp[i] / o;
+                } else {
+                    for (std::size_t i = 0; i < count; ++i) {
+                        if (scratch.q[i] < 1.0) scratch.lower[i] += scratch.tmp[i] / o;
+                    }
+                }
+            }
+            if (need_upper) {
+                sample_y_scaled_batch_ymax(*upper,
+                                           scratch.x.data(), scratch.y.data(), scratch.z.data(),
+                                           j * o, scratch.y_max.data(), count, scratch.tmp.data());
+                if (all_upper) {
+                    for (std::size_t i = 0; i < count; ++i) scratch.upper[i] += scratch.tmp[i] / o;
+                } else {
+                    for (std::size_t i = 0; i < count; ++i) {
+                        if (scratch.q[i] > 0.0) scratch.upper[i] += scratch.tmp[i] / o;
+                    }
+                }
+            }
+        }
+        o /= 2.0;
+    }
+
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = clamped_lerp(scratch.q[i], scratch.lower[i] / 512.0, scratch.upper[i] / 512.0) / 128.0;
     }
 }
 
@@ -189,8 +298,8 @@ void sample_y_column(const InterpolatedNoiseSampler& s,
         o /= 2.0;
     }
 
-    InterpolatedColumnScratch& scratch = g_interpolated_column_scratch;
-    scratch.resize(count);
+    InterpolatedBatchScratch& scratch = g_interpolated_batch_scratch;
+    scratch.resize_common(count);
 
     const double e_step = dy * scaled_y_scale;
     const double inv_y_factor = 1.0 / s.y_factor;

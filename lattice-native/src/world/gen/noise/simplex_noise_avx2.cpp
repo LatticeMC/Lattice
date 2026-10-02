@@ -4,9 +4,8 @@
 #include <cstdint>
 #include <immintrin.h>
 
-// Keep SIMD results bit-compatible with the scalar reference.  clang-cl may
-// enable contraction when compiling /arch:AVX2, turning scalar lane helpers
-// into FMA and changing the final rounding by one or two ULPs.
+// Keep SIMD results bit-compatible with the scalar reference. clang-cl may
+// enable contraction when compiling /arch:AVX2, changing the final rounding.
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
@@ -14,96 +13,121 @@
 namespace lattice::world::gen::noise {
 namespace {
 
-constexpr int kGradients[12][3] = {
-    { 1, 1, 0}, {-1, 1, 0}, { 1,-1, 0}, {-1,-1, 0},
-    { 1, 0, 1}, {-1, 0, 1}, { 1, 0,-1}, {-1, 0,-1},
-    { 0, 1, 1}, { 0,-1, 1}, { 0, 1,-1}, { 0,-1,-1},
+constexpr std::int32_t kGradients[] = {
+     1,  1,  0,  -1,  1,  0,   1, -1,  0,  -1, -1,  0,
+     1,  0,  1,  -1,  0,  1,   1,  0, -1,  -1,  0, -1,
+     0,  1,  1,   0, -1,  1,   0,  1, -1,   0, -1, -1,
 };
 
-inline void floor_lanes_to_i32(__m256d value, int out_i[4]) noexcept {
-    const __m128i truncated = _mm256_cvttpd_epi32(value);
-    const __m256d back = _mm256_cvtepi32_pd(truncated);
-    const __m256d needs_adjust_pd = _mm256_cmp_pd(back, value, _CMP_GT_OQ);
-    const int needs_adjust = _mm256_movemask_pd(needs_adjust_pd);
-    _mm_store_si128(reinterpret_cast<__m128i*>(out_i), truncated);
-    out_i[0] -= (needs_adjust >> 0) & 1;
-    out_i[1] -= (needs_adjust >> 1) & 1;
-    out_i[2] -= (needs_adjust >> 2) & 1;
-    out_i[3] -= (needs_adjust >> 3) & 1;
+inline __m128i floor_to_i32(__m256d value) noexcept {
+    return _mm256_cvttpd_epi32(_mm256_floor_pd(value));
 }
 
-inline __m256d load_i32_as_pd(const int values[4]) noexcept {
-    return _mm256_cvtepi32_pd(_mm_load_si128(reinterpret_cast<const __m128i*>(values)));
+inline __m128i mask_to_i32(__m256d mask) noexcept {
+    return _mm256_cvttpd_epi32(_mm256_and_pd(mask, _mm256_set1_pd(1.0)));
 }
 
-inline int pmap(const SimplexNoiseSampler& s, int input) noexcept {
-    return s.permutation[input & 0xFF];
+inline __m128i pmap4(const SimplexNoiseSampler& s, __m128i input) noexcept {
+    const __m128i index = _mm_and_si128(input, _mm_set1_epi32(0xFF));
+    return _mm_i32gather_epi32(s.permutation, index, sizeof(std::int32_t));
 }
 
-inline int pmap_mod12(const SimplexNoiseSampler& s, int input) noexcept {
-    return static_cast<std::uint8_t>(pmap(s, input)) % 12;
+inline __m128i pmap_mod12_4(const SimplexNoiseSampler& s, __m128i input) noexcept {
+    const __m128i value = _mm_and_si128(pmap4(s, input), _mm_set1_epi32(0xFF));
+    // For 0..255, floor(value / 12) == (value * 0xAAAB) >> 19.
+    const __m128i quotient = _mm_srli_epi32(
+        _mm_mullo_epi32(value, _mm_set1_epi32(0xAAAB)), 19);
+    return _mm_sub_epi32(value, _mm_mullo_epi32(quotient, _mm_set1_epi32(12)));
 }
 
-inline double dot2(int gi, double x, double y) noexcept {
-    return static_cast<double>(kGradients[gi][0]) * x + static_cast<double>(kGradients[gi][1]) * y;
+inline __m256d gradient_component4(__m128i gradient, int component) noexcept {
+    const __m128i offset = _mm_add_epi32(_mm_add_epi32(gradient, gradient), gradient);
+    return _mm256_cvtepi32_pd(
+        _mm_i32gather_epi32(kGradients + component, offset, sizeof(std::int32_t)));
 }
 
-inline double dot3(int gi, double x, double y, double z) noexcept {
-    return static_cast<double>(kGradients[gi][0]) * x
-         + static_cast<double>(kGradients[gi][1]) * y
-         + static_cast<double>(kGradients[gi][2]) * z;
+inline __m256d dot2_4(__m128i gradient, __m256d x, __m256d y) noexcept {
+    const __m256d gx = gradient_component4(gradient, 0);
+    const __m256d gy = gradient_component4(gradient, 1);
+    return _mm256_add_pd(_mm256_mul_pd(gx, x), _mm256_mul_pd(gy, y));
 }
 
-inline double corner(int gi, double x, double y) noexcept {
-    double t = 0.5 - x * x - y * y;
-    if (t < 0.0) return 0.0;
-    t *= t;
-    return t * t * dot2(gi, x, y);
+inline __m256d dot3_4(__m128i gradient, __m256d x, __m256d y, __m256d z) noexcept {
+    const __m256d gx = gradient_component4(gradient, 0);
+    const __m256d gy = gradient_component4(gradient, 1);
+    const __m256d gz = gradient_component4(gradient, 2);
+    return _mm256_add_pd(
+        _mm256_add_pd(_mm256_mul_pd(gx, x), _mm256_mul_pd(gy, y)),
+        _mm256_mul_pd(gz, z));
 }
 
-inline double contrib3(int gi, double x, double y, double z) noexcept {
-    double t = 0.6 - x * x - y * y - z * z;
-    if (t < 0.0) return 0.0;
-    t *= t;
-    return t * t * dot3(gi, x, y, z);
+inline __m256d corner4(__m128i gradient, __m256d x, __m256d y) noexcept {
+    const __m256d zero = _mm256_setzero_pd();
+    const __m256d attenuation = _mm256_sub_pd(
+        _mm256_sub_pd(_mm256_set1_pd(0.5), _mm256_mul_pd(x, x)),
+        _mm256_mul_pd(y, y));
+    const __m256d positive = _mm256_cmp_pd(attenuation, zero, _CMP_GT_OQ);
+    const __m256d t = _mm256_blendv_pd(zero, attenuation, positive);
+    const __m256d t2 = _mm256_mul_pd(t, t);
+    return _mm256_mul_pd(_mm256_mul_pd(t2, t2), dot2_4(gradient, x, y));
 }
 
-inline void sample4_2d(const SimplexNoiseSampler& s, const double* x, const double* y, double* out) noexcept {
+inline __m256d contribution3_4(__m128i gradient,
+                               __m256d x, __m256d y, __m256d z) noexcept {
+    const __m256d zero = _mm256_setzero_pd();
+    const __m256d attenuation = _mm256_sub_pd(
+        _mm256_sub_pd(
+            _mm256_sub_pd(_mm256_set1_pd(0.6), _mm256_mul_pd(x, x)),
+            _mm256_mul_pd(y, y)),
+        _mm256_mul_pd(z, z));
+    const __m256d positive = _mm256_cmp_pd(attenuation, zero, _CMP_GT_OQ);
+    const __m256d t = _mm256_blendv_pd(zero, attenuation, positive);
+    const __m256d t2 = _mm256_mul_pd(t, t);
+    return _mm256_mul_pd(_mm256_mul_pd(t2, t2), dot3_4(gradient, x, y, z));
+}
+
+inline void sample4_2d(const SimplexNoiseSampler& s,
+                       const double* x, const double* y,
+                       double* out) noexcept {
     constexpr double F2 = 0.36602540378443864;
     constexpr double G2 = 0.21132486540518713;
     const __m256d vx = _mm256_loadu_pd(x);
     const __m256d vy = _mm256_loadu_pd(y);
     const __m256d skew = _mm256_mul_pd(_mm256_add_pd(vx, vy), _mm256_set1_pd(F2));
 
-    alignas(32) double x0_lanes[4];
-    alignas(32) double y0_lanes[4];
-    const __m256d sx = _mm256_add_pd(vx, skew);
-    const __m256d sy = _mm256_add_pd(vy, skew);
+    const __m128i ii = floor_to_i32(_mm256_add_pd(vx, skew));
+    const __m128i jj = floor_to_i32(_mm256_add_pd(vy, skew));
+    const __m256d ii_pd = _mm256_cvtepi32_pd(ii);
+    const __m256d jj_pd = _mm256_cvtepi32_pd(jj);
+    const __m256d t = _mm256_mul_pd(
+        _mm256_cvtepi32_pd(_mm_add_epi32(ii, jj)), _mm256_set1_pd(G2));
+    const __m256d x0 = _mm256_sub_pd(vx, _mm256_sub_pd(ii_pd, t));
+    const __m256d y0 = _mm256_sub_pd(vy, _mm256_sub_pd(jj_pd, t));
 
-    alignas(16) int ii[4];
-    alignas(16) int jj[4];
-    floor_lanes_to_i32(sx, ii);
-    floor_lanes_to_i32(sy, jj);
-    const __m256d ii_d = load_i32_as_pd(ii);
-    const __m256d jj_d = load_i32_as_pd(jj);
-    const __m256d t = _mm256_mul_pd(_mm256_add_pd(ii_d, jj_d), _mm256_set1_pd(G2));
-    _mm256_store_pd(x0_lanes, _mm256_sub_pd(vx, _mm256_sub_pd(ii_d, t)));
-    _mm256_store_pd(y0_lanes, _mm256_sub_pd(vy, _mm256_sub_pd(jj_d, t)));
+    const __m256d x_gt_y = _mm256_cmp_pd(x0, y0, _CMP_GT_OQ);
+    const __m128i i1 = mask_to_i32(x_gt_y);
+    const __m128i j1 = _mm_sub_epi32(_mm_set1_epi32(1), i1);
+    const __m256d i1_pd = _mm256_cvtepi32_pd(i1);
+    const __m256d j1_pd = _mm256_cvtepi32_pd(j1);
 
-    for (int lane = 0; lane < 4; ++lane) {
-        const double x0 = x0_lanes[lane];
-        const double y0 = y0_lanes[lane];
-        const int i1 = x0 > y0 ? 1 : 0;
-        const int j1 = x0 > y0 ? 0 : 1;
-        const double x1 = x0 - static_cast<double>(i1) + G2;
-        const double y1 = y0 - static_cast<double>(j1) + G2;
-        const double x2 = x0 - 1.0 + 2.0 * G2;
-        const double y2 = y0 - 1.0 + 2.0 * G2;
-        const int gi0 = pmap_mod12(s, ii[lane] + pmap(s, jj[lane]));
-        const int gi1 = pmap_mod12(s, ii[lane] + i1 + pmap(s, jj[lane] + j1));
-        const int gi2 = pmap_mod12(s, ii[lane] + 1 + pmap(s, jj[lane] + 1));
-        out[lane] = 70.0 * (corner(gi0, x0, y0) + corner(gi1, x1, y1) + corner(gi2, x2, y2));
-    }
+    const __m256d x1 = _mm256_add_pd(_mm256_sub_pd(x0, i1_pd), _mm256_set1_pd(G2));
+    const __m256d y1 = _mm256_add_pd(_mm256_sub_pd(y0, j1_pd), _mm256_set1_pd(G2));
+    const __m256d x2 = _mm256_add_pd(_mm256_sub_pd(x0, _mm256_set1_pd(1.0)),
+                                     _mm256_set1_pd(2.0 * G2));
+    const __m256d y2 = _mm256_add_pd(_mm256_sub_pd(y0, _mm256_set1_pd(1.0)),
+                                     _mm256_set1_pd(2.0 * G2));
+
+    const __m128i gi0 = pmap_mod12_4(s, _mm_add_epi32(ii, pmap4(s, jj)));
+    const __m128i gi1 = pmap_mod12_4(
+        s, _mm_add_epi32(_mm_add_epi32(ii, i1), pmap4(s, _mm_add_epi32(jj, j1))));
+    const __m128i ones = _mm_set1_epi32(1);
+    const __m128i gi2 = pmap_mod12_4(
+        s, _mm_add_epi32(_mm_add_epi32(ii, ones), pmap4(s, _mm_add_epi32(jj, ones))));
+
+    const __m256d sum = _mm256_add_pd(
+        _mm256_add_pd(corner4(gi0, x0, y0), corner4(gi1, x1, y1)),
+        corner4(gi2, x2, y2));
+    _mm256_storeu_pd(out, _mm256_mul_pd(_mm256_set1_pd(70.0), sum));
 }
 
 inline void sample4_3d(const SimplexNoiseSampler& s,
@@ -114,69 +138,89 @@ inline void sample4_3d(const SimplexNoiseSampler& s,
     const __m256d vx = _mm256_loadu_pd(x);
     const __m256d vy = _mm256_loadu_pd(y);
     const __m256d vz = _mm256_loadu_pd(z);
-    const __m256d skew = _mm256_mul_pd(_mm256_add_pd(_mm256_add_pd(vx, vy), vz), _mm256_set1_pd(F3));
+    const __m256d skew = _mm256_mul_pd(
+        _mm256_add_pd(_mm256_add_pd(vx, vy), vz), _mm256_set1_pd(F3));
 
-    const __m256d sx = _mm256_add_pd(vx, skew);
-    const __m256d sy = _mm256_add_pd(vy, skew);
-    const __m256d sz = _mm256_add_pd(vz, skew);
+    const __m128i ii = floor_to_i32(_mm256_add_pd(vx, skew));
+    const __m128i jj = floor_to_i32(_mm256_add_pd(vy, skew));
+    const __m128i kk = floor_to_i32(_mm256_add_pd(vz, skew));
+    const __m256d ii_pd = _mm256_cvtepi32_pd(ii);
+    const __m256d jj_pd = _mm256_cvtepi32_pd(jj);
+    const __m256d kk_pd = _mm256_cvtepi32_pd(kk);
+    const __m256d t = _mm256_mul_pd(
+        _mm256_cvtepi32_pd(_mm_add_epi32(_mm_add_epi32(ii, jj), kk)),
+        _mm256_set1_pd(G3));
+    const __m256d x0 = _mm256_sub_pd(vx, _mm256_sub_pd(ii_pd, t));
+    const __m256d y0 = _mm256_sub_pd(vy, _mm256_sub_pd(jj_pd, t));
+    const __m256d z0 = _mm256_sub_pd(vz, _mm256_sub_pd(kk_pd, t));
 
-    alignas(16) int ii[4];
-    alignas(16) int jj[4];
-    alignas(16) int kk[4];
-    floor_lanes_to_i32(sx, ii);
-    floor_lanes_to_i32(sy, jj);
-    floor_lanes_to_i32(sz, kk);
-    const __m256d ii_d = load_i32_as_pd(ii);
-    const __m256d jj_d = load_i32_as_pd(jj);
-    const __m256d kk_d = load_i32_as_pd(kk);
-    const __m256d t_lanes = _mm256_mul_pd(_mm256_add_pd(_mm256_add_pd(ii_d, jj_d), kk_d), _mm256_set1_pd(G3));
-    alignas(32) double x0_lanes[4];
-    alignas(32) double y0_lanes[4];
-    alignas(32) double z0_lanes[4];
-    _mm256_store_pd(x0_lanes, _mm256_sub_pd(vx, _mm256_sub_pd(ii_d, t_lanes)));
-    _mm256_store_pd(y0_lanes, _mm256_sub_pd(vy, _mm256_sub_pd(jj_d, t_lanes)));
-    _mm256_store_pd(z0_lanes, _mm256_sub_pd(vz, _mm256_sub_pd(kk_d, t_lanes)));
+    const __m256d x_ge_y = _mm256_cmp_pd(x0, y0, _CMP_GE_OQ);
+    const __m256d x_ge_z = _mm256_cmp_pd(x0, z0, _CMP_GE_OQ);
+    const __m256d x_lt_y = _mm256_cmp_pd(x0, y0, _CMP_LT_OQ);
+    const __m256d y_ge_z = _mm256_cmp_pd(y0, z0, _CMP_GE_OQ);
+    const __m256d y_gt_x = _mm256_cmp_pd(y0, x0, _CMP_GT_OQ);
+    const __m256d z_gt_x = _mm256_cmp_pd(z0, x0, _CMP_GT_OQ);
+    const __m256d z_gt_y = _mm256_cmp_pd(z0, y0, _CMP_GT_OQ);
 
-    for (int lane = 0; lane < 4; ++lane) {
-        const int i = ii[lane];
-        const int j = jj[lane];
-        const int k = kk[lane];
-        const double x0 = x0_lanes[lane];
-        const double y0 = y0_lanes[lane];
-        const double z0 = z0_lanes[lane];
+    const __m128i i1 = mask_to_i32(_mm256_and_pd(x_ge_y, x_ge_z));
+    const __m128i j1 = mask_to_i32(_mm256_and_pd(x_lt_y, y_ge_z));
+    const __m128i k1 = _mm_sub_epi32(_mm_sub_epi32(_mm_set1_epi32(1), i1), j1);
+    // The second corner has an X step for the x>=y branch and for the
+    // x<y, y>=z, x>=z branch. The y>=z guard distinguishes that latter
+    // case from the x<y, y<z ordering.
+    const __m256d xlt_y_and_yge_z_and_xge_z = _mm256_and_pd(
+        _mm256_and_pd(x_lt_y, y_ge_z), x_ge_z);
+    const __m128i i2 = mask_to_i32(
+        _mm256_or_pd(x_ge_y, xlt_y_and_yge_z_and_xge_z));
+    const __m128i j2 = mask_to_i32(_mm256_or_pd(y_ge_z, y_gt_x));
+    const __m128i k2 = mask_to_i32(_mm256_or_pd(z_gt_x, z_gt_y));
 
-        int i1, j1, k1;
-        int i2, j2, k2;
-        if (x0 >= y0) {
-            if (y0 >= z0)      { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
-            else if (x0 >= z0) { i1 = 1; j1 = 0; k1 = 0; i2 = 1; j2 = 0; k2 = 1; }
-            else               { i1 = 0; j1 = 0; k1 = 1; i2 = 1; j2 = 0; k2 = 1; }
-        } else {
-            if (y0 < z0)       { i1 = 0; j1 = 0; k1 = 1; i2 = 0; j2 = 1; k2 = 1; }
-            else if (x0 < z0)  { i1 = 0; j1 = 1; k1 = 0; i2 = 0; j2 = 1; k2 = 1; }
-            else               { i1 = 0; j1 = 1; k1 = 0; i2 = 1; j2 = 1; k2 = 0; }
-        }
+    const __m256d i1_pd = _mm256_cvtepi32_pd(i1);
+    const __m256d j1_pd = _mm256_cvtepi32_pd(j1);
+    const __m256d k1_pd = _mm256_cvtepi32_pd(k1);
+    const __m256d i2_pd = _mm256_cvtepi32_pd(i2);
+    const __m256d j2_pd = _mm256_cvtepi32_pd(j2);
+    const __m256d k2_pd = _mm256_cvtepi32_pd(k2);
+    const __m256d g3 = _mm256_set1_pd(G3);
+    const __m256d two_g3 = _mm256_set1_pd(2.0 * G3);
+    const __m256d three_g3 = _mm256_set1_pd(3.0 * G3);
+    const __m256d one = _mm256_set1_pd(1.0);
+    const __m256d x1 = _mm256_add_pd(_mm256_sub_pd(x0, i1_pd), g3);
+    const __m256d y1 = _mm256_add_pd(_mm256_sub_pd(y0, j1_pd), g3);
+    const __m256d z1 = _mm256_add_pd(_mm256_sub_pd(z0, k1_pd), g3);
+    const __m256d x2 = _mm256_add_pd(_mm256_sub_pd(x0, i2_pd), two_g3);
+    const __m256d y2 = _mm256_add_pd(_mm256_sub_pd(y0, j2_pd), two_g3);
+    const __m256d z2 = _mm256_add_pd(_mm256_sub_pd(z0, k2_pd), two_g3);
+    const __m256d x3 = _mm256_add_pd(_mm256_sub_pd(x0, one), three_g3);
+    const __m256d y3 = _mm256_add_pd(_mm256_sub_pd(y0, one), three_g3);
+    const __m256d z3 = _mm256_add_pd(_mm256_sub_pd(z0, one), three_g3);
 
-        const double x1 = x0 - static_cast<double>(i1) + G3;
-        const double y1 = y0 - static_cast<double>(j1) + G3;
-        const double z1 = z0 - static_cast<double>(k1) + G3;
-        const double x2 = x0 - static_cast<double>(i2) + 2.0 * G3;
-        const double y2 = y0 - static_cast<double>(j2) + 2.0 * G3;
-        const double z2 = z0 - static_cast<double>(k2) + 2.0 * G3;
-        const double x3 = x0 - 1.0 + 3.0 * G3;
-        const double y3 = y0 - 1.0 + 3.0 * G3;
-        const double z3 = z0 - 1.0 + 3.0 * G3;
+    const __m128i gi0 = pmap_mod12_4(
+        s, _mm_add_epi32(ii, pmap4(s, _mm_add_epi32(jj, pmap4(s, kk)))));
+    const __m128i gi1 = pmap_mod12_4(
+        s, _mm_add_epi32(
+               _mm_add_epi32(ii, i1),
+               pmap4(s, _mm_add_epi32(
+                   _mm_add_epi32(jj, j1), pmap4(s, _mm_add_epi32(kk, k1))))));
+    const __m128i gi2 = pmap_mod12_4(
+        s, _mm_add_epi32(
+               _mm_add_epi32(ii, i2),
+               pmap4(s, _mm_add_epi32(
+                   _mm_add_epi32(jj, j2), pmap4(s, _mm_add_epi32(kk, k2))))));
+    const __m128i ones = _mm_set1_epi32(1);
+    const __m128i gi3 = pmap_mod12_4(
+        s, _mm_add_epi32(
+               _mm_add_epi32(ii, ones),
+               pmap4(s, _mm_add_epi32(
+                   _mm_add_epi32(jj, ones), pmap4(s, _mm_add_epi32(kk, ones))))));
 
-        const int gi0 = pmap_mod12(s, i + pmap(s, j + pmap(s, k)));
-        const int gi1 = pmap_mod12(s, i + i1 + pmap(s, j + j1 + pmap(s, k + k1)));
-        const int gi2 = pmap_mod12(s, i + i2 + pmap(s, j + j2 + pmap(s, k + k2)));
-        const int gi3 = pmap_mod12(s, i + 1 + pmap(s, j + 1 + pmap(s, k + 1)));
-
-        out[lane] = 32.0 * (contrib3(gi0, x0, y0, z0)
-                          + contrib3(gi1, x1, y1, z1)
-                          + contrib3(gi2, x2, y2, z2)
-                          + contrib3(gi3, x3, y3, z3));
-    }
+    const __m256d sum = _mm256_add_pd(
+        _mm256_add_pd(
+            _mm256_add_pd(contribution3_4(gi0, x0, y0, z0),
+                          contribution3_4(gi1, x1, y1, z1)),
+            contribution3_4(gi2, x2, y2, z2)),
+        contribution3_4(gi3, x3, y3, z3));
+    _mm256_storeu_pd(out, _mm256_mul_pd(_mm256_set1_pd(32.0), sum));
 }
 
 } // namespace

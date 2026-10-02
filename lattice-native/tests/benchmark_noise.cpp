@@ -192,12 +192,11 @@ Parity compare(const std::vector<double>& expected, const std::vector<double>& a
     return parity;
 }
 
-std::string expected_path(std::string_view algorithm, std::string_view operation,
-                          std::size_t count, const lattice::cpu::Features& features) {
+std::string expected_path(std::string_view algorithm, std::size_t count,
+                          const lattice::cpu::Features& features) {
     const bool avx512 = features.requested_tier == lattice::cpu::RequestedTier::Avx512
         && features.avx512f && features.avx512dq && features.avx512vl && count >= 129;
     if ((algorithm == "perlin" || algorithm == "double-perlin") && avx512) return "avx512";
-    if (algorithm == "interpolated" && operation == "batch") return "scalar";
     if (algorithm == "octave" || algorithm == "interpolated") {
         if (avx512) return "scalar-orchestration+perlin-avx512";
         if (features.avx2) return "scalar-orchestration+perlin-avx2";
@@ -237,7 +236,7 @@ void print_result(std::string_view algorithm, std::string_view operation,
     std::cout << algorithm << ',' << operation << ',' << options.tier << ','
               << effective_tier(features) << ','
               << (requested_tier_supported(features) ? "yes" : "no") << ','
-              << expected_path(algorithm, operation, count, features) << ','
+              << expected_path(algorithm, count, features) << ','
               << count << ',' << options.warmup << ',' << options.samples << ','
               << std::fixed << std::setprecision(3)
               << stats.p50_ns_per_point << ',' << stats.p95_ns_per_point << ','

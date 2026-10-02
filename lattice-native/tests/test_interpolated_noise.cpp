@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -108,6 +109,32 @@ TEST_CASE("interpolated_noise: deterministic for same input") {
     const double v3 = noise::sample(s, 5.0001, 60.0, -3.0);
     // Tiny coord change should give a tiny output change.
     CHECK(std::abs(v1 - v3) < 0.01);
+}
+
+TEST_CASE("interpolated_noise: batch matches scalar samples") {
+    auto lower  = make_octave(16, 0x14);
+    auto upper  = make_octave(16, 0x27);
+    auto interp = make_octave(8,  0x3A);
+    auto s      = make_default_sampler(lower, upper, interp);
+
+    constexpr std::size_t count = 19;
+    std::vector<double> x(count);
+    std::vector<double> y(count);
+    std::vector<double> z(count);
+    std::vector<double> batch(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const double lane = static_cast<double>(i);
+        x[i] = -91.75 + lane * 13.125;
+        y[i] = 147.5 - lane * 9.375;
+        z[i] = 33.25 + lane * lane * 0.625;
+    }
+
+    noise::sample_batch(s, x.data(), y.data(), z.data(), count, batch.data());
+    for (std::size_t i = 0; i < count; ++i) {
+        const double expected = noise::sample(s, x[i], y[i], z[i]);
+        CHECK(std::bit_cast<std::uint64_t>(batch[i]) ==
+              std::bit_cast<std::uint64_t>(expected));
+    }
 }
 
 TEST_CASE("interpolated_noise: y column matches scalar samples") {
