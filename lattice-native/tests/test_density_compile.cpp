@@ -223,6 +223,32 @@ TEST_CASE("density compiler: installed program is used by the production evaluat
     CHECK(bits(evaluate(arena, ctx)) == recursive_bits);
 }
 
+TEST_CASE("density compiler: scalar program evaluation reuses CacheState registers") {
+    NodeArena arena;
+    Node gradient{};
+    gradient.kind = NodeKind::kYClampedGradient;
+    gradient.i0 = -8;
+    gradient.i1 = 8;
+    gradient.d0 = -2.0;
+    gradient.d1 = 2.0;
+    const NodeRef source = arena.push(gradient);
+    const NodeRef root = unary(arena, NodeKind::kSqueeze, source);
+    arena.root = root;
+    REQUIRE(dfc::install(arena, root));
+
+    CacheState cache;
+    cache.resize_for(arena);
+    Context ctx{3.0, 5.0, -7.0};
+    ctx.cache = &cache;
+    const double first = evaluate(arena, root, ctx);
+    const auto* registers = cache.program_batch.values.data();
+    const auto capacity = cache.program_batch.values.size();
+    REQUIRE(capacity >= arena.compiled_program->value_count);
+    CHECK(bits(evaluate(arena, root, ctx)) == bits(first));
+    CHECK(cache.program_batch.values.data() == registers);
+    CHECK(cache.program_batch.values.size() == capacity);
+}
+
 TEST_CASE("density compiler: cache root installs with a cacheless specialization") {
     NodeArena arena;
     const NodeRef value = constant(arena, 2.0);

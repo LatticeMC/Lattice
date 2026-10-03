@@ -818,6 +818,13 @@ double evaluate(const Program& program, const NodeArena& arena, const Context& c
     return run(selected, arena, ctx, values, value_capacity, nullptr, 0);
 }
 
+double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
+                BatchScratch& scratch) noexcept {
+    const auto& selected = !ctx.cache && program.cacheless ? *program.cacheless : program;
+    if (scratch.values.size() < selected.value_count) scratch.values.resize(selected.value_count);
+    return run(selected, arena, ctx, scratch.values.data(), scratch.values.size(), nullptr, 0);
+}
+
 void evaluate_batch(const Program& program, const NodeArena& arena,
                     const Context* contexts, std::size_t count, double* out, BatchScratch& scratch,
                     BatchBackend backend) noexcept {
@@ -840,8 +847,13 @@ void evaluate_batch(const Program& program, const NodeArena& arena,
 }
 
 double evaluate(const Program& program, const NodeArena& arena, const Context& ctx) noexcept {
-    std::vector<double> values(program.value_count, 0.0);
-    return evaluate(program, arena, ctx, values.data(), values.size());
+    // This overload is used by scalar callers that do not own a CacheState.
+    // Keep the register storage per thread so a point evaluation does not
+    // allocate and zero a vector on every sample.  The explicit-buffer
+    // overload remains available to callers with reusable per-evaluation
+    // scratch (for example CacheState::program_batch).
+    thread_local BatchScratch scratch;
+    return evaluate(program, arena, ctx, scratch);
 }
 
 const char* compile_error_name(CompileError error) noexcept {

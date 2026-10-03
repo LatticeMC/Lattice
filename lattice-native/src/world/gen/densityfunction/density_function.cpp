@@ -606,6 +606,7 @@ float evaluate_spline(const NodeArena& arena, SplineRef ref,
 
 double evaluate(const NodeArena& arena, NodeRef root, const Context& ctx) noexcept {
     if (const auto* program = dfc::find_program(arena, root)) {
+        if (ctx.cache) return dfc::evaluate(*program, arena, ctx, ctx.cache->program_batch);
         return dfc::evaluate(*program, arena, ctx);
     }
     return evaluate_node(arena, root, ctx);

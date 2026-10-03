@@ -137,6 +137,8 @@ struct CompileOptions {
 /// Pass the arena from which program was compiled (or its unchanged copy).
 [[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx) noexcept;
 [[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
+                              BatchScratch& scratch) noexcept;
+[[nodiscard]] double evaluate(const Program& program, const NodeArena& arena, const Context& ctx,
                               double* values, std::size_t value_capacity) noexcept;
 
 /// Keeps cache/opaque execution point-major; batches only pure dependencies.
