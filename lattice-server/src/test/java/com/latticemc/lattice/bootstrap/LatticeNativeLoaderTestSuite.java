@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.Test;
 
@@ -97,7 +98,9 @@ class LatticeNativeLoaderTestSuite {
     @Test
     void trustedDigestIsRequiredAndValidated() throws Exception {
         String previous = System.getProperty("lattice.native.sha256");
+        String previousRelease = System.getProperty("lattice.native.release");
         try {
+            System.setProperty("lattice.native.release", "native-custom");
             System.clearProperty("lattice.native.sha256");
             assertEquals(null, LatticeNativeLoader.trustedDigestFor("lattice-native-linux-x86_64.so"));
             System.setProperty("lattice.native.sha256", "AB".repeat(32));
@@ -108,7 +111,50 @@ class LatticeNativeLoaderTestSuite {
         } finally {
             if (previous == null) System.clearProperty("lattice.native.sha256");
             else System.setProperty("lattice.native.sha256", previous);
+            if (previousRelease == null) System.clearProperty("lattice.native.release");
+            else System.setProperty("lattice.native.release", previousRelease);
         }
+    }
+
+    @Test
+    void explicitReleaseKeepsUsingConfiguredDigestInsteadOfBundledDefault() {
+        String bundled = "a".repeat(64);
+        String configured = "b".repeat(64);
+        assertEquals(configured, LatticeNativeLoader.trustedDigestFor(
+                "lattice-native-linux-x86_64.so", "native-custom",
+                Map.of("lattice-native-linux-x86_64.so", bundled), configured));
+        assertEquals(bundled, LatticeNativeLoader.trustedDigestFor(
+                "lattice-native-linux-x86_64.so", "native-latest",
+                Map.of("lattice-native-linux-x86_64.so", bundled), ""));
+    }
+
+    @Test
+    void bundledDigestManifestAcceptsSupportedAssetsAndSkipsInvalidEntries() throws Exception {
+        String valid = "a".repeat(64);
+        String manifest = "# generated\n"
+                + "lattice-native-windows-x86_64.dll=" + valid.toUpperCase() + "\n"
+                + "unknown.so=" + valid + "\n"
+                + "lattice-native-linux-x86_64.so=not-a-digest\n"
+                + "malformed\n";
+        Map<String, String> parsed = LatticeNativeLoader.parseBundledReleaseDigests(
+                new ByteArrayInputStream(manifest.getBytes(StandardCharsets.UTF_8)));
+        assertEquals(Map.of("lattice-native-windows-x86_64.dll", valid), parsed);
+    }
+
+    @Test
+    void missingBundledDigestManifestPreservesEmptyMapBehavior() throws Exception {
+        assertEquals(Map.of(), LatticeNativeLoader.parseBundledReleaseDigests(null));
+    }
+
+    @Test
+    void explicitConfiguredDigestTakesPrecedenceOverBundledDigest() {
+        String bundled = "a".repeat(64);
+        String configured = "b".repeat(64);
+        assertEquals(configured, LatticeNativeLoader.trustedDigestFor(
+                "lattice-native-linux-x86_64.so",
+                Map.of("lattice-native-linux-x86_64.so", bundled), configured));
+        assertEquals(configured, LatticeNativeLoader.trustedDigestFor(
+                "lattice-native-windows-x86_64.dll", Map.of(), configured));
     }
 
     @Test

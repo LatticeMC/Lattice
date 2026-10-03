@@ -1,5 +1,6 @@
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.gradle.api.tasks.testing.logging.TestLogEvent
+import java.security.MessageDigest
 
 plugins {
     java
@@ -113,6 +114,68 @@ val nativeLibraryName = when {
 }
 val nativeLibraryFile = nativeBuildDirectory.map { it.file(nativeLibraryName) }
 
+data class NativeBundleAsset(val assetName: String, val platformTag: String, val libraryName: String)
+
+val nativeBundleAssets = listOf(
+    NativeBundleAsset("lattice-native-linux-x86_64.so", "linux-x86_64", "liblattice.so"),
+    NativeBundleAsset("lattice-native-linux-aarch64.so", "linux-aarch64", "liblattice.so"),
+    NativeBundleAsset("lattice-native-windows-x86_64.dll", "windows-x86_64", "lattice.dll"),
+    NativeBundleAsset("lattice-native-windows-aarch64.dll", "windows-aarch64", "lattice.dll"),
+    NativeBundleAsset("lattice-native-macos-x86_64.dylib", "macos-x86_64", "liblattice.dylib"),
+    NativeBundleAsset("lattice-native-macos-aarch64.dylib", "macos-aarch64", "liblattice.dylib"),
+    NativeBundleAsset("lattice-native-freebsd-x86_64.so", "freebsd-x86_64", "liblattice.so"),
+    NativeBundleAsset("lattice-native-freebsd-aarch64.so", "freebsd-aarch64", "liblattice.so"),
+)
+val nativeBundleDirectory = providers.gradleProperty("latticeNativeBundleDir").map { file(it) }
+val nativeDigestManifest = layout.buildDirectory.file("generated-resources/native/META-INF/native/digests.properties")
+
+val prepareLatticeNativeBundle by tasks.registering {
+    group = "build"
+    description = "Validate an optional multi-platform native bundle and generate its trusted digest manifest"
+    onlyIf { nativeBundleDirectory.isPresent }
+    inputs.dir(nativeBundleDirectory)
+    outputs.file(nativeDigestManifest)
+
+    doLast {
+        val bundleDirectory = nativeBundleDirectory.get()
+        if (!bundleDirectory.isDirectory) {
+            throw GradleException("latticeNativeBundleDir is not a directory: ${bundleDirectory.absolutePath}")
+        }
+        val manifest = nativeDigestManifest.get().asFile
+        manifest.parentFile.mkdirs()
+        val contents = buildString {
+            for (asset in nativeBundleAssets) {
+                val assetFile = bundleDirectory.resolve(asset.assetName)
+                val checksumFile = bundleDirectory.resolve("${asset.assetName}.sha256")
+                if (!assetFile.isFile || !checksumFile.isFile) {
+                    throw GradleException("Missing native bundle asset or checksum: ${asset.assetName}")
+                }
+                val checksumParts = checksumFile.readText(Charsets.UTF_8).trim().split(Regex("\\s+"), limit = 2)
+                if (checksumParts.size != 2 || checksumParts[1] != asset.assetName
+                    || !checksumParts[0].matches(Regex("[0-9A-Fa-f]{64}"))) {
+                    throw GradleException("Invalid native checksum record: ${checksumFile.absolutePath}")
+                }
+                val expected = checksumParts[0].lowercase()
+                val digest = MessageDigest.getInstance("SHA-256")
+                assetFile.inputStream().use { input ->
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        if (read > 0) digest.update(buffer, 0, read)
+                    }
+                }
+                val actual = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                if (actual != expected) {
+                    throw GradleException("Native checksum mismatch for ${asset.assetName}: expected $expected, got $actual")
+                }
+                append(asset.assetName).append('=').append(expected).append('\n')
+            }
+        }
+        manifest.writeText(contents, Charsets.UTF_8)
+    }
+}
+
 val configureLatticeNative by tasks.registering(Exec::class) {
     group = "build"
     description = "Configure the Lattice C++ native library with CMake and Ninja"
@@ -179,9 +242,32 @@ val buildLatticeNative by tasks.registering(Exec::class) {
 
 project(":lattice-server") {
     tasks.named<ProcessResources>("processResources") {
-        dependsOn(buildLatticeNative)
-        from(nativeLibraryFile) {
-            into("META-INF/native/$nativePlatform")
+        val bundleDirectory = nativeBundleDirectory.orNull
+        inputs.property("latticeNativeBundleMode", bundleDirectory?.absolutePath ?: "local")
+        doFirst {
+            if (bundleDirectory == null) {
+                delete(nativeDigestManifest.get().asFile)
+                for (asset in nativeBundleAssets) {
+                    delete(destinationDir.resolve("META-INF/native/${asset.platformTag}"))
+                }
+            }
+        }
+        if (bundleDirectory == null) {
+            dependsOn(buildLatticeNative)
+            from(nativeLibraryFile) {
+                into("META-INF/native/$nativePlatform")
+            }
+        } else {
+            dependsOn(prepareLatticeNativeBundle)
+            for (asset in nativeBundleAssets) {
+                from(bundleDirectory.resolve(asset.assetName)) {
+                    into("META-INF/native/${asset.platformTag}")
+                    rename { asset.libraryName }
+                }
+            }
+            from(nativeDigestManifest) {
+                into("META-INF/native")
+            }
         }
     }
 }

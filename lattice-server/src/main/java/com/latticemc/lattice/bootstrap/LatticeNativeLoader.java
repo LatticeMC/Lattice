@@ -2,11 +2,16 @@ package com.latticemc.lattice.bootstrap;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.BufferedReader;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -32,8 +37,8 @@ public final class LatticeNativeLoader {
     private static final int MAX_REDIRECTS = 5;
     private static final Set<String> ALLOWED_REDIRECT_HOSTS = Set.of(
             "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "codeload.github.com");
-    // Release builds may replace this map with the out-of-band release manifest.
-    private static final Map<String, String> BUILT_IN_RELEASE_DIGESTS = Map.of();
+    private static final String BUNDLED_DIGESTS_RESOURCE = "META-INF/native/digests.properties";
+    private static final Map<String, String> BUNDLED_RELEASE_DIGESTS = loadBundledReleaseDigests();
 
     private LatticeNativeLoader() {}
 
@@ -176,17 +181,86 @@ public final class LatticeNativeLoader {
 
     /** Resolves a locally pinned SHA-256; the adjacent remote .sha256 is deliberately ignored. */
     static String trustedDigestFor(String asset) {
-        final String builtIn = BUILT_IN_RELEASE_DIGESTS.get(asset);
-        if (builtIn != null && SHA256_PATTERN.matcher(builtIn).matches()) {
-            return builtIn.toLowerCase(Locale.ROOT);
-        }
-        final String configured = System.getProperty(SYS_TRUSTED_SHA256, "").trim();
-        if (configured.isEmpty()) return null;
-        if (!SHA256_PATTERN.matcher(configured).matches()) {
+        return trustedDigestFor(asset,
+                System.getProperty(SYS_RELEASE, DEFAULT_RELEASE),
+                BUNDLED_RELEASE_DIGESTS,
+                System.getProperty(SYS_TRUSTED_SHA256, "").trim());
+    }
+
+    static String trustedDigestFor(String asset, String release,
+                                   Map<String, String> bundledDigests, String configuredDigest) {
+        final Map<String, String> selectedDigests = DEFAULT_RELEASE.equals(normalizeRelease(release))
+                ? bundledDigests : Map.of();
+        return trustedDigestFor(asset, selectedDigests, configuredDigest);
+    }
+
+    static String trustedDigestFor(String asset, Map<String, String> bundledDigests, String configuredDigest) {
+        final String configured = configuredDigest == null ? "" : configuredDigest.trim();
+        if (!configured.isEmpty() && !SHA256_PATTERN.matcher(configured).matches()) {
             throw new IllegalArgumentException("invalid SHA-256 for -D" + SYS_TRUSTED_SHA256
                     + ": expected 64 hexadecimal characters");
         }
-        return configured.toLowerCase(Locale.ROOT);
+        if (!configured.isEmpty()) return configured.toLowerCase(Locale.ROOT);
+        final String builtIn = bundledDigests.get(asset);
+        if (builtIn != null && SHA256_PATTERN.matcher(builtIn).matches()) {
+            return builtIn.toLowerCase(Locale.ROOT);
+        }
+        return null;
+    }
+
+    static Map<String, String> parseBundledReleaseDigests(InputStream input) throws IOException {
+        if (input == null) return Map.of();
+        final Map<String, String> result = new HashMap<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                final String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("!")) continue;
+                final int separator = trimmed.indexOf('=');
+                if (separator <= 0) {
+                    LOGGER.warn("Ignoring malformed bundled native digest record at line {}", lineNumber);
+                    continue;
+                }
+                final String asset = trimmed.substring(0, separator).trim();
+                final String digest = trimmed.substring(separator + 1).trim();
+                if (!isSupportedAsset(asset)) {
+                    LOGGER.warn("Ignoring unknown bundled native digest asset '{}'", asset);
+                    continue;
+                }
+                if (!isSha256(digest)) {
+                    LOGGER.warn("Ignoring invalid bundled native digest for '{}'", asset);
+                    continue;
+                }
+                if (result.putIfAbsent(asset, digest.toLowerCase(Locale.ROOT)) != null) {
+                    LOGGER.warn("Ignoring duplicate bundled native digest for '{}'", asset);
+                }
+            }
+        }
+        return Collections.unmodifiableMap(result);
+    }
+
+    private static Map<String, String> loadBundledReleaseDigests() {
+        final ClassLoader loader = LatticeNativeLoader.class.getClassLoader();
+        if (loader == null) return Map.of();
+        try (InputStream input = loader.getResourceAsStream(BUNDLED_DIGESTS_RESOURCE)) {
+            return parseBundledReleaseDigests(input);
+        } catch (IOException failure) {
+            LOGGER.warn("Failed to read bundled native digest manifest '{}'; downloads will require an explicit digest",
+                    BUNDLED_DIGESTS_RESOURCE, failure);
+            return Map.of();
+        }
+    }
+
+    private static boolean isSupportedAsset(String asset) {
+        for (Os os : Os.values()) {
+            if (os == Os.UNKNOWN) continue;
+            for (Arch arch : Arch.values()) {
+                if (arch != Arch.UNKNOWN && asset.equals(assetName(new Platform(os, arch)))) return true;
+            }
+        }
+        return false;
     }
 
     static void verifyTrustedDigest(byte[] bytes, String trustedHex, String asset) throws IOException {

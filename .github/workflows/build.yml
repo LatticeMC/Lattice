@@ -47,6 +47,64 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Fetch matching native release bundle
+        if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          native_commit="$(git log -1 --format=%H -- lattice-native)"
+          if [[ -z "$native_commit" ]]; then
+            echo "Unable to determine the latest lattice-native commit" >&2
+            exit 1
+          fi
+          release_tag="native-$native_commit"
+          bundle_dir="$RUNNER_TEMP/lattice-native-bundle"
+          rm -rf "$bundle_dir"
+          mkdir -p "$bundle_dir"
+
+          available=false
+          for attempt in {1..90}; do
+            if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              available=true
+              break
+            fi
+            sleep 10
+          done
+          if [[ "$available" != true ]]; then
+            echo "Matching native release $release_tag was not published before the timeout" >&2
+            exit 1
+          fi
+
+          expected=(
+            lattice-native-linux-x86_64.so lattice-native-linux-aarch64.so
+            lattice-native-windows-x86_64.dll lattice-native-windows-aarch64.dll
+            lattice-native-macos-x86_64.dylib lattice-native-macos-aarch64.dylib
+            lattice-native-freebsd-x86_64.so lattice-native-freebsd-aarch64.so
+          )
+          downloaded=false
+          for attempt in {1..90}; do
+            rm -f "$bundle_dir"/*
+            if gh release download "$release_tag" --repo "$GITHUB_REPOSITORY" --dir "$bundle_dir" --clobber; then
+              downloaded=true
+              for asset in "${expected[@]}"; do
+                if [[ ! -f "$bundle_dir/$asset" || ! -f "$bundle_dir/$asset.sha256" ]] \
+                  || ! (cd "$bundle_dir" && sha256sum --check --status "$asset.sha256"); then
+                  downloaded=false
+                  break
+                fi
+              done
+            fi
+            if [[ "$downloaded" == true ]]; then break; fi
+            sleep 10
+          done
+          if [[ "$downloaded" != true ]]; then
+            echo "Matching native release $release_tag did not provide a complete, verified bundle before the timeout" >&2
+            exit 1
+          fi
+          echo "LATTICE_NATIVE_GRADLE_ARG=-PlatticeNativeBundleDir=$bundle_dir" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -80,15 +138,24 @@ jobs:
       - name: Apply patches
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-        run: ./gradlew applyAllPatches --no-parallel --stacktrace
+        run: |
+          args=()
+          if [[ -n "${LATTICE_NATIVE_GRADLE_ARG:-}" ]]; then args+=("$LATTICE_NATIVE_GRADLE_ARG"); fi
+          ./gradlew applyAllPatches --no-parallel --stacktrace "${args[@]}"
       - name: Build
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-        run: ./gradlew build --stacktrace
+        run: |
+          args=()
+          if [[ -n "${LATTICE_NATIVE_GRADLE_ARG:-}" ]]; then args+=("$LATTICE_NATIVE_GRADLE_ARG"); fi
+          ./gradlew build --stacktrace "${args[@]}"
       - name: Build reobf Paperclip jar
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-        run: ./gradlew :lattice-server:createMojmapPaperclipJar --stacktrace
+        run: |
+          args=()
+          if [[ -n "${LATTICE_NATIVE_GRADLE_ARG:-}" ]]; then args+=("$LATTICE_NATIVE_GRADLE_ARG"); fi
+          ./gradlew :lattice-server:createMojmapPaperclipJar --stacktrace "${args[@]}"
       - name: Stage release assets
         id: stage
         shell: bash
