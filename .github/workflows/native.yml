@@ -24,6 +24,8 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+    outputs:
+      native_commit: ${{ steps.native_commit.outputs.value }}
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +41,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve native source commit
+        id: native_commit
+        shell: bash
+        run: echo "value=$(git log -1 --format=%H -- lattice-native)" >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK 21
         if: matrix.os != 'freebsd'
@@ -295,9 +304,9 @@ jobs:
       - name: Publish immutable native release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: native-${{ github.sha }}
-          target_commitish: ${{ github.sha }}
-          name: Lattice Native (${{ github.sha }})
+          tag_name: native-${{ needs.build.outputs.native_commit }}
+          target_commitish: ${{ needs.build.outputs.native_commit }}
+          name: Lattice Native (${{ needs.build.outputs.native_commit }})
           files: release-assets/*
           draft: false
           prerelease: false
