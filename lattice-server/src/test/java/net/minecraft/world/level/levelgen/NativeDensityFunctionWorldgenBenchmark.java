@@ -52,7 +52,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         printCompilerCoverage(config.seed);
         if (config.coverageOnly) return;
         System.out.println("lifecycle cold=fresh worker+RandomState per sample; hot=reused worker+RandomState per mode.");
-        System.out.println("Each work item owns its NoiseChunk, native cache and output buffers; workers never share mutable worldgen state.");
+        System.out.println("Each work item owns its NoiseChunk and outputs; eligible grid programs/cache are reused sequentially within one worker and cleared per call; workers never share mutable native cache state.");
         System.out.println("path=grid uses preliminary surface grid; slice initializes one complete Overworld slice; column walks one X column of CacheAllInCell state.");
         System.out.println("executionStats: full wrapper coverage means the JNI batch completed; it does not imply every tree node used AVX2.");
         System.out.printf("%-6s %-6s %-4s %-4s %-5s %-6s %-8s %-8s %-12s %-12s %-12s %-12s %-10s %-10s %-10s %-9s%n",
@@ -60,10 +60,12 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             "points/work", "throughput/s", "speed-p50", "speed-p95", "coverage", "parity");
 
         final Shape shape = Shape.verify(config.seed);
+        if (config.profiling) printConstructionIdentity(config.seed, shape);
         System.out.printf("shape cellWidth=%d cellHeight=%d cellCountXZ=%d cellCountY=%d yRows=%d zRows=%d roots=%d cacheRoots=%d%n",
             shape.cellWidth, shape.cellHeight, shape.cellCountXZ, shape.cellCountY, shape.yRows, shape.zRows,
             shape.interpolatorRoots, shape.cacheRoots);
         verifyParity(config, shape);
+        verifyConstructionReuse(config.seed, shape);
         if (config.verifyOnly) {
             System.out.println("PARITY_RESULT modes=eager,lazy status=passed scope=observed-native-calls; see per-path coverage");
             return;
@@ -167,6 +169,28 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         configureNative(false, false, false, false, false);
     }
 
+    // 使用真实 Overworld 构造路径；resetStats 不改变配置 epoch，不把冷编译误算成稳态。
+    private static void verifyConstructionReuse(long seed, Shape shape) throws Exception {
+        boolean cacheEnabled = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionGridCompileCache", "true"));
+        for (long testSeed : new long[] {seed, seed + 1}) {
+            configureNative(true, true, false, false, false);
+            NativeDensityFunction.setIntOption("parityInterval", 1);
+            RandomState random = RandomState.create(registries, NoiseGeneratorSettings.OVERWORLD, testSeed);
+            newChunk(random, 0, shape);
+            NativeDensityFunction.resetStats();
+            for (int i = 1; i <= 16; i++) newChunk(random, i, shape);
+            long attempts = nativeCounter("COMPILE_ATTEMPTS");
+            long grids = nativeCounter("GRID_SUCCESS");
+            String status = NativeDensityFunction.status();
+            if (grids != 144 || (cacheEnabled && attempts != 0) || !status.contains("failures=0")) {
+                throw new IllegalStateException("Construction reuse regression: " + status);
+            }
+            System.out.printf("CONSTRUCTION_REGRESSION seed=%d cache=%s chunks=16 grid=%d compile-attempts=%d status=%s%n",
+                testSeed, cacheEnabled, grids, attempts, status);
+        }
+        configureNative(false, false, false, false, false);
+    }
+
     private static void runCase(final String phase, final Path path, final int workItems, final int workers,
                                 final int warmupRounds, final int samples, final long seed, final Shape shape) throws Exception {
         final Stats[] results = new Stats[Mode.values().length];
@@ -202,12 +226,13 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     private static void profile(final Path path, final Mode mode, final int workItems, final int workers,
                                 final Config config, final Shape shape) throws Exception {
         configureNative(mode.nativeEnabled, false, mode.lazyMixedRange, mode.segmentedMixedRange, false);
+        // setOption 会使编译缓存失效；必须在预热之前开启，不能在采样边界破坏热状态。
+        NativeDensityFunction.setOption("profiling", mode.nativeEnabled);
         try (WorkerPool pool = new WorkerPool(workers, config.seed)) {
             for (int i = 0; i < config.warmupRounds; ++i) runParallel(pool, path, workItems, shape);
             WorldgenProfiler.reset();
             WorldgenProfiler.setEnabled(true);
             WorldgenProfiler.setHotLoopsEnabled(true);
-            NativeDensityFunction.setOption("profiling", mode.nativeEnabled);
             NativeDensityFunction.resetStats();
             long workerNanos = 0;
             try {
@@ -220,11 +245,44 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             System.out.printf("PROFILE_TOTAL path=%s N=%d P=%d mode=%s samples=%d worker-ns=%d coverage=%s status=%s%n",
                     path, workItems, workers, mode.label, config.sampleCount, workerNanos,
                     mode.nativeEnabled ? coverage(path, NativeDensityFunction.status()) : "java", NativeDensityFunction.status());
+            System.out.printf("PROFILE_COMPILE path=%s mode=%s chunks=%d compile-attempts=%d compile-ns=%d compile-ns-per-chunk=%.3f grid-ns=%d%n",
+                    path, mode.label, workItems * config.sampleCount, nativeCounter("COMPILE_ATTEMPTS"),
+                    nativeCounter("COMPILE_NANOS"), (double) nativeCounter("COMPILE_NANOS") / (workItems * config.sampleCount),
+                    nativeCounter("GRID_NANOS"));
             for (var probe : WorldgenProfiler.snapshot()) {
                 if (probe.count() == 0) continue;
                 System.out.printf("PROFILE path=%s N=%d P=%d mode=%s probe=%s calls=%d ns=%d inclusive-worker-share=%.6f%n",
                         path, workItems, workers, mode.label, probe.name(), probe.count(), probe.nanos(),
                         workerNanos == 0 ? 0.0 : (double) probe.nanos() / workerNanos);
+            }
+        }
+    }
+
+    private static long nativeCounter(String name) throws ReflectiveOperationException {
+        Field counter = NativeDensityFunction.class.getDeclaredField(name);
+        counter.setAccessible(true);
+        return ((java.util.concurrent.atomic.LongAdder) counter.get(null)).sum();
+    }
+
+    private static void printConstructionIdentity(long seed, Shape shape) throws ReflectiveOperationException {
+        configureNative(true, false, false, false, false);
+        RandomState random = RandomState.create(registries, NoiseGeneratorSettings.OVERWORLD, seed);
+        NoiseChunk first = newChunk(random, 0, shape), second = newChunk(random, 1, shape);
+        var firstWrapped = (java.util.Map<?, ?>) field("wrapped").get(first);
+        var secondWrapped = (java.util.Map<?, ?>) field("wrapped").get(second);
+        List<DensityFunction> roots = new ArrayList<>();
+        for (Object wrapped : firstWrapped.values()) {
+            if (wrapped instanceof NoiseChunk.FlatCache flat) roots.add(flat.wrapped());
+        }
+        for (Object wrapped : secondWrapped.values()) {
+            if (wrapped instanceof NoiseChunk.FlatCache flat) {
+                DensityFunction root = flat.wrapped();
+                var keyReason = Class.forName("com.latticemc.lattice.nativelib.NativeDensityGridKey")
+                        .getDeclaredMethod("rejectionReason", DensityFunction.class);
+                keyReason.setAccessible(true);
+                System.out.printf("CONSTRUCTION_IDENTITY type=%s identity-match=%s equals-match=%s key=%s%n",
+                        root.getClass().getName(), roots.stream().anyMatch(previous -> previous == root), roots.contains(root),
+                        keyReason.invoke(null, root));
             }
         }
     }
@@ -274,9 +332,9 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         final long seed, final Shape shape
     ) throws Exception {
         configureNative(true, false, mode.lazyMixedRange, mode.segmentedMixedRange, false);
+        NativeDensityFunction.setOption("executionStats", true);
         try (WorkerPool pool = new WorkerPool(workers, seed)) {
             for (int i = 0; i < warmupRounds; ++i) runParallel(pool, path, workItems, shape);
-            NativeDensityFunction.setOption("executionStats", true);
             NativeDensityFunction.resetStats();
             return runParallel(pool, path, workItems, shape, true).executionStats;
         }

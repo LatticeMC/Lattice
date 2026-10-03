@@ -3,6 +3,8 @@ package com.latticemc.lattice.nativelib;
 import com.latticemc.lattice.bridge.NativeInterpolatedNoiseAccess;
 import com.latticemc.lattice.bridge.NativeNormalNoiseAccess;
 import java.lang.ref.Cleaner;
+import java.lang.ref.Reference;
+import java.util.LinkedHashMap;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.HashMap;
@@ -30,6 +32,7 @@ public final class NativeDensityFunction {
     private static final Logger LOGGER = LoggerFactory.getLogger("Lattice");
     private static volatile boolean ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunction", "false"));
     private static final boolean GRID_ENABLED = Boolean.getBoolean("lattice.nativeDensityFunctionGrid");
+    private static volatile boolean GRID_COMPILE_CACHE_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionGridCompileCache", "true"));
     private static volatile boolean CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionCell", "true"));
     private static volatile boolean DIRECT_CELL_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCell", "true"));
     private static volatile boolean DIRECT_CELL_COLUMN_ENABLED = Boolean.parseBoolean(System.getProperty("lattice.nativeDensityFunctionDirectCellColumn", "true"));
@@ -77,6 +80,11 @@ public final class NativeDensityFunction {
     private static final ThreadLocal<ThreadCompileCache> THREAD_COMPILE_CACHE = ThreadLocal.withInitial(ThreadCompileCache::new);
     private static final ThreadLocal<ThreadCompileCache> THREAD_DIRECT_COMPILE_CACHE = ThreadLocal.withInitial(ThreadCompileCache::new);
     private static final int THREAD_COMPILE_CACHE_CAPACITY = 32;
+    private static final int GRID_COMPILE_CACHE_CAPACITY = 64;
+    private static final ThreadLocal<GridCompileCache> GRID_COMPILE_CACHE = ThreadLocal.withInitial(GridCompileCache::new);
+    private static final LongAdder GRID_TEMPLATE_HITS = new LongAdder();
+    private static final LongAdder GRID_TEMPLATE_MISSES = new LongAdder();
+    private static final LongAdder GRID_TEMPLATE_EVICTIONS = new LongAdder();
     private static final Object THREAD_COMPILE_CACHE_MISS = new Object();
     private static final int MAX_DIRECT_CELL_COLUMN_POOL_ENTRIES = 16;
     private static final int MAX_POOLED_DIRECT_CELL_COLUMN_LENGTH = 1 << 20;
@@ -173,6 +181,12 @@ public final class NativeDensityFunction {
                                   double[][] cacheAllInCellValues,
                                   NativeCacheAllInCellAccess[] cacheAllInCellBindings,
                                   boolean clearsCachePerCell) {
+        this(handle, cacheHandle, interpolators, cacheAllInCellValues, cacheAllInCellBindings, clearsCachePerCell, null);
+    }
+
+    private NativeDensityFunction(long handle, long cacheHandle, List<InterpolatorBinding> interpolators,
+                                  double[][] cacheAllInCellValues, NativeCacheAllInCellAccess[] cacheAllInCellBindings,
+                                  boolean clearsCachePerCell, Object lifetimeAnchor) {
         this.handle = handle;
         this.cacheHandle = cacheHandle;
         this.interpolators = List.copyOf(interpolators);
@@ -188,7 +202,7 @@ public final class NativeDensityFunction {
         this.cacheAllInCellValues = cacheAllInCellValues;
         this.cacheAllInCellBindings = cacheAllInCellBindings;
         this.clearsCachePerCell = clearsCachePerCell;
-        this.cleanable = CLEANER.register(this, new Destroy(handle, cacheHandle));
+        this.cleanable = CLEANER.register(this, new Destroy(handle, cacheHandle, lifetimeAnchor));
     }
 
     public static boolean tryFillSlice(double[] values,
@@ -312,8 +326,12 @@ public final class NativeDensityFunction {
         boolean profiling = PROFILING_ENABLED;
         if (stats) GRID_ATTEMPTS.increment();
         long start = profiling ? System.nanoTime() : 0L;
-        NativeDensityFunction compiled = tryCompile(function);
-        if (compiled != null) trackExecutionStatsCache(compiled.cacheHandle);
+        NativeDensityFunction compiled = tryCompileGrid(function);
+        if (compiled != null) {
+            ExecutionStatsSample sample = EXECUTION_STATS_SAMPLE.get();
+            if (sample != null) sample.owners.put(compiled, Boolean.TRUE);
+            trackExecutionStatsCache(compiled.cacheHandle);
+        }
         // Grid evaluation supplies complete coordinates and advances cell X/Z for
         // every sample, so CacheOnce/Cache2D/FlatCache remain correctly keyed.
         // Interpolators still require NoiseChunk's live interpolation state.
@@ -326,6 +344,8 @@ public final class NativeDensityFunction {
         } catch (RuntimeException | LinkageError e) {
             LatticeNative.logFallbackOnce("density_function_flat_grid", e.getMessage());
             return false;
+        } finally {
+            Reference.reachabilityFence(compiled);
         }
     }
 
@@ -1085,6 +1105,69 @@ public final class NativeDensityFunction {
         }
     }
 
+    private static final class GridCompileCache {
+        private int epoch = COMPILE_CACHE_EPOCH;
+        private final LinkedHashMap<NativeDensityGridKey, NativeDensityFunction> entries = new LinkedHashMap<>(16, 0.75f, true);
+        private void synchronizeEpoch() {
+            if (epoch != COMPILE_CACHE_EPOCH) {
+                entries.clear();
+                epoch = COMPILE_CACHE_EPOCH;
+            }
+        }
+    }
+
+    private static NativeDensityFunction tryCompileGrid(DensityFunction function) {
+        if (!GRID_COMPILE_CACHE_ENABLED) return tryCompile(function);
+        if (!LatticeNative.isLoaded() || function == null) return null;
+        NativeDensityGridKey key = NativeDensityGridKey.create(function);
+        if (key == null) return tryCompile(function);
+        GridCompileCache cache = GRID_COMPILE_CACHE.get();
+        cache.synchronizeEpoch();
+        int epoch = cache.epoch;
+        // 失败仍由原失败映射处理；不把一次失败扩展为结构相等图的永久负缓存。
+        synchronized (CACHE) {
+            if (FAILED_COMPILES.containsKey(function)) {
+                LAST_COMPILE.set(new LastCompile(function, null));
+                putThreadCompileCache(threadCompileCache(), function, FAILED_COMPILE_SENTINEL);
+                return null;
+            }
+        }
+        NativeDensityFunction existing = cache.entries.get(key);
+        if (existing != null) {
+            if (STATS_ENABLED) GRID_TEMPLATE_HITS.increment();
+            return existing;
+        }
+        if (STATS_ENABLED) {
+            GRID_TEMPLATE_MISSES.increment();
+            COMPILE_ATTEMPTS.increment();
+        }
+        boolean profiling = PROFILING_ENABLED;
+        long start = profiling ? System.nanoTime() : 0L;
+        NativeDensityFunction compiled = compileNew(function, false, key);
+        if (profiling) COMPILE_NANOS.add(System.nanoTime() - start);
+        synchronized (CACHE) {
+            // 配置在编译中发生变化时，允许本次调用结束，但不发布旧配置结果。
+            if (epoch != COMPILE_CACHE_EPOCH) return compiled;
+            if (FAILED_COMPILES.containsKey(function)) {
+                if (compiled != null) compiled.destroyNow();
+                return null;
+            }
+            if (compiled == null) {
+                FAILED_COMPILES.put(function, Boolean.TRUE);
+                LAST_COMPILE.set(new LastCompile(function, null));
+                putThreadCompileCache(threadCompileCache(), function, FAILED_COMPILE_SENTINEL);
+                return null;
+            }
+            if (STATS_ENABLED) COMPILE_SUCCESS.increment();
+            cache.entries.put(key, compiled);
+            if (cache.entries.size() > GRID_COMPILE_CACHE_CAPACITY) {
+                cache.entries.remove(cache.entries.keySet().iterator().next());
+                if (STATS_ENABLED) GRID_TEMPLATE_EVICTIONS.increment();
+            }
+            return compiled;
+        }
+    }
+
     private static NativeDensityFunction tryCompile(DensityFunction function) {
         if (!LatticeNative.isLoaded() || function == null) return null;
         ThreadCompileCache threadCache = threadCompileCache();
@@ -1323,6 +1406,10 @@ public final class NativeDensityFunction {
     }
 
     private static NativeDensityFunction compileNew(DensityFunction function, boolean directCell) {
+        return compileNew(function, directCell, null);
+    }
+
+    private static NativeDensityFunction compileNew(DensityFunction function, boolean directCell, Object lifetimeAnchor) {
         long handle = 0L;
         long cacheHandle = 0L;
         try {
@@ -1349,7 +1436,7 @@ public final class NativeDensityFunction {
                 return null;
             }
             NativeDensityFunction compiled = new NativeDensityFunction(handle, cacheHandle, compiler.interpolators(),
-                    compiler.cacheAllInCellValues(), compiler.cacheAllInCellAccesses(), compiler.clearsCachePerCell());
+                    compiler.cacheAllInCellValues(), compiler.cacheAllInCellAccesses(), compiler.clearsCachePerCell(), lifetimeAnchor);
             compiled.bindCacheAllInCellArrays();
             return compiled;
         } catch (RuntimeException | LinkageError e) {
@@ -1366,13 +1453,16 @@ public final class NativeDensityFunction {
         }
     }
 
-    private record Destroy(long handle, long cacheHandle) implements Runnable {
+    private record Destroy(long handle, long cacheHandle, Object lifetimeAnchor) implements Runnable {
+        private Destroy(long handle, long cacheHandle) { this(handle, cacheHandle, null); }
         @Override
         public void run() {
             try {
                 if (cacheHandle != 0L) nativeDestroyCache(cacheHandle);
                 if (handle != 0L) destroyArena(handle);
             } catch (LinkageError ignored) {
+            } finally {
+                Reference.reachabilityFence(lifetimeAnchor);
             }
         }
     }
@@ -1573,6 +1663,7 @@ public final class NativeDensityFunction {
     }
 
     private static final class ExecutionStatsSample {
+        private final IdentityHashMap<Object, Boolean> owners = new IdentityHashMap<>();
         private long[] cacheHandles = new long[4];
         private int size;
 
@@ -1616,6 +1707,8 @@ public final class NativeDensityFunction {
                 EXECUTION_STATS_NATIVE_AVAILABLE = false;
                 LatticeNative.logFallbackOnce("density_function_execution_stats_symbol", error.getMessage());
                 return ExecutionStatsSnapshot.disabled();
+            } finally {
+                Reference.reachabilityFence(this);
             }
         }
     }
@@ -1670,6 +1763,7 @@ public final class NativeDensityFunction {
     public static boolean setOption(String option, boolean value) {
         switch (option) {
             case "enabled" -> ENABLED = value;
+            case "gridCompileCache" -> GRID_COMPILE_CACHE_ENABLED = value;
             case "cell" -> CELL_ENABLED = value;
             case "directCell" -> DIRECT_CELL_ENABLED = value;
             case "directCellColumn" -> DIRECT_CELL_COLUMN_ENABLED = value;
@@ -1704,6 +1798,9 @@ public final class NativeDensityFunction {
     public static String status() {
         return "enabled=" + ENABLED
                 + " gridEnabled=" + GRID_ENABLED
+                + " gridCompileCache=" + GRID_COMPILE_CACHE_ENABLED
+                + " gridTemplate=" + GRID_TEMPLATE_HITS.sum() + '/' + GRID_TEMPLATE_MISSES.sum()
+                + " gridTemplateEvictions=" + GRID_TEMPLATE_EVICTIONS.sum()
                 + " cell=" + CELL_ENABLED
                 + " directCell=" + DIRECT_CELL_ENABLED
                 + " directCellColumn=" + DIRECT_CELL_COLUMN_ENABLED
@@ -1760,6 +1857,9 @@ public final class NativeDensityFunction {
     }
 
     public static void resetStats() {
+        GRID_TEMPLATE_HITS.reset();
+        GRID_TEMPLATE_MISSES.reset();
+        GRID_TEMPLATE_EVICTIONS.reset();
         COMPILE_ATTEMPTS.reset();
         COMPILE_SUCCESS.reset();
         SLICE_ATTEMPTS.reset();
@@ -2111,6 +2211,7 @@ public final class NativeDensityFunction {
         ClimateBatchBuffers climateBuffers = CLIMATE_BATCH_BUFFERS.get();
         climateBuffers.destroyNow();
         CLIMATE_BATCH_BUFFERS.remove();
+        GRID_COMPILE_CACHE.remove();
         THREAD_COMPILE_CACHE.remove();
         THREAD_DIRECT_COMPILE_CACHE.remove();
         THREAD_COMPILE_CACHE_EPOCH.remove();
