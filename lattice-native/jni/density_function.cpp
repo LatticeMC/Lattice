@@ -173,18 +173,17 @@ std::vector<PinnedDoubleArray> bind_cache_all_in_cell_arrays(JNIEnv* env, df::Ca
     std::vector<PinnedDoubleArray> pinned;
     if (!arrays) return pinned;
     const jsize count = env->GetArrayLength(arrays);
-    const std::size_t slots = std::min<std::size_t>(static_cast<std::size_t>(count), cache.cache_all_in_cell_arrays.size());
+    const std::size_t slots = std::min<std::size_t>(static_cast<std::size_t>(count), cache.cell_array_count());
     pinned.reserve(slots);
     for (std::size_t i = 0; i < slots; ++i) {
         auto* array = static_cast<jdoubleArray>(env->GetObjectArrayElement(arrays, static_cast<jsize>(i)));
+        if (env->ExceptionCheck()) { cache.unbind_cell_arrays(); return pinned; }
         if (!array) continue;
         pinned.emplace_back(env, array);
-        if (env->ExceptionCheck()) return pinned;
+        if (env->ExceptionCheck()) { cache.unbind_cell_arrays(); return pinned; }
         auto& guard = pinned.back();
         if (!guard.data) continue;
-        cache.cache_all_in_cell_arrays[i] = reinterpret_cast<const double*>(guard.data);
-        cache.cache_all_in_cell_array_lengths[i] = guard.length;
-        cache.cache_all_in_cell_array_offsets[i] = 0;
+        cache.bind_cell_array(i, reinterpret_cast<const double*>(guard.data), guard.length, 0);
     }
     return pinned;
 }
@@ -199,25 +198,21 @@ std::vector<PinnedDoubleArray> bind_bound_cache_all_in_cell_arrays(JNIEnv* env, 
     }
 
     std::vector<PinnedDoubleArray> pinned;
-    const std::size_t slots = std::min<std::size_t>(refs.size(), cache.cache_all_in_cell_arrays.size());
+    const std::size_t slots = std::min<std::size_t>(refs.size(), cache.cell_array_count());
     pinned.reserve(slots);
     for (std::size_t i = 0; i < slots; ++i) {
         if (!refs[i]) continue;
         pinned.emplace_back(env, refs[i], false);
-        if (env->ExceptionCheck()) return pinned;
+        if (env->ExceptionCheck()) { cache.unbind_cell_arrays(); return pinned; }
         auto& guard = pinned.back();
         if (!guard.data) continue;
-        cache.cache_all_in_cell_arrays[i] = reinterpret_cast<const double*>(guard.data);
-        cache.cache_all_in_cell_array_lengths[i] = guard.length;
-        cache.cache_all_in_cell_array_offsets[i] = 0;
+        cache.bind_cell_array(i, reinterpret_cast<const double*>(guard.data), guard.length, 0);
     }
     return pinned;
 }
 
 void unbind_cache_all_in_cell_arrays(df::CacheState& cache) {
-    for (auto& p : cache.cache_all_in_cell_arrays) p = nullptr;
-    for (auto& n : cache.cache_all_in_cell_array_lengths) n = 0;
-    for (auto& n : cache.cache_all_in_cell_array_offsets) n = 0;
+    cache.unbind_cell_arrays();
 }
 
 } // namespace
@@ -542,14 +537,12 @@ JNIEXPORT void lattice_density_evaluate_interpolated_columns(
         if (!a || !cache) continue;
 
         if (cacheValuesPacked && cacheOffsets && cacheLengths && maxCacheSlots > 0) {
-            const int slots = std::min<int>(maxCacheSlots, static_cast<int>(cache->cache_all_in_cell_arrays.size()));
+            const int slots = std::min<int>(maxCacheSlots, static_cast<int>(cache->cell_array_count()));
             for (int slot = 0; slot < slots; ++slot) {
                 const int index = i * maxCacheSlots + slot;
                 const long long length = cacheLengths[index];
                 if (length <= 0) continue;
-                cache->cache_all_in_cell_arrays[static_cast<std::size_t>(slot)] = cacheValuesPacked + cacheOffsets[index];
-                cache->cache_all_in_cell_array_lengths[static_cast<std::size_t>(slot)] = static_cast<std::size_t>(length);
-                cache->cache_all_in_cell_array_offsets[static_cast<std::size_t>(slot)] = 0;
+                cache->bind_cell_array(static_cast<std::size_t>(slot), cacheValuesPacked + cacheOffsets[index], static_cast<std::size_t>(length), 0);
             }
         }
 
@@ -763,7 +756,7 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeBindCacheAllInC
     BoundCacheArrays next;
     if (arrays) {
         const jsize count = env->GetArrayLength(arrays);
-        const std::size_t slots = std::min<std::size_t>(static_cast<std::size_t>(count), cache->cache_all_in_cell_arrays.size());
+        const std::size_t slots = std::min<std::size_t>(static_cast<std::size_t>(count), cache->cell_array_count());
         next.arrays.reserve(slots);
         for (std::size_t i = 0; i < slots; ++i) {
             auto* array = static_cast<jdoubleArray>(env->GetObjectArrayElement(arrays, static_cast<jsize>(i)));
@@ -1942,8 +1935,8 @@ bool fill_interpolated_program_column(df::NodeArena& arena,
             const double y_top = y_min + static_cast<double>(ly * cell_height + cell_height - 1);
             const std::size_t base = (static_cast<std::size_t>(lz) * static_cast<std::size_t>(cell_count_y)
                                      + static_cast<std::size_t>(ly)) * cell_value_count;
-            for (std::size_t slot = 0; slot < cache.cache_all_in_cell_array_offsets.size(); ++slot) {
-                if (cache.cache_all_in_cell_arrays[slot]) cache.cache_all_in_cell_array_offsets[slot] = base;
+            for (std::size_t slot = 0; slot < cache.cell_array_count(); ++slot) {
+                if (cache.cell_array_at(slot).data) cache.set_cell_array_offset(slot, base);
             }
             for (int iy = 0; iy < cell_height; ++iy) {
                 const int in_cell_y = cell_height - 1 - iy;
@@ -2378,9 +2371,9 @@ Java_com_latticemc_lattice_nativelib_NativeDensityFunction_nativeEvaluateInterpo
                                    + static_cast<std::size_t>(ly))
                                   * static_cast<std::size_t>(cell_value_count);
             if (cacheAllInCellValues) {
-                for (std::size_t slot = 0; slot < cache->cache_all_in_cell_array_offsets.size(); ++slot) {
-                    if (cache->cache_all_in_cell_arrays[slot]) {
-                        cache->cache_all_in_cell_array_offsets[slot] = base;
+                for (std::size_t slot = 0; slot < cache->cell_array_count(); ++slot) {
+                    if (cache->cell_array_at(slot).data) {
+                        cache->set_cell_array_offset(slot, base);
                     }
                 }
             }

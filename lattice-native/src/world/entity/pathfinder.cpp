@@ -476,8 +476,8 @@ struct SearchResult {
     return (count + (kMaskWordBits - 1)) / kMaskWordBits;
 }
 
-void mask_clear(std::vector<std::uint64_t>& mask, std::size_t count) {
-    mask.assign(mask_words(count), 0ULL);
+void resize_mask(std::vector<std::uint64_t>& mask, std::size_t count) {
+    mask.resize(mask_words(count));
 }
 
 void mask_set(std::uint64_t* mask, std::size_t index, bool value) noexcept {
@@ -562,8 +562,8 @@ namespace {
     if (grid_volume <= 0) return empty_search();
 
     if (!in.lazy_context) {
-        mask_clear(scratch.passable, static_cast<std::size_t>(grid_volume));
-        mask_clear(scratch.standing, static_cast<std::size_t>(grid_volume));
+        resize_mask(scratch.passable, static_cast<std::size_t>(grid_volume));
+        resize_mask(scratch.standing, static_cast<std::size_t>(grid_volume));
         build_pathfinder_masks(in.path_types, static_cast<std::size_t>(grid_volume),
                                in.pathfinding_malus, in.pathfinding_malus_count,
                                PathfinderMasks{scratch.passable.data(), scratch.standing.data()});

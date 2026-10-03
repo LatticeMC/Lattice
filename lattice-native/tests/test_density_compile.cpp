@@ -50,10 +50,10 @@ NodeRef gradient(NodeArena& arena) {
 }
 
 void check_once_cache(const CacheState& actual, const CacheState& expected) {
-    REQUIRE(actual.cache_once.size() == expected.cache_once.size());
-    for (std::size_t i = 0; i < actual.cache_once.size(); ++i) {
-        const auto& a = actual.cache_once[i];
-        const auto& b = expected.cache_once[i];
+    REQUIRE(actual.cache_once_size() == expected.cache_once_size());
+    for (std::size_t i = 0; i < actual.cache_once_size(); ++i) {
+        const auto& a = actual.cache_once_at(i);
+        const auto& b = expected.cache_once_at(i);
         CHECK(a.valid == b.valid);
         if (!a.valid || !b.valid) continue;
         CHECK(bits(a.x) == bits(b.x)); CHECK(bits(a.y) == bits(b.y)); CHECK(bits(a.z) == bits(b.z));
@@ -63,18 +63,18 @@ void check_once_cache(const CacheState& actual, const CacheState& expected) {
 
 void check_batch_cache(const CacheState& actual, const CacheState& expected) {
     check_once_cache(actual, expected);
-    REQUIRE(actual.cache_2d.size() == expected.cache_2d.size());
-    for (std::size_t i = 0; i < actual.cache_2d.size(); ++i) {
-        const auto& a = actual.cache_2d[i];
-        const auto& b = expected.cache_2d[i];
+    REQUIRE(actual.cache_2d_size() == expected.cache_2d_size());
+    for (std::size_t i = 0; i < actual.cache_2d_size(); ++i) {
+        const auto& a = actual.cache_2d_at(i);
+        const auto& b = expected.cache_2d_at(i);
         CHECK(a.valid == b.valid);
         if (!a.valid || !b.valid) continue;
         CHECK(a.x == b.x); CHECK(a.z == b.z); CHECK(bits(a.value) == bits(b.value));
     }
-    REQUIRE(actual.flat_cache.size() == expected.flat_cache.size());
-    for (std::size_t i = 0; i < actual.flat_cache.size(); ++i) {
-        const auto& a = actual.flat_cache[i];
-        const auto& b = expected.flat_cache[i];
+    REQUIRE(actual.flat_cache_size() == expected.flat_cache_size());
+    for (std::size_t i = 0; i < actual.flat_cache_size(); ++i) {
+        const auto& a = actual.flat_cache_at(i);
+        const auto& b = expected.flat_cache_at(i);
         CHECK(a.valid == b.valid);
         if (!a.valid || !b.valid) continue;
         CHECK(a.cellX == b.cellX); CHECK(a.cellZ == b.cellZ); CHECK(bits(a.value) == bits(b.value));
@@ -345,8 +345,8 @@ TEST_CASE("density compiler: multiplication and range preserve lazy cache effect
             CHECK(bits(got) == bits(want));
             check_once_cache(actual, expected);
             const bool choose_in = y >= 0 && y < 1;
-            CHECK(actual.cache_once[0].valid == (range ? choose_in : y != 0));
-            CHECK(actual.cache_once[1].valid == (range && !choose_in));
+            CHECK(actual.cache_once_at(0).valid == (range ? choose_in : y != 0));
+            CHECK(actual.cache_once_at(1).valid == (range && !choose_in));
         }
     }
 }
@@ -369,8 +369,8 @@ TEST_CASE("density compiler: repeated stateful DAG observes intervening coordina
     CHECK(bits(evaluate(arena, root, Context{1, 2, 3, &actual}))
           == bits(evaluate_node(arena, root, Context{1, 2, 3, &expected})));
     check_once_cache(actual, expected);
-    CHECK(actual.cache_once[0].y == 2);
-    CHECK(actual.cache_once[0].value == 2);
+    CHECK(actual.cache_once_at(0).y == 2);
+    CHECK(actual.cache_once_at(0).value == 2);
 }
 
 TEST_CASE("density compiler: cache hits never pre-evaluate wrapped inputs") {
@@ -386,8 +386,7 @@ TEST_CASE("density compiler: cache hits never pre-evaluate wrapped inputs") {
         const std::array<double, 1> cell_values{123};
         if (kind == NodeKind::kCacheAllInCell) {
             for (auto* cache : {&actual, &expected}) {
-                cache->cache_all_in_cell_arrays[slot] = cell_values.data();
-                cache->cache_all_in_cell_array_lengths[slot] = cell_values.size();
+                cache->bind_cell_array(slot, cell_values.data(), cell_values.size());
             }
         }
         if (kind == NodeKind::kInterpolated) {
@@ -397,14 +396,14 @@ TEST_CASE("density compiler: cache hits never pre-evaluate wrapped inputs") {
             }
         }
         for (const double y : {2.0, 2.0, 3.0}) {
-            actual.cache_once[0].valid = false;
-            expected.cache_once[0].valid = false;
+            actual.cache_once_at(0).valid = false;
+            expected.cache_once_at(0).valid = false;
             Context ac{1, y, 3, &actual, 0, 0, 0, 0, 0, 1, 1};
             Context ec = ac; ec.cache = &expected;
             CHECK(bits(evaluate(arena, root, ac)) == bits(evaluate_node(arena, root, ec)));
             check_once_cache(actual, expected);
             if (kind == NodeKind::kCacheAllInCell || kind == NodeKind::kInterpolated)
-                CHECK_FALSE(actual.cache_once[0].valid);
+                CHECK_FALSE(actual.cache_once_at(0).valid);
         }
         CHECK(bits(evaluate(arena, root, Context{1, 4, 3})) == bits(evaluate_node(arena, root, Context{1, 4, 3})));
     }
@@ -420,8 +419,7 @@ TEST_CASE("density compiler: input-free cell leaf and moved arenas preserve sour
     const std::array<double, 1> cell{19};
     for (auto* source : {&copy, &moved}) {
         CacheState cache; cache.resize_for(*source);
-        cache.cache_all_in_cell_arrays[0] = cell.data();
-        cache.cache_all_in_cell_array_lengths[0] = 1;
+        cache.bind_cell_array(0, cell.data(), 1);
         CHECK(evaluate(*source, Context{0, 0, 0, &cache, 0, 0, 0, 0, 0, 1, 1}) == 19);
         CHECK(evaluate(*source, Context{0, 0, 0}) == 0);
         constant(*source, 3);
@@ -564,7 +562,7 @@ TEST_CASE("density compiler: both column entries execute programs with scalar st
                     CHECK(actual.execution_stats->avx2_success == 0);
                     CHECK(actual.execution_stats->generic_success == 0);
                     CHECK(actual.execution_stats->point_fallback == 0);
-                    if (with_cache && dy == 0) CHECK_FALSE(actual.cache_once[1].valid);
+                    if (with_cache && dy == 0) CHECK_FALSE(actual.cache_once_at(1).valid);
                 }
             }
         }
@@ -583,8 +581,8 @@ TEST_CASE("density compiler: grid preserves layout warm caches and active interp
         CacheState actual, expected;
         actual.resize_for(arena); expected.resize_for(arena);
         for (auto* cache : {&actual, &expected}) {
-            cache->cache_2d[0].valid = true;
-            cache->cache_2d[0].x = -4; cache->cache_2d[0].z = 4; cache->cache_2d[0].value = 900;
+            cache->cache_2d_at(0).valid = true;
+            cache->cache_2d_at(0).x = -4; cache->cache_2d_at(0).z = 4; cache->cache_2d_at(0).value = 900;
             cache->is_in_interpolation_loop = true;
             cache->interpolators[0].result = 100;
         }
@@ -604,7 +602,7 @@ TEST_CASE("density compiler: grid preserves layout warm caches and active interp
             }
         }
         check_batch_cache(actual, expected);
-        CHECK_FALSE(actual.cache_once[0].valid);
+        CHECK_FALSE(actual.cache_once_at(0).valid);
         CHECK(actual.is_in_interpolation_loop);
         CHECK(actual.execution_stats->cache_clears == 0);
         CHECK(actual.execution_stats->compiled_grid_calls == (with_cache ? 1 : 0));
@@ -723,7 +721,7 @@ TEST_CASE("density compiler: cache and branch joins never reuse skipped definiti
         CacheState actual, expected;
         actual.resize_for(arena); expected.resize_for(arena);
         for (auto* state : {&actual, &expected}) {
-            auto& entry = state->cache_once[0];
+            auto& entry = state->cache_once_at(0);
             entry.valid = true; entry.x = 1; entry.y = 0; entry.z = 2; entry.value = 900;
         }
         std::vector<double> scratch(compiled.program.value_count, -12345);
@@ -750,10 +748,10 @@ TEST_CASE("density compiler: cacheless elimination folds while warm state remain
         CacheState actual, expected;
         actual.resize_for(arena); expected.resize_for(arena);
         for (auto* state : {&actual, &expected}) {
-            if (kind == NodeKind::kCache2D) { auto& e = state->cache_2d[0]; e.valid = true; e.value = 900; }
-            if (kind == NodeKind::kCacheOnce) { auto& e = state->cache_once[0]; e.valid = true; e.value = 900; }
-            if (kind == NodeKind::kFlatCache) { auto& e = state->flat_cache[0]; e.valid = true; e.value = 900; }
-            if (kind == NodeKind::kCacheAllInCell) state->cache_all_in_cell[0].get_or_insert(0) = 900;
+            if (kind == NodeKind::kCache2D) { auto& e = state->cache_2d_at(0); e.valid = true; e.value = 900; }
+            if (kind == NodeKind::kCacheOnce) { auto& e = state->cache_once_at(0); e.valid = true; e.value = 900; }
+            if (kind == NodeKind::kFlatCache) { auto& e = state->flat_cache_at(0); e.valid = true; e.value = 900; }
+            if (kind == NodeKind::kCacheAllInCell) state->cache_all_in_cell_at(0).get_or_insert(0) = 900;
             if (kind == NodeKind::kInterpolated) { state->is_in_interpolation_loop = true; state->interpolators[0].result = 900; }
         }
         CHECK(dfc::evaluate(compiled.program, arena, Context{0, 0, 0, &actual}) == 907);
@@ -779,10 +777,10 @@ TEST_CASE("density compiler: nested shared cache slots and truncated cell keys p
             CHECK(bits(dfc::evaluate(compiled.program, arena, ac)) == bits(evaluate_node(arena, root, ec)));
             check_batch_cache(actual, expected);
             if (kind == NodeKind::kCacheAllInCell) {
-                const auto& want = expected.cache_all_in_cell[0];
-                CHECK(actual.cache_all_in_cell[0].used == want.used);
+                const auto& want = expected.cache_all_in_cell_at(0);
+                CHECK(actual.cache_all_in_cell_at(0).used == want.used);
                 for (const auto& e : want.entries) if (e.generation == want.generation) {
-                    auto* v = actual.cache_all_in_cell[0].find(e.key); REQUIRE(v); CHECK(bits(*v) == bits(e.value));
+                    auto* v = actual.cache_all_in_cell_at(0).find(e.key); REQUIRE(v); CHECK(bits(*v) == bits(e.value));
                 }
             }
         }
@@ -873,7 +871,7 @@ TEST_CASE("density compiler: batch state barriers retain whole-point order") {
         const auto compiled = dfc::compile(arena, root); REQUIRE(compiled);
         CacheState actual, expected; actual.resize_for(arena); expected.resize_for(arena);
         if (!two_d) for (auto* state : {&actual, &expected}) {
-            auto& entry = state->cache_once[0]; entry.valid = true; entry.value = 900;
+            auto& entry = state->cache_once_at(0); entry.valid = true; entry.value = 900;
         }
         const std::array<Context, 4> points{{{0, 0, 0, &actual}, {0, 1, 0, &actual}, {0, 0, 0, &actual}, {0, -1, 0, &actual}}};
         std::array<double, 4> output;

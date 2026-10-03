@@ -223,3 +223,26 @@ TEST_CASE("heightmap: palette index above 255 is respected") {
     CHECK(out[0] == 15);
     for (int i = 1; i < kColumnCount; ++i) CHECK(out[i] == -1);
 }
+
+#include "heightmap_scheduling_reference.hpp"
+TEST_CASE("heightmap scheduling candidate: every legal width short mask and partial default") {
+    for (int bits = 1; bits <= 32; ++bits) {
+        const int epl = 64 / bits;
+        std::vector<std::uint64_t> storage((4096 + epl - 1) / epl, 0);
+        const std::uint64_t value_mask = (std::uint64_t{1} << bits) - 1;
+        for (int i = 0; i < 4096; ++i) {
+            const std::uint64_t value = i % 3 == 0 ? 1 : value_mask;
+            storage[i / epl] |= value << ((i % epl) * bits);
+        }
+        const std::uint64_t passing[] = {3};
+        lattice::world::heightmap::SectionView views[2] = {
+            {nullptr, 0, 0, passing}, {storage.data(), storage.size(), bits, passing}};
+        for (std::size_t masks : {0u, 1u}) {
+            std::int32_t expected[256], actual[256];
+            auto a = lattice::world::heightmap::populate_scalar(views, 2, -64, masks, -65, expected);
+            auto b = heightmap_scheduling_reference::populate_scalar(views, 2, -64, masks, -65, actual);
+            CHECK(a == b);
+            for (int i = 0; i < 256; ++i) CHECK(expected[i] == actual[i]);
+        }
+    }
+}

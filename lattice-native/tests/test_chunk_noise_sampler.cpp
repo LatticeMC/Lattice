@@ -387,3 +387,40 @@ TEST_CASE("chunknoise: generic channel helpers support vein channels") {
     s.interpolate_z(Channel::kVeinToggle, 0.0);
     CHECK(s.sample(Channel::kVeinToggle, 0.0, 0.0, 0.0, 0, 0) == doctest::Approx(0.75).epsilon(1e-15));
 }
+
+#include "scheduling_reference.hpp"
+TEST_CASE("chunknoise: column bounds match legacy complete-row prefix") {
+    NodeArena a;
+    Node grad{}; grad.kind = NodeKind::kYClampedGradient; grad.i0 = -10; grad.i1 = 10; grad.d0 = -4; grad.d1 = 4;
+    auto root = a.push(grad);
+    Node once{}; once.kind = NodeKind::kCacheOnce; once.a = root; root = a.push(once);
+    Node interp{}; interp.kind = NodeKind::kInterpolated; interp.a = root;
+    for (int i = 0; i < 3; ++i) a.root = a.push(interp);
+    for (bool to_end : {false, true}) for (int requested_z : {-2, 0, 2, 5}) for (int requested_y : {0, 2, 4}) {
+        ChunkNoiseSampler actual; actual.router.final_density = &a; actual.prepare_cache();
+        actual.prepare_interpolators(Channel::kFinalDensity, 2, 2);
+        auto& cache = actual.caches[static_cast<std::size_t>(Channel::kFinalDensity)];
+        densityfunction::CacheState expected; expected.resize_for(a); expected.prepare_interpolators(2, 2);
+        // arena 多一个 slot；某 slot 只有一个完整 row，另一端 buffer 长度不同。
+        cache.interpolators.resize(2); expected.interpolators.resize(2);
+        for (auto* c : {&cache, &expected}) {
+            c->interpolators[0].start_density_buffer.assign(5, -999);
+            c->interpolators[0].end_density_buffer.assign(2, -999);
+            c->interpolators[1].start_density_buffer.assign(10, -999);
+            c->interpolators[1].end_density_buffer.assign(7, -999);
+        }
+        scheduling_reference::fill_density_column_impl(a, expected, 7, -12, 3, -4, -3, 2, requested_z, requested_y, to_end);
+        if (to_end) actual.fill_end_density_column(Channel::kFinalDensity, 7, -12, 3, -4, -3, 2, requested_z, requested_y);
+        else actual.fill_start_density_column(Channel::kFinalDensity, 7, -12, 3, -4, -3, 2, requested_z, requested_y);
+        for (int slot = 0; slot < 2; ++slot) {
+            CHECK(cache.interpolators[slot].start_density_buffer == expected.interpolators[slot].start_density_buffer);
+            CHECK(cache.interpolators[slot].end_density_buffer == expected.interpolators[slot].end_density_buffer);
+        }
+        CHECK(cache.cache_once_at(0).valid == expected.cache_once_at(0).valid);
+        if (expected.cache_once_at(0).valid) {
+            CHECK(cache.cache_once_at(0).z == expected.cache_once_at(0).z);
+            CHECK(cache.cache_once_at(0).y == expected.cache_once_at(0).y);
+            CHECK(cache.cache_once_at(0).value == expected.cache_once_at(0).value);
+        }
+    }
+}

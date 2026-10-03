@@ -556,21 +556,21 @@ bool cache_probe(const Node& n, const Context& ctx, double& value) noexcept {
     const auto id = static_cast<std::size_t>(n.cache_slot_id);
     switch (n.kind) {
         case NodeKind::kCache2D:
-            if (id < ctx.cache->cache_2d.size()) {
-                const auto& s = ctx.cache->cache_2d[id];
+            if (id < ctx.cache->cache_2d_size()) {
+                const auto& s = ctx.cache->cache_2d_at(id);
                 if (s.valid && s.x == static_cast<int>(std::floor(ctx.x))
                     && s.z == static_cast<int>(std::floor(ctx.z))) { value = s.value; return true; }
             }
             break;
         case NodeKind::kCacheOnce:
-            if (id < ctx.cache->cache_once.size()) {
-                const auto& s = ctx.cache->cache_once[id];
+            if (id < ctx.cache->cache_once_size()) {
+                const auto& s = ctx.cache->cache_once_at(id);
                 if (s.valid && s.x == ctx.x && s.y == ctx.y && s.z == ctx.z) { value = s.value; return true; }
             }
             break;
         case NodeKind::kFlatCache:
-            if (id < ctx.cache->flat_cache.size()) {
-                const auto& s = ctx.cache->flat_cache[id];
+            if (id < ctx.cache->flat_cache_size()) {
+                const auto& s = ctx.cache->flat_cache_at(id);
                 if (s.valid && s.cellX == ctx.cellX && s.cellZ == ctx.cellZ) { value = s.value; return true; }
             }
             break;
@@ -583,11 +583,12 @@ bool cache_probe(const Node& n, const Context& ctx, double& value) noexcept {
             }
             break;
         case NodeKind::kCacheAllInCell:
-            if (id >= ctx.cache->cache_all_in_cell.size()) break;
-            if (id < ctx.cache->cache_all_in_cell_arrays.size()) {
-                const auto* data = ctx.cache->cache_all_in_cell_arrays[id];
-                const auto length = ctx.cache->cache_all_in_cell_array_lengths[id];
-                const auto offset = ctx.cache->cache_all_in_cell_array_offsets[id];
+            if (id >= ctx.cache->cache_all_in_cell_size()) break;
+            if (id < ctx.cache->cell_array_count()) {
+                const auto binding = ctx.cache->cell_array_at(id);
+                const auto* data = binding.data;
+                const auto length = binding.length;
+                const auto offset = binding.offset;
                 if (data && ctx.inCellX >= 0 && ctx.inCellY >= 0 && ctx.inCellZ >= 0
                     && ctx.inCellX < ctx.cellWidth && ctx.inCellY < ctx.cellHeight && ctx.inCellZ < ctx.cellWidth) {
                     const auto index = (static_cast<std::size_t>(ctx.cellHeight - 1 - ctx.inCellY)
@@ -597,7 +598,7 @@ bool cache_probe(const Node& n, const Context& ctx, double& value) noexcept {
                 }
             }
             if (n.a == kNullRef) { value = 0.0; return true; }
-            if (const auto* found = ctx.cache->cache_all_in_cell[id].find(cell_key(ctx))) {
+            if (const auto* found = ctx.cache->cache_all_in_cell_at(id).find(cell_key(ctx))) {
                 value = *found; return true;
             }
             break;
@@ -611,26 +612,26 @@ void cache_store(const Node& n, const Context& ctx, double value) noexcept {
     const auto id = static_cast<std::size_t>(n.cache_slot_id);
     switch (n.kind) {
         case NodeKind::kCache2D:
-            if (id < ctx.cache->cache_2d.size()) {
-                auto& s = ctx.cache->cache_2d[id]; s.valid = true;
+            if (id < ctx.cache->cache_2d_size()) {
+                auto& s = ctx.cache->cache_2d_at(id); s.valid = true;
                 s.x = static_cast<int>(std::floor(ctx.x)); s.z = static_cast<int>(std::floor(ctx.z)); s.value = value;
             }
             break;
         case NodeKind::kCacheOnce:
-            if (id < ctx.cache->cache_once.size()) {
-                auto& s = ctx.cache->cache_once[id]; s.valid = true;
+            if (id < ctx.cache->cache_once_size()) {
+                auto& s = ctx.cache->cache_once_at(id); s.valid = true;
                 s.x = ctx.x; s.y = ctx.y; s.z = ctx.z; s.value = value;
             }
             break;
         case NodeKind::kFlatCache:
-            if (id < ctx.cache->flat_cache.size()) {
-                auto& s = ctx.cache->flat_cache[id]; s.valid = true;
+            if (id < ctx.cache->flat_cache_size()) {
+                auto& s = ctx.cache->flat_cache_at(id); s.valid = true;
                 s.cellX = ctx.cellX; s.cellZ = ctx.cellZ; s.value = value;
             }
             break;
         case NodeKind::kCacheAllInCell:
-            if (n.a != kNullRef && id < ctx.cache->cache_all_in_cell.size())
-                ctx.cache->cache_all_in_cell[id].get_or_insert(cell_key(ctx)) = value;
+            if (n.a != kNullRef && id < ctx.cache->cache_all_in_cell_size())
+                ctx.cache->cache_all_in_cell_at(id).get_or_insert(cell_key(ctx)) = value;
             break;
         default: break;
     }

@@ -1,9 +1,12 @@
+// 大 allowed 集合的自有副本排序候选，预处理成本计入每次查询。
 #include "world/entity/entity_query.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
-namespace lattice::world::entity {
+namespace entity_query_allowed_candidate {
+using namespace lattice::world::entity;
 namespace {
 
 struct Match {
@@ -21,11 +24,8 @@ struct Match {
 
 [[nodiscard]] bool type_allowed(const EntityQueryInputs& inputs, std::size_t index) noexcept {
     if (inputs.allowed_type_count == 0) return true;
-    const int type_id = inputs.entity_type_ids[index];
-    for (std::size_t i = 0; i < inputs.allowed_type_count; ++i) {
-        if (inputs.allowed_type_ids[i] == type_id) return true;
-    }
-    return false;
+    return std::binary_search(inputs.allowed_type_ids, inputs.allowed_type_ids + inputs.allowed_type_count,
+                              inputs.entity_type_ids[index]);
 }
 
 [[nodiscard]] bool predicate_allowed(const EntityQueryInputs& inputs, std::size_t index) noexcept {
@@ -197,7 +197,7 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
     return count;
 }
 
-std::size_t query_entities(const EntityQueryInputs& inputs, int* ids, double* distances,
+static std::size_t query_sorted(const EntityQueryInputs& inputs, int* ids, double* distances,
                            std::size_t capacity) noexcept {
     const auto limit = inputs.max_results == 0 ? capacity : std::min(inputs.max_results, capacity);
     // 小集合保留测量更稳的线性选择；排序结果仍使用同一 ordinal 契约。
@@ -205,4 +205,12 @@ std::size_t query_entities(const EntityQueryInputs& inputs, int* ids, double* di
     return query_impl<true>(inputs, ids, distances, capacity);
 }
 
+std::size_t query_entities(const EntityQueryInputs& input, int* ids, double* distances, std::size_t capacity) noexcept {
+    if (!input.allowed_type_count) return query_sorted(input, ids, distances, capacity);
+    if (!input.allowed_type_ids) return 0;
+    std::vector<int> allowed(input.allowed_type_ids, input.allowed_type_ids + input.allowed_type_count);
+    std::sort(allowed.begin(), allowed.end());
+    auto copy = input; copy.allowed_type_ids = allowed.data();
+    return query_sorted(copy, ids, distances, capacity);
+}
 } // namespace lattice::world::entity

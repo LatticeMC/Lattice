@@ -127,8 +127,8 @@ inline bool evaluate_mixed_range_choice_segmented(const NodeArena& arena, const 
 
 inline SharedLeafColumnEntry* shared_leaf_entry(const Node& node, CacheState* cache) noexcept {
     if (!node.shared_batch_leaf || !cache || node.cache_slot_id < 0
-        || static_cast<std::size_t>(node.cache_slot_id) >= cache->shared_leaf_columns.size()) return nullptr;
-    return &cache->shared_leaf_columns[static_cast<std::size_t>(node.cache_slot_id)];
+        || static_cast<std::size_t>(node.cache_slot_id) >= cache->shared_leaf_columns_size()) return nullptr;
+    return &cache->shared_leaf_columns_at(static_cast<std::size_t>(node.cache_slot_id));
 }
 
 inline bool load_shared_leaf(const Node& node, CacheState* cache,
@@ -650,10 +650,10 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
 
         case NodeKind::kCache2D: {
             if (!cache || n.cache_slot_id < 0
-                || n.cache_slot_id >= static_cast<int>(cache->cache_2d.size())) {
+                || n.cache_slot_id >= static_cast<int>(cache->cache_2d_size())) {
                 return evaluate_child_column(arena, n.a, x, y0, z, dy, cellX, cellZ, ny, cache, out);
             }
-            auto& slot = cache->cache_2d[static_cast<std::size_t>(n.cache_slot_id)];
+            auto& slot = cache->cache_2d_at(static_cast<std::size_t>(n.cache_slot_id));
             const int kx = floor_to_int(x);
             const int kz = floor_to_int(z);
             if (!(slot.valid && slot.x == kx && slot.z == kz)) {
@@ -675,10 +675,10 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
 
         case NodeKind::kFlatCache: {
             if (!cache || n.cache_slot_id < 0
-                || n.cache_slot_id >= static_cast<int>(cache->flat_cache.size())) {
+                || n.cache_slot_id >= static_cast<int>(cache->flat_cache_size())) {
                 return evaluate_child_column(arena, n.a, x, y0, z, dy, cellX, cellZ, ny, cache, out);
             }
-            auto& slot = cache->flat_cache[static_cast<std::size_t>(n.cache_slot_id)];
+            auto& slot = cache->flat_cache_at(static_cast<std::size_t>(n.cache_slot_id));
             if (!(slot.valid && slot.cellX == cellX && slot.cellZ == cellZ)) {
                 Context ctx{};
                 ctx.cache = cache;
@@ -698,10 +698,10 @@ bool evaluate_y_column_avx2(const NodeArena& arena, NodeRef root,
 
         case NodeKind::kCacheOnce: {
             if (!cache || n.cache_slot_id < 0
-                || n.cache_slot_id >= static_cast<int>(cache->cache_once.size())) {
+                || n.cache_slot_id >= static_cast<int>(cache->cache_once_size())) {
                 return evaluate_child_column(arena, n.a, x, y0, z, dy, cellX, cellZ, ny, cache, out);
             }
-            auto& slot = cache->cache_once[static_cast<std::size_t>(n.cache_slot_id)];
+            auto& slot = cache->cache_once_at(static_cast<std::size_t>(n.cache_slot_id));
             Context ctx{};
             ctx.cache = cache;
             ctx.x = x;

@@ -1,9 +1,11 @@
+// P4 predicate 外提实验：独立测量后未推广，不进入生产库。
 #include "world/entity/entity_query.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace lattice::world::entity {
+namespace entity_query_predicate_candidate {
+using namespace lattice::world::entity;
 namespace {
 
 struct Match {
@@ -28,8 +30,9 @@ struct Match {
     return false;
 }
 
+template<EntityPredicateKind Predicate>
 [[nodiscard]] bool predicate_allowed(const EntityQueryInputs& inputs, std::size_t index) noexcept {
-    switch (inputs.predicate_kind) {
+    switch (Predicate) {
         case EntityPredicateKind::None:
             return true;
         case EntityPredicateKind::IsAlive:
@@ -102,7 +105,7 @@ struct MatchHeap {
 };
 } // namespace
 
-template<bool UseHeap>
+template<bool UseHeap, EntityPredicateKind Predicate>
 static std::size_t query_impl(const EntityQueryInputs& inputs,
                            int* matched_entity_ids,
                            double* distances,
@@ -117,7 +120,7 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
     if (!inputs.sort_by_distance) {
         std::size_t out = 0;
         for (std::size_t i = 0; i < inputs.entity_count && out < output_capacity; ++i) {
-            if (!type_allowed(inputs, i) || !predicate_allowed(inputs, i) || !intersects(inputs, i)) continue;
+            if (!type_allowed(inputs, i) || !predicate_allowed<Predicate>(inputs, i) || !intersects(inputs, i)) continue;
             matched_entity_ids[out] = inputs.entity_ids[i];
             if (distances) distances[out] = 0.0;
             ++out;
@@ -137,7 +140,7 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
     bool heap_ready = false;
     MatchHeap heap{matched_entity_ids, distances, ordinals};
     for (std::size_t i = 0; i < inputs.entity_count; ++i) {
-        if (!type_allowed(inputs, i) || !predicate_allowed(inputs, i) || !intersects(inputs, i)) continue;
+        if (!type_allowed(inputs, i) || !predicate_allowed<Predicate>(inputs, i) || !intersects(inputs, i)) continue;
         const Match match{inputs.entity_ids[i], distance_sq(inputs, i), i};
         if (count < limit) {
             const auto out = count++;
@@ -197,12 +200,25 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
     return count;
 }
 
-std::size_t query_entities(const EntityQueryInputs& inputs, int* ids, double* distances,
+template<EntityPredicateKind Predicate>
+static std::size_t query_for_predicate(const EntityQueryInputs& inputs, int* ids, double* distances,
                            std::size_t capacity) noexcept {
     const auto limit = inputs.max_results == 0 ? capacity : std::min(inputs.max_results, capacity);
     // 小集合保留测量更稳的线性选择；排序结果仍使用同一 ordinal 契约。
-    if (limit <= 16) return query_impl<false>(inputs, ids, distances, capacity);
-    return query_impl<true>(inputs, ids, distances, capacity);
+    if (limit <= 16) return query_impl<false, Predicate>(inputs, ids, distances, capacity);
+    return query_impl<true, Predicate>(inputs, ids, distances, capacity);
+}
+
+std::size_t query_entities(const EntityQueryInputs& inputs, int* ids, double* distances,
+                           std::size_t capacity) noexcept {
+    switch (inputs.predicate_kind) {
+        case EntityPredicateKind::None: return query_for_predicate<EntityPredicateKind::None>(inputs, ids, distances, capacity);
+        case EntityPredicateKind::IsAlive: return query_for_predicate<EntityPredicateKind::IsAlive>(inputs, ids, distances, capacity);
+        case EntityPredicateKind::IsAliveNotSelf: return query_for_predicate<EntityPredicateKind::IsAliveNotSelf>(inputs, ids, distances, capacity);
+        case EntityPredicateKind::IsAliveNotSpectator: return query_for_predicate<EntityPredicateKind::IsAliveNotSpectator>(inputs, ids, distances, capacity);
+        case EntityPredicateKind::IsAliveNotSelfNotSpectator: return query_for_predicate<EntityPredicateKind::IsAliveNotSelfNotSpectator>(inputs, ids, distances, capacity);
+    }
+    return 0;
 }
 
 } // namespace lattice::world::entity

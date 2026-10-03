@@ -740,10 +740,10 @@ double evaluate_node(const NodeArena& arena, NodeRef root, const Context& ctx) n
             // Key by floored (x, z). When no CacheState is supplied
             // (e.g. unit tests), the node degrades to passthrough.
             if (!ctx.cache || n.cache_slot_id < 0
-                || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_2d.size())) {
+                || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_2d_size())) {
                 return evaluate_node(arena, n.a, ctx);
             }
-            auto& slot = ctx.cache->cache_2d[n.cache_slot_id];
+            auto& slot = ctx.cache->cache_2d_at(n.cache_slot_id);
             const int kx = floor_to_int(ctx.x);
             const int kz = floor_to_int(ctx.z);
             if (slot.valid && slot.x == kx && slot.z == kz) {
@@ -755,10 +755,10 @@ double evaluate_node(const NodeArena& arena, NodeRef root, const Context& ctx) n
         }
         case NodeKind::kCacheOnce: {
             if (!ctx.cache || n.cache_slot_id < 0
-                || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_once.size())) {
+                || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_once_size())) {
                 return evaluate_node(arena, n.a, ctx);
             }
-            auto& slot = ctx.cache->cache_once[n.cache_slot_id];
+            auto& slot = ctx.cache->cache_once_at(n.cache_slot_id);
             if (slot.valid && slot.x == ctx.x && slot.y == ctx.y && slot.z == ctx.z) {
                 return slot.value;
             }
@@ -769,14 +769,15 @@ double evaluate_node(const NodeArena& arena, NodeRef root, const Context& ctx) n
         }
         case NodeKind::kCacheAllInCell: {
             if (!ctx.cache || n.cache_slot_id < 0
-                || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_all_in_cell.size())) {
+                || n.cache_slot_id >= static_cast<int>(ctx.cache->cache_all_in_cell_size())) {
                 return evaluate_node(arena, n.a, ctx);
             }
             const int slot_id = n.cache_slot_id;
-            if (slot_id < static_cast<int>(ctx.cache->cache_all_in_cell_arrays.size())) {
-                const double* values = ctx.cache->cache_all_in_cell_arrays[static_cast<std::size_t>(slot_id)];
-                const std::size_t length = ctx.cache->cache_all_in_cell_array_lengths[static_cast<std::size_t>(slot_id)];
-                const std::size_t offset = ctx.cache->cache_all_in_cell_array_offsets[static_cast<std::size_t>(slot_id)];
+            if (slot_id < static_cast<int>(ctx.cache->cell_array_count())) {
+                const auto binding = ctx.cache->cell_array_at(static_cast<std::size_t>(slot_id));
+                const double* values = binding.data;
+                const std::size_t length = binding.length;
+                const std::size_t offset = binding.offset;
                 if (values && ctx.inCellX >= 0 && ctx.inCellY >= 0 && ctx.inCellZ >= 0
                     && ctx.inCellX < ctx.cellWidth && ctx.inCellY < ctx.cellHeight && ctx.inCellZ < ctx.cellWidth) {
                     const std::size_t index = (static_cast<std::size_t>(ctx.cellHeight - 1 - ctx.inCellY)
@@ -788,7 +789,7 @@ double evaluate_node(const NodeArena& arena, NodeRef root, const Context& ctx) n
                 }
             }
             if (n.a < 0) return 0.0;
-            auto& bucket = ctx.cache->cache_all_in_cell[n.cache_slot_id];
+            auto& bucket = ctx.cache->cache_all_in_cell_at(n.cache_slot_id);
             // Pack (cellX, cellZ, y) into one 64-bit key. cellX / cellZ
             // fit in 24 bits each (Mojang sample range is well within
             // ±8M); y fits in the remaining 16.
@@ -803,10 +804,10 @@ double evaluate_node(const NodeArena& arena, NodeRef root, const Context& ctx) n
         }
         case NodeKind::kFlatCache: {
             if (!ctx.cache || n.cache_slot_id < 0
-                || n.cache_slot_id >= static_cast<int>(ctx.cache->flat_cache.size())) {
+                || n.cache_slot_id >= static_cast<int>(ctx.cache->flat_cache_size())) {
                 return evaluate_node(arena, n.a, ctx);
             }
-            auto& slot = ctx.cache->flat_cache[n.cache_slot_id];
+            auto& slot = ctx.cache->flat_cache_at(n.cache_slot_id);
             if (slot.valid && slot.cellX == ctx.cellX && slot.cellZ == ctx.cellZ) {
                 return slot.value;
             }

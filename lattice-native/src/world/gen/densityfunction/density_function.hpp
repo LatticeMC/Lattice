@@ -549,16 +549,85 @@ struct InterpolatorState {
 /// chunks via `clear()`. Size each vector to match the arena's slot
 /// counts (or larger).
 struct CacheState {
-    std::vector<Cache2DEntry>   cache_2d;
-    std::vector<CacheOnceEntry> cache_once;
-    std::vector<FlatCacheEntry> flat_cache;
-    std::vector<SharedLeafColumnEntry> shared_leaf_columns;
-    // CacheAllInCell uses a per-slot flat open-addressing map keyed by a
-    // packed (cellX, cellZ, y) triple.
-    std::vector<CacheAllInCellMap> cache_all_in_cell;
-    std::vector<const double*> cache_all_in_cell_arrays;
-    std::vector<std::size_t> cache_all_in_cell_array_lengths;
-    std::vector<std::size_t> cache_all_in_cell_array_offsets;
+private:
+    template<class T> struct EpochSlot {
+        std::uint64_t epoch = 0;
+        T value{};
+    };
+    std::uint64_t evaluation_epoch_ = 1;
+    std::uint64_t binding_epoch_ = 1;
+    template<class T> static void reset_stamps(std::vector<EpochSlot<T>>& slots) noexcept {
+        for (auto& slot : slots) slot.epoch = 0;
+    }
+    template<class T> T& evaluation_entry(EpochSlot<T>& slot) const noexcept {
+        if (slot.epoch != evaluation_epoch_) {
+            slot.value.valid = false;
+            slot.epoch = evaluation_epoch_;
+        }
+        return slot.value;
+    }
+    CacheAllInCellMap& evaluation_entry(EpochSlot<CacheAllInCellMap>& slot) const noexcept {
+        if (slot.epoch != evaluation_epoch_) {
+            slot.value.clear();
+            slot.epoch = evaluation_epoch_;
+        }
+        return slot.value;
+    }
+    friend struct CacheStateTestAccess;
+public:
+    struct CellArrayBinding {
+        const double* data = nullptr;
+        std::size_t length = 0;
+        std::size_t offset = 0;
+    };
+private:
+    mutable std::vector<EpochSlot<Cache2DEntry>> cache_2d_;
+    mutable std::vector<EpochSlot<CacheOnceEntry>> cache_once_;
+    mutable std::vector<EpochSlot<FlatCacheEntry>> flat_cache_;
+    mutable std::vector<EpochSlot<SharedLeafColumnEntry>> shared_leaf_columns_;
+    mutable std::vector<EpochSlot<CacheAllInCellMap>> cache_all_in_cell_;
+    std::vector<EpochSlot<CellArrayBinding>> cell_arrays_;
+public:
+    // 条目引用在 clear/resize/move 后须重新获取；CacheState 仍由单个求值上下文独占。
+    CacheState() = default;
+    CacheState(const CacheState&) = delete;
+    CacheState& operator=(const CacheState&) = delete;
+    CacheState(CacheState&&) = default;
+    CacheState& operator=(CacheState&&) = default;
+    [[nodiscard]] std::size_t cache_2d_size() const noexcept { return cache_2d_.size(); }
+    Cache2DEntry& cache_2d_at(std::size_t slot) noexcept { return evaluation_entry(cache_2d_[slot]); }
+    const Cache2DEntry& cache_2d_at(std::size_t slot) const noexcept { return evaluation_entry(cache_2d_[slot]); }
+    [[nodiscard]] std::size_t cache_once_size() const noexcept { return cache_once_.size(); }
+    CacheOnceEntry& cache_once_at(std::size_t slot) noexcept { return evaluation_entry(cache_once_[slot]); }
+    const CacheOnceEntry& cache_once_at(std::size_t slot) const noexcept { return evaluation_entry(cache_once_[slot]); }
+    [[nodiscard]] std::size_t flat_cache_size() const noexcept { return flat_cache_.size(); }
+    FlatCacheEntry& flat_cache_at(std::size_t slot) noexcept { return evaluation_entry(flat_cache_[slot]); }
+    const FlatCacheEntry& flat_cache_at(std::size_t slot) const noexcept { return evaluation_entry(flat_cache_[slot]); }
+    [[nodiscard]] std::size_t shared_leaf_columns_size() const noexcept { return shared_leaf_columns_.size(); }
+    SharedLeafColumnEntry& shared_leaf_columns_at(std::size_t slot) noexcept { return evaluation_entry(shared_leaf_columns_[slot]); }
+    const SharedLeafColumnEntry& shared_leaf_columns_at(std::size_t slot) const noexcept { return evaluation_entry(shared_leaf_columns_[slot]); }
+    [[nodiscard]] std::size_t cache_all_in_cell_size() const noexcept { return cache_all_in_cell_.size(); }
+    CacheAllInCellMap& cache_all_in_cell_at(std::size_t slot) noexcept { return evaluation_entry(cache_all_in_cell_[slot]); }
+    const CacheAllInCellMap& cache_all_in_cell_at(std::size_t slot) const noexcept { return evaluation_entry(cache_all_in_cell_[slot]); }
+    [[nodiscard]] std::size_t cell_array_count() const noexcept { return cell_arrays_.size(); }
+    [[nodiscard]] CellArrayBinding cell_array_at(std::size_t slot) const noexcept {
+        const auto& binding = cell_arrays_[slot];
+        return binding.epoch == binding_epoch_ ? binding.value : CellArrayBinding{};
+    }
+    void bind_cell_array(std::size_t slot, const double* data, std::size_t length,
+                         std::size_t offset = 0) noexcept {
+        cell_arrays_[slot] = {binding_epoch_, {data, length, offset}};
+    }
+    void set_cell_array_offset(std::size_t slot, std::size_t offset) noexcept {
+        auto& binding = cell_arrays_[slot];
+        if (binding.epoch == binding_epoch_ && binding.value.data) binding.value.offset = offset;
+    }
+    void unbind_cell_arrays() noexcept {
+        if (++binding_epoch_ == 0) {
+            reset_stamps(cell_arrays_);
+            binding_epoch_ = 1;
+        }
+    }
     /// Immutable roots copied from the owning arena for the slice-batch fast
     /// ABI. The cache remains per-evaluation-context; roots are not cleared.
     std::vector<NodeRef> batch_roots;
@@ -611,14 +680,12 @@ struct CacheState {
     /// Note: this does NOT allocate the per-interpolator buffers —
     /// call `prepare_interpolators(arena, hCC, vCC)` to do that.
     void resize_for(const NodeArena& arena) {
-        cache_2d.resize(arena.num_cache_2d_slots);
-        cache_once.resize(arena.num_cache_once_slots);
-        flat_cache.resize(arena.num_flat_cache_slots);
-        shared_leaf_columns.resize(arena.num_shared_leaf_slots);
-        cache_all_in_cell.resize(arena.num_cache_all_in_cell_slots);
-        cache_all_in_cell_arrays.resize(arena.num_cache_all_in_cell_slots, nullptr);
-        cache_all_in_cell_array_lengths.resize(arena.num_cache_all_in_cell_slots, 0);
-        cache_all_in_cell_array_offsets.resize(arena.num_cache_all_in_cell_slots, 0);
+        cache_2d_.resize(arena.num_cache_2d_slots);
+        cache_once_.resize(arena.num_cache_once_slots);
+        flat_cache_.resize(arena.num_flat_cache_slots);
+        shared_leaf_columns_.resize(arena.num_shared_leaf_slots);
+        cache_all_in_cell_.resize(arena.num_cache_all_in_cell_slots);
+        cell_arrays_.resize(arena.num_cache_all_in_cell_slots);
         interpolators.resize(arena.num_interpolator_slots);
     }
 
@@ -638,20 +705,21 @@ struct CacheState {
 
     /// Invalidate every entry. Call when moving from one chunk to the next.
     void clear_evaluation_caches() noexcept {
-        for (auto& e : cache_2d)        e.valid = false;
-        for (auto& e : cache_once)      e.valid = false;
-        for (auto& e : flat_cache)      e.valid = false;
-        for (auto& e : shared_leaf_columns) e.valid = false;
-        for (auto& m : cache_all_in_cell) m.clear();
+        if (++evaluation_epoch_ == 0) {
+            reset_stamps(cache_2d_);
+            reset_stamps(cache_once_);
+            reset_stamps(flat_cache_);
+            reset_stamps(shared_leaf_columns_);
+            reset_stamps(cache_all_in_cell_);
+            evaluation_epoch_ = 1;
+        }
         scratch_column_depth = 0;
     }
 
     void clear() noexcept {
         if (execution_stats) ++execution_stats->cache_clears;
         clear_evaluation_caches();
-        for (auto& p : cache_all_in_cell_arrays) p = nullptr;
-        for (auto& n : cache_all_in_cell_array_lengths) n = 0;
-        for (auto& n : cache_all_in_cell_array_offsets) n = 0;
+        unbind_cell_arrays();
         scratch_x.clear();
         scratch_y.clear();
         scratch_z.clear();

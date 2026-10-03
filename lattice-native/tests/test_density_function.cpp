@@ -276,10 +276,10 @@ TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state"
         CHECK(std::bit_cast<std::uint64_t>(eager[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
         CHECK(std::bit_cast<std::uint64_t>(segmented[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
     }
-    REQUIRE(lazy_cache.cache_once.size() == scalar_cache.cache_once.size());
-    for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
-        const CacheOnceEntry& expected = scalar_cache.cache_once[i];
-        const CacheOnceEntry& actual = lazy_cache.cache_once[i];
+    REQUIRE(lazy_cache.cache_once_size() == scalar_cache.cache_once_size());
+    for (std::size_t i = 0; i < scalar_cache.cache_once_size(); ++i) {
+        const CacheOnceEntry& expected = scalar_cache.cache_once_at(i);
+        const CacheOnceEntry& actual = lazy_cache.cache_once_at(i);
         CHECK(actual.valid == expected.valid);
         CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
         CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
@@ -308,20 +308,20 @@ TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state"
     for (std::size_t i = 0; i < scalar.size(); ++i) {
         CHECK(std::bit_cast<std::uint64_t>(generic_segmented[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
     }
-    REQUIRE(generic_segmented_cache.cache_once.size() == scalar_cache.cache_once.size());
-    for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
-        const CacheOnceEntry& expected = scalar_cache.cache_once[i];
-        const CacheOnceEntry& actual = generic_segmented_cache.cache_once[i];
+    REQUIRE(generic_segmented_cache.cache_once_size() == scalar_cache.cache_once_size());
+    for (std::size_t i = 0; i < scalar_cache.cache_once_size(); ++i) {
+        const CacheOnceEntry& expected = scalar_cache.cache_once_at(i);
+        const CacheOnceEntry& actual = generic_segmented_cache.cache_once_at(i);
         CHECK(actual.valid == expected.valid);
         CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
         CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
         CHECK(std::bit_cast<std::uint64_t>(actual.z) == std::bit_cast<std::uint64_t>(expected.z));
         CHECK(std::bit_cast<std::uint64_t>(actual.value) == std::bit_cast<std::uint64_t>(expected.value));
     }
-    REQUIRE(segmented_cache.cache_once.size() == scalar_cache.cache_once.size());
-    for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
-        const CacheOnceEntry& expected = scalar_cache.cache_once[i];
-        const CacheOnceEntry& actual = segmented_cache.cache_once[i];
+    REQUIRE(segmented_cache.cache_once_size() == scalar_cache.cache_once_size());
+    for (std::size_t i = 0; i < scalar_cache.cache_once_size(); ++i) {
+        const CacheOnceEntry& expected = scalar_cache.cache_once_at(i);
+        const CacheOnceEntry& actual = segmented_cache.cache_once_at(i);
         CHECK(actual.valid == expected.valid);
         CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
         CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
@@ -340,10 +340,10 @@ TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state"
         for (std::size_t i = 0; i < scalar.size(); ++i) {
             CHECK(std::bit_cast<std::uint64_t>(avx2_lazy[i]) == std::bit_cast<std::uint64_t>(scalar[i]));
         }
-        REQUIRE(avx2_lazy_cache.cache_once.size() == scalar_cache.cache_once.size());
-        for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
-            const CacheOnceEntry& expected = scalar_cache.cache_once[i];
-            const CacheOnceEntry& actual = avx2_lazy_cache.cache_once[i];
+        REQUIRE(avx2_lazy_cache.cache_once_size() == scalar_cache.cache_once_size());
+        for (std::size_t i = 0; i < scalar_cache.cache_once_size(); ++i) {
+            const CacheOnceEntry& expected = scalar_cache.cache_once_at(i);
+            const CacheOnceEntry& actual = avx2_lazy_cache.cache_once_at(i);
             CHECK(actual.valid == expected.valid);
             CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
             CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
@@ -364,10 +364,10 @@ TEST_CASE("density: lazy mixed range choice matches scalar bits and cache state"
         REQUIRE(avx2_segmented_cache.execution_stats != nullptr);
         CHECK(avx2_segmented_cache.execution_stats->segmented_range_runs == 3);
         CHECK(avx2_segmented_cache.execution_stats->segmented_range_points == count);
-        REQUIRE(avx2_segmented_cache.cache_once.size() == scalar_cache.cache_once.size());
-        for (std::size_t i = 0; i < scalar_cache.cache_once.size(); ++i) {
-            const CacheOnceEntry& expected = scalar_cache.cache_once[i];
-            const CacheOnceEntry& actual = avx2_segmented_cache.cache_once[i];
+        REQUIRE(avx2_segmented_cache.cache_once_size() == scalar_cache.cache_once_size());
+        for (std::size_t i = 0; i < scalar_cache.cache_once_size(); ++i) {
+            const CacheOnceEntry& expected = scalar_cache.cache_once_at(i);
+            const CacheOnceEntry& actual = avx2_segmented_cache.cache_once_at(i);
             CHECK(actual.valid == expected.valid);
             CHECK(std::bit_cast<std::uint64_t>(actual.x) == std::bit_cast<std::uint64_t>(expected.x));
             CHECK(std::bit_cast<std::uint64_t>(actual.y) == std::bit_cast<std::uint64_t>(expected.y));
@@ -660,8 +660,8 @@ TEST_CASE("density: Cache2D returns cached value on (x,z) hit") {
     CHECK(evaluate(arena, ctx) == 42.0);
 
     // Verify the cache state actually has 2 distinct entries.
-    CHECK(cs.cache_2d.size() == 1);
-    CHECK(cs.cache_2d[0].valid == true);
+    CHECK(cs.cache_2d_size() == 1);
+    CHECK(cs.cache_2d_at(0).valid == true);
 }
 
 TEST_CASE("density: Cache2D uses floor coordinates for negative positions") {
@@ -710,16 +710,16 @@ TEST_CASE("density: CacheAllInCell stores and retrieves per key") {
     ctx.cellZ = 9;
 
     CHECK(evaluate(arena, ctx) == 11.0);
-    CHECK(cs.cache_all_in_cell.size() == 1);
-    CHECK(cs.cache_all_in_cell[0].used == 1);
+    CHECK(cs.cache_all_in_cell_size() == 1);
+    CHECK(cs.cache_all_in_cell_at(0).used == 1);
 
     ctx.y = 6.0;
     CHECK(evaluate(arena, ctx) == 11.0);
-    CHECK(cs.cache_all_in_cell[0].used == 2);
+    CHECK(cs.cache_all_in_cell_at(0).used == 2);
 
     ctx.y = 5.0;
     CHECK(evaluate(arena, ctx) == 11.0);
-    CHECK(cs.cache_all_in_cell[0].used == 2);
+    CHECK(cs.cache_all_in_cell_at(0).used == 2);
 }
 
 TEST_CASE("density: CacheAllInCell clear invalidates entries without releasing storage") {
@@ -792,7 +792,7 @@ TEST_CASE("density: CacheOnce slot is per-node, not shared") {
 
     CacheState cs;
     cs.resize_for(arena);
-    CHECK(cs.cache_once.size() == 2);   // two slots, not shared
+    CHECK(cs.cache_once_size() == 2);   // two slots, not shared
 
     Context ctx{};
     ctx.cache = &cs;
@@ -1015,16 +1015,16 @@ TEST_CASE("density: evaluate_grid keeps cache wrapper keys coherent across the g
                   10, 20, nx, 1, nz, &cs, out);
 
     for (double value : out) CHECK(value == 17.0);
-    REQUIRE(cs.cache_once.size() == 1);
-    CHECK(cs.cache_once[0].x == 48.0);
-    CHECK(cs.cache_once[0].y == 17.0);
-    CHECK(cs.cache_once[0].z == 84.0);
-    REQUIRE(cs.cache_2d.size() == 1);
-    CHECK(cs.cache_2d[0].x == 48);
-    CHECK(cs.cache_2d[0].z == 84);
-    REQUIRE(cs.flat_cache.size() == 1);
-    CHECK(cs.flat_cache[0].cellX == 12);
-    CHECK(cs.flat_cache[0].cellZ == 21);
+    REQUIRE(cs.cache_once_size() == 1);
+    CHECK(cs.cache_once_at(0).x == 48.0);
+    CHECK(cs.cache_once_at(0).y == 17.0);
+    CHECK(cs.cache_once_at(0).z == 84.0);
+    REQUIRE(cs.cache_2d_size() == 1);
+    CHECK(cs.cache_2d_at(0).x == 48);
+    CHECK(cs.cache_2d_at(0).z == 84);
+    REQUIRE(cs.flat_cache_size() == 1);
+    CHECK(cs.flat_cache_at(0).cellX == 12);
+    CHECK(cs.flat_cache_at(0).cellZ == 21);
 }
 
 TEST_CASE("density: evaluate_grid with null root zero-fills") {
@@ -1524,4 +1524,69 @@ TEST_CASE("interpolator: independent slots") {
     ctx.cache = &cs;
     a.root = r0; CHECK(evaluate(a, ctx) == 7.0);
     a.root = r1; CHECK(evaluate(a, ctx) == 13.0);
+}
+
+#include "cache_state_test_access.hpp"
+
+TEST_CASE("CacheState generations: logical invalidation and independent binding lifetime") {
+    NodeArena arena;
+    arena.num_cache_2d_slots = arena.num_cache_once_slots = arena.num_flat_cache_slots = 2;
+    arena.num_cache_all_in_cell_slots = arena.num_shared_leaf_slots = 2;
+    CacheState c; c.resize_for(arena);
+    const double bound[] = {17, 18};
+    c.cache_2d_at(0) = {true, 1, 2, 91};
+    c.cache_once_at(0) = {true, 1, 2, 3, 92};
+    c.flat_cache_at(0) = {true, 1, 2, 93};
+    c.shared_leaf_columns_at(0).valid = true;
+    c.shared_leaf_columns_at(0).values.assign(8, 94);
+    const double* values = c.shared_leaf_columns_at(0).values.data();
+    c.cache_all_in_cell_at(0).get_or_insert(9) = 95;
+    const auto* map_storage = c.cache_all_in_cell_at(0).entries.data();
+    c.bind_cell_array(0, bound, 2, 1);
+    c.scratch_x.assign(7, 1); c.scratch_column_depth = 3; c.is_in_interpolation_loop = true;
+    c.clear_evaluation_caches(); c.clear_evaluation_caches();
+    const CacheState& view = c;
+    CHECK_FALSE(view.cache_2d_at(0).valid); CHECK_FALSE(view.cache_once_at(0).valid);
+    CHECK_FALSE(view.flat_cache_at(0).valid); CHECK_FALSE(view.shared_leaf_columns_at(0).valid);
+    CHECK(view.cache_all_in_cell_at(0).used == 0);
+    CHECK(c.cache_all_in_cell_at(0).find(9) == nullptr);
+    CHECK(c.cache_all_in_cell_at(0).entries.data() == map_storage);
+    CHECK(c.shared_leaf_columns_at(0).values.data() == values);
+    CHECK(c.cell_array_at(0).data == bound); CHECK(c.cell_array_at(0).offset == 1);
+    CHECK(c.scratch_x.size() == 7); CHECK(c.is_in_interpolation_loop); CHECK(c.scratch_column_depth == 0);
+    // clear 后显式注入 warm 条目无需调用方管理 epoch。
+    c.cache_once_at(0) = {true, 4, 5, 6, 123};
+    CHECK(c.cache_once_at(0).value == 123); CHECK(c.cache_once_at(0).valid);
+    REQUIRE(c.set_execution_stats_enabled(true));
+    c.clear_bound_slice_row(); CHECK(c.scratch_x.size() == 7); CHECK_FALSE(c.is_in_interpolation_loop);
+    CHECK(c.cell_array_at(0).data == bound);
+    c.program_batch.values.resize(12); const auto* registers = c.program_batch.values.data();
+    c.clear();
+    CHECK(c.execution_stats->cache_clears == 2); CHECK(c.scratch_x.empty());
+    CHECK(c.cell_array_at(0).data == nullptr); CHECK(c.cell_array_at(0).length == 0); CHECK(c.cell_array_at(0).offset == 0);
+    c.set_cell_array_offset(0, 8); CHECK(c.cell_array_at(0).data == nullptr);
+    CHECK(c.program_batch.values.data() == registers);
+    c.bind_cell_array(0, bound, 2); CHECK(c.cell_array_at(0).data == bound);
+    c.unbind_cell_arrays(); CHECK(c.cell_array_at(0).data == nullptr);
+}
+
+TEST_CASE("CacheState generations: wrap resize and move cannot resurrect stale slots") {
+    NodeArena a; a.num_cache_once_slots = a.num_cache_all_in_cell_slots = 2;
+    CacheState c; c.resize_for(a); const double data = 22;
+    // stamp=1 的未访问旧槽须在 wrap 时清掉。
+    c.cache_once_at(1) = {true, 1, 2, 3, 99}; c.bind_cell_array(1, &data, 1);
+    c.cache_all_in_cell_at(1).get_or_insert(4) = 77;
+    CacheStateTestAccess::force_wrap(c); c.clear();
+    CHECK_FALSE(c.cache_once_at(1).valid); CHECK(c.cell_array_at(1).data == nullptr);
+    CHECK(c.cache_all_in_cell_at(1).find(4) == nullptr);
+    c.cache_once_at(0) = {true, 1, 2, 3, 44}; c.bind_cell_array(0, &data, 1);
+    c.resize_for(a); CHECK(c.cache_once_at(0).valid); CHECK(c.cell_array_at(0).data == &data);
+    a.num_cache_once_slots = a.num_cache_all_in_cell_slots = 1; c.resize_for(a);
+    a.num_cache_once_slots = a.num_cache_all_in_cell_slots = 3; c.resize_for(a);
+    CHECK_FALSE(c.cache_once_at(1).valid); CHECK_FALSE(c.cache_once_at(2).valid);
+    CHECK(c.cell_array_at(1).data == nullptr);
+    CacheState moved(std::move(c));
+    CHECK(moved.cache_once_at(0).valid); CHECK(moved.cache_once_at(0).value == 44);
+    CHECK(moved.cell_array_at(0).data == &data);
+    moved.clear(); CHECK_FALSE(moved.cache_once_at(0).valid); CHECK(moved.cell_array_at(0).data == nullptr);
 }

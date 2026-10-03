@@ -427,3 +427,36 @@ lattice_add_test(xoroshiro128pp
 lattice_add_test(ore_vein
     SOURCES  test_ore_vein.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/world/gen/orevein/ore_vein.cpp)
+
+# 同 native 调度隔离 A/B，独立手工运行；不把机器计时作为 CTest 门槛。
+get_target_property(_scheduling_density_sources lattice_test_chunk_noise_sampler SOURCES)
+list(FILTER _scheduling_density_sources EXCLUDE REGEX "(^|/)test_[^/]*[.]cpp$")
+add_executable(lattice_benchmark_native_scheduling EXCLUDE_FROM_ALL
+    benchmark_native_scheduling.cpp
+    ${_scheduling_density_sources}
+    ${CMAKE_SOURCE_DIR}/src/world/entity/entity_query.cpp
+    ${CMAKE_SOURCE_DIR}/src/world/entity/pathfinder.cpp
+    ${_pathfinder_simd_srcs} ${_pathfinder_avx512_srcs}
+    ${CMAKE_SOURCE_DIR}/src/world/entity/los.cpp
+    ${CMAKE_SOURCE_DIR}/src/world/heightmap/heightmap_scan.cpp
+    ${_heightmap_simd_srcs})
+target_include_directories(lattice_benchmark_native_scheduling PRIVATE ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(lattice_benchmark_native_scheduling PRIVATE lattice_baseline_flags)
+if(NOT MSVC)
+    target_compile_options(lattice_benchmark_native_scheduling PRIVATE -O3 -ffp-contract=off)
+else()
+    target_compile_options(lattice_benchmark_native_scheduling PRIVATE /O2 /fp:strict)
+endif()
+if(LATTICE_ARCH_X86)
+    target_compile_definitions(lattice_benchmark_native_scheduling PRIVATE LATTICE_HAS_DENSITY_AVX2=1)
+endif()
+
+target_sources(lattice_test_entity_query PRIVATE entity_query_reference.cpp)
+target_sources(lattice_test_heightmap PRIVATE heightmap_scheduling_reference.cpp)
+target_sources(lattice_benchmark_native_scheduling PRIVATE entity_query_reference.cpp heightmap_scheduling_reference.cpp)
+
+target_sources(lattice_benchmark_native_scheduling PRIVATE entity_query_predicate_candidate.cpp)
+
+target_sources(lattice_benchmark_native_scheduling PRIVATE scheduling_reference.cpp)
+
+target_sources(lattice_benchmark_native_scheduling PRIVATE entity_query_allowed_candidate.cpp)

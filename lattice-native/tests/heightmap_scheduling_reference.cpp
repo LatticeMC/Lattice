@@ -1,3 +1,4 @@
+// 冻结自 8e93e8d；旧标量扫描，用于独立 oracle 和隔离 A/B。
 // Multi-section column scanner. See heightmap_scan.hpp for the contract.
 //
 // Algorithm:
@@ -33,7 +34,8 @@
 #  include <intrin.h>
 #endif
 
-namespace lattice::world::heightmap {
+namespace heightmap_scheduling_reference {
+using namespace lattice::world::heightmap;
 
 namespace {
 
@@ -117,7 +119,9 @@ template <int ElementBits>
 
 } // namespace
 
-namespace detail {
+namespace reference_detail {
+using lattice::world::heightmap::detail::MaskAnyFn;
+using lattice::world::heightmap::detail::FillDefaultSectionFn;
 
 bool mask_any_scalar(const std::uint64_t* mask, std::size_t mask_longs) noexcept {
     for (std::size_t i = 0; i < mask_longs; ++i) {
@@ -194,7 +198,6 @@ std::size_t populate_with_mask_any(const SectionView* sections,
             continue;
         }
 
-        const auto scan = [&]<int Bits>() {
         // Walk every y in this section from top to bottom.
         for (int y_local = kSectionHeight - 1; y_local >= 0; --y_local) {
             const std::int32_t world_y = section_world_y_floor + y_local;
@@ -213,10 +216,8 @@ std::size_t populate_with_mask_any(const SectionView* sections,
                     //   storage_index = (y_local * 16 + z) * 16 + x.
                     const std::size_t storage_index =
                         (static_cast<std::size_t>(y_local) * 16u + z) * 16u + x;
-                    const std::uint32_t pal_idx = ([&] {
-                        if constexpr (Bits == 0) return read_packed(sv.storage, sv.element_bits, storage_index);
-                        else return read_packed_bits<Bits>(sv.storage, storage_index);
-                    })();
+                    const std::uint32_t pal_idx = read_packed(
+                        sv.storage, sv.element_bits, storage_index);
                     if (mask_bit(sv.passing_mask, mask_longs, pal_idx)) {
                         out_heights[column] = world_y;
                         // Clear this column from `remaining`.
@@ -227,19 +228,6 @@ std::size_t populate_with_mask_any(const SectionView* sections,
             }
 
             if (remaining_count == 0) break;
-        }
-        };
-        switch (sv.element_bits) {
-            case 1: scan.template operator()<1>(); break;
-            case 2: scan.template operator()<2>(); break;
-            case 3: scan.template operator()<3>(); break;
-            case 4: scan.template operator()<4>(); break;
-            case 5: scan.template operator()<5>(); break;
-            case 6: scan.template operator()<6>(); break;
-            case 8: scan.template operator()<8>(); break;
-            case 16: scan.template operator()<16>(); break;
-            case 32: scan.template operator()<32>(); break;
-            default: scan.template operator()<0>(); break;
         }
         if (remaining_count == 0) break;
     }
@@ -254,49 +242,10 @@ std::size_t populate_scalar(const SectionView* sections,
                             std::size_t mask_longs,
                             int default_height,
                             std::int32_t* out_heights) noexcept {
-    return detail::populate_with_mask_any(
+    return reference_detail::populate_with_mask_any(
         sections, section_count, section_base_y, mask_longs, default_height, out_heights,
-        &detail::mask_any_scalar,
-        &detail::fill_default_section_scalar);
+        &reference_detail::mask_any_scalar,
+        &reference_detail::fill_default_section_scalar);
 }
 
-
-namespace {
-
-using PopulateFn = std::size_t (*)(const SectionView*, std::size_t, int, std::size_t, int, std::int32_t*) noexcept;
-
-std::atomic<PopulateFn> g_populate{&populate_scalar};
-std::atomic<bool> g_initialised{false};
-
-} // namespace
-
-void init_heightmap_dispatch() noexcept {
-    if (g_initialised.load(std::memory_order_acquire)) return;
-    PopulateFn fn = &populate_scalar;
-    const auto& f = lattice::cpu::features();
-    (void)f;
-
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    if (f.avx2) fn = &populate_avx2;
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    if (f.neon) fn = &populate_neon;
-#endif
-
-    g_populate.store(fn, std::memory_order_release);
-    g_initialised.store(true, std::memory_order_release);
-}
-
-std::size_t populate(const SectionView* sections,
-                     std::size_t section_count,
-                     int section_base_y,
-                     std::size_t mask_longs,
-                     int default_height,
-                     std::int32_t* out_heights) noexcept {
-    if (!g_initialised.load(std::memory_order_acquire)) {
-        init_heightmap_dispatch();
-    }
-    return g_populate.load(std::memory_order_acquire)(
-        sections, section_count, section_base_y, mask_longs, default_height, out_heights);
-}
-
-} // namespace lattice::world::heightmap
+} // namespace heightmap_scheduling_reference

@@ -72,22 +72,6 @@ inline void set_density_row_impl(densityfunction::CacheState& cache,
     }
 }
 
-inline double* density_row_data(densityfunction::CacheState& cache,
-                                int slot, int cellZ,
-                                int row_size,
-                                bool to_end) noexcept {
-    if (slot < 0 || slot >= static_cast<int>(cache.interpolators.size())) return nullptr;
-    if (cellZ < 0 || cellZ > cache.horizontal_cell_count) return nullptr;
-    if (row_size <= 0 || row_size != cache.vertical_cell_count + 1) return nullptr;
-
-    auto& it = cache.interpolators[slot];
-    auto& buf = to_end ? it.end_density_buffer : it.start_density_buffer;
-    const std::size_t base = static_cast<std::size_t>(cellZ)
-                           * static_cast<std::size_t>(row_size);
-    if (base + static_cast<std::size_t>(row_size) > buf.size()) return nullptr;
-    return buf.data() + base;
-}
-
 inline void fill_density_column_impl(const densityfunction::NodeArena& arena,
                                      densityfunction::CacheState& cache,
                                      double x, double z,
@@ -96,14 +80,19 @@ inline void fill_density_column_impl(const densityfunction::NodeArena& arena,
                                      int horizontalCellCount,
                                      int verticalCellCount,
                                      bool to_end) noexcept {
-    const int slot_count = static_cast<int>(arena.interpolator_inputs.size());
     const int row_size = verticalCellCount + 1;
-    if (slot_count <= 0 || row_size <= 0) return;
-    for (int slot = 0; slot < slot_count; ++slot) {
-        const auto root = arena.interpolator_inputs[static_cast<std::size_t>(slot)];
-        for (int cellZ = 0; cellZ <= horizontalCellCount; ++cellZ) {
-            double* row = density_row_data(cache, slot, cellZ, row_size, to_end);
-            if (!row) continue;
+    const int last_z = std::min(horizontalCellCount, cache.horizontal_cell_count);
+    if (row_size <= 0 || row_size != cache.vertical_cell_count + 1 || last_z < 0) return;
+    const auto slot_count = std::min(arena.interpolator_inputs.size(), cache.interpolators.size());
+    for (std::size_t slot = 0; slot < slot_count; ++slot) {
+        const auto root = arena.interpolator_inputs[slot];
+        auto& it = cache.interpolators[slot];
+        auto& buffer = to_end ? it.end_density_buffer : it.start_density_buffer;
+        const auto rows = std::min(static_cast<std::size_t>(last_z) + 1u,
+                                   buffer.size() / static_cast<std::size_t>(row_size));
+        for (std::size_t row_index = 0; row_index < rows; ++row_index) {
+            const int cellZ = static_cast<int>(row_index);
+            double* row = buffer.data() + row_index * static_cast<std::size_t>(row_size);
             densityfunction::evaluate_y_column(arena, root,
                                                x, y0, z + static_cast<double>(cellZ), dy,
                                                cellX, cellZ0 + cellZ,

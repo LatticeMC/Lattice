@@ -561,3 +561,36 @@ TEST_CASE("pathfinder masks: dispatcher matches scalar") {
     CHECK(passableDispatch == passableScalar);
     CHECK(standingDispatch == standingScalar);
 }
+
+TEST_CASE("pathfinder: reused dirty masks and changing shapes match fresh search") {
+    PathfinderScratch scratch;
+    for (int sx : {65, 3, 17, 65, 2}) {
+        Grid grid(sx, 2, 3); fill_floor(grid, 0);
+        int tx = sx - 1, ty = 0, tz = 1;
+        PathfinderInputs in{};
+        in.path_types = grid.cells.data(); in.region_size_x = sx; in.region_size_y = 2; in.region_size_z = 3;
+        in.start_x = 0; in.start_y = 0; in.start_z = 1;
+        in.target_x = &tx; in.target_y = &ty; in.target_z = &tz; in.target_count = 1;
+        in.config.max_range = 128; in.config.max_visited_nodes = 1000; in.config.fudge = 1.5F;
+        in.max_up_step = 1; in.max_fall_distance = 3;
+        in.pathfinding_malus = grid.malus.data(); in.pathfinding_malus_count = static_cast<int>(grid.malus.size());
+        std::fill(scratch.passable.begin(), scratch.passable.end(), UINT64_MAX);
+        std::fill(scratch.standing.begin(), scratch.standing.end(), UINT64_MAX);
+        int ac[3000], bc[3000];
+        PathfinderOutput a{ac, 1000}, b{bc, 1000}; PathfinderScratch fresh;
+        REQUIRE(find_path_into(in, a, scratch) == find_path_into(in, b, fresh));
+        CHECK(a.path_length == b.path_length); CHECK(a.reached_target == b.reached_target);
+        for (int i = 0; i < a.path_length * 3; ++i) CHECK(ac[i] == bc[i]);
+        CHECK(scratch.passable == fresh.passable); CHECK(scratch.standing == fresh.standing);
+        CHECK(scratch.passable.size() == (grid.cells.size() + 63) / 64);
+    }
+    for (std::size_t n : {1u, 63u, 64u, 65u, 257u}) {
+        std::vector<std::int8_t> types(n, OPEN); types[n - 1] = WALKABLE;
+        float malus[] = {-1, 0, 0};
+        std::vector<std::uint64_t> a((n+63)/64, UINT64_MAX), b(a), c(a), d(a);
+        build_pathfinder_masks_scalar(types.data(), n, malus, 3, {a.data(), b.data()});
+        build_pathfinder_masks(types.data(), n, malus, 3, {c.data(), d.data()});
+        CHECK(a == c); CHECK(b == d);
+        if (n % 64) { CHECK((a.back() >> (n%64)) == 0); CHECK((b.back() >> (n%64)) == 0); }
+    }
+}

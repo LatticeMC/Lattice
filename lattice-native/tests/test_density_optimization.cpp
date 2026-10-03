@@ -23,9 +23,9 @@ NodeRef gradient(NodeArena& arena) {
     return arena.push(n);
 }
 void check_once_cache(const CacheState& actual, const CacheState& expected) {
-    REQUIRE(actual.cache_once.size() == expected.cache_once.size());
-    for (std::size_t i = 0; i < actual.cache_once.size(); ++i) {
-        const auto& a = actual.cache_once[i]; const auto& b = expected.cache_once[i];
+    REQUIRE(actual.cache_once_size() == expected.cache_once_size());
+    for (std::size_t i = 0; i < actual.cache_once_size(); ++i) {
+        const auto& a = actual.cache_once_at(i); const auto& b = expected.cache_once_at(i);
         CHECK(a.valid == b.valid);
         if (!a.valid || !b.valid) continue;
         CHECK(bits(a.x) == bits(b.x)); CHECK(bits(a.y) == bits(b.y)); CHECK(bits(a.z) == bits(b.z));
@@ -68,7 +68,7 @@ TEST_CASE("density optimizer: CSE retains operand order signed zero and branch d
     const auto zero_program = dfc::compile(zeros, zero_root); REQUIRE(zero_program);
     CacheState cache; cache.resize_for(zeros);
     CHECK(dfc::evaluate(zero_program.program, zeros, Context{0, 0, 0, &cache}) == 0);
-    CHECK(bits(cache.cache_once[0].value) == bits(0.0)); CHECK(bits(cache.cache_once[1].value) == bits(-0.0));
+    CHECK(bits(cache.cache_once_at(0).value) == bits(0.0)); CHECK(bits(cache.cache_once_at(1).value) == bits(-0.0));
     NodeArena branch;
     Node n{}; n.kind = NodeKind::kRangeChoice; n.a = gradient(branch);
     n.b = unary(branch, NodeKind::kSquare, gradient(branch)); n.c = constant(branch, 7); n.d0 = 0; n.d1 = 1;
@@ -91,7 +91,7 @@ TEST_CASE("density optimizer: constant branches eliminate only skipped work") {
         CHECK(compiled.program.code.size() == 1);
         CacheState cache; cache.resize_for(arena);
         CHECK(bits(dfc::evaluate(compiled.program, arena, Context{0, 0, 0, &cache})) == bits(multiply ? 0.0 : 7.0));
-        CHECK_FALSE(cache.cache_once[0].valid);
+        CHECK_FALSE(cache.cache_once_at(0).valid);
     }
 }
 
@@ -175,7 +175,7 @@ TEST_CASE("density optimizer: empty cell-cache miss constants cannot escape thei
     const double bound = 19;
     for (const bool bind : {false, true}) {
         CacheState state; state.resize_for(arena);
-        if (bind) { state.cache_all_in_cell_arrays[0] = &bound; state.cache_all_in_cell_array_lengths[0] = 1; }
+        if (bind) { state.bind_cell_array(0, &bound, 1); }
         const Context point{0, 0, 0, &state, 0, 0, 0, 0, 0, 1, 1};
         std::vector<double> registers(compiled.program.value_count, -12345);
         CHECK(dfc::evaluate(compiled.program, arena, point, registers.data(), registers.size()) == (bind ? 19 : 0));
@@ -234,7 +234,7 @@ TEST_CASE("density optimizer: spline coefficients cover nonlinear segments batch
     const auto experiment = dfc::compile(arena, root, {.experimental_spline_coefficients_f32 = true}); REQUIRE(experiment);
     for (const double value : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()}) {
         CacheState cache; cache.resize_for(arena);
-        auto& entry = cache.cache_once[0]; entry.valid = true; entry.value = value;
+        auto& entry = cache.cache_once_at(0); entry.valid = true; entry.value = value;
         const Context ctx{0, 0, 0, &cache};
         CHECK(bits(dfc::evaluate(experiment.program, arena, ctx)) == bits(evaluate_node(arena, root, ctx)));
     }

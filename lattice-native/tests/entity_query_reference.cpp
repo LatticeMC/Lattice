@@ -1,9 +1,10 @@
+// 冻结自 8e93e8d；仅用于回归 oracle 与同 native A/B，禁止随候选同步改算法。
 #include "world/entity/entity_query.hpp"
 
 #include <algorithm>
-#include <cmath>
 
-namespace lattice::world::entity {
+namespace entity_query_reference {
+using namespace lattice::world::entity;
 namespace {
 
 struct Match {
@@ -66,44 +67,7 @@ struct Match {
            (a.distance_sq == b.distance_sq && a.ordinal < b.ordinal);
 }
 
-namespace {
-// 三个调用方缓冲区同步交换，不为 top-k 分配候选对象。
-struct MatchHeap {
-    int* ids;
-    double* distances;
-    double* ordinals;
-    Match get(std::size_t i) const noexcept {
-        return {ids[i], distances[i], static_cast<std::size_t>(ordinals[i])};
-    }
-    void put(std::size_t i, const Match& value) noexcept {
-        ids[i] = value.id; distances[i] = value.distance_sq;
-        ordinals[i] = static_cast<double>(value.ordinal);
-    }
-    void swap(std::size_t a, std::size_t b) noexcept {
-        const Match value = get(a); put(a, get(b)); put(b, value);
-    }
-    void sift(std::size_t root, std::size_t count) noexcept {
-        while (root < count / 2) {
-            std::size_t child = root * 2 + 1;
-            if (child + 1 < count && nearer(get(child), get(child + 1))) ++child;
-            if (!nearer(get(root), get(child))) break;
-            swap(root, child);
-            root = child;
-        }
-    }
-    void build(std::size_t count) noexcept {
-        for (std::size_t i = count / 2; i > 0; --i) sift(i - 1, count);
-    }
-    void sort(std::size_t count) noexcept {
-        for (std::size_t n = count; n > 1; --n) {
-            swap(0, n - 1); sift(0, n - 1);
-        }
-    }
-};
-} // namespace
-
-template<bool UseHeap>
-static std::size_t query_impl(const EntityQueryInputs& inputs,
+std::size_t query_entities(const EntityQueryInputs& inputs,
                            int* matched_entity_ids,
                            double* distances,
                            std::size_t output_capacity) noexcept {
@@ -133,9 +97,6 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
 
     double* ordinals = distances + output_capacity;
     std::size_t count = 0;
-    bool initial_nan = false;
-    bool heap_ready = false;
-    MatchHeap heap{matched_entity_ids, distances, ordinals};
     for (std::size_t i = 0; i < inputs.entity_count; ++i) {
         if (!type_allowed(inputs, i) || !predicate_allowed(inputs, i) || !intersects(inputs, i)) continue;
         const Match match{inputs.entity_ids[i], distance_sq(inputs, i), i};
@@ -144,15 +105,8 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
             matched_entity_ids[out] = match.id;
             distances[out] = match.distance_sq;
             ordinals[out] = static_cast<double>(match.ordinal);
-            if constexpr (UseHeap) initial_nan = initial_nan || std::isnan(match.distance_sq);
             continue;
         }
-        if constexpr (UseHeap) if (!initial_nan) {
-            if (!heap_ready) { heap.build(count); heap_ready = true; }
-            if (nearer(match, heap.get(0))) { heap.put(0, match); heap.sift(0, count); }
-            continue;
-        }
-        // NaN 不形成全序：保留旧槽位、replacement 和插入排序屏障。
         std::size_t farthest = 0;
         for (std::size_t j = 1; j < limit; ++j) {
             const Match current{matched_entity_ids[j], distances[j], static_cast<std::size_t>(ordinals[j])};
@@ -167,18 +121,6 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
         }
     }
 
-    if constexpr (UseHeap) if (!initial_nan) {
-        if (!heap_ready) {
-            bool sorted = true;
-            for (std::size_t i = 1; i < count; ++i) {
-                if (nearer(heap.get(i), heap.get(i - 1))) { sorted = false; break; }
-            }
-            if (sorted) return count;
-            heap.build(count);
-        }
-        heap.sort(count);
-        return count;
-    }
     for (std::size_t i = 1; i < count; ++i) {
         Match value{matched_entity_ids[i], distances[i], static_cast<std::size_t>(ordinals[i])};
         std::size_t j = i;
@@ -195,14 +137,6 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
         ordinals[j] = static_cast<double>(value.ordinal);
     }
     return count;
-}
-
-std::size_t query_entities(const EntityQueryInputs& inputs, int* ids, double* distances,
-                           std::size_t capacity) noexcept {
-    const auto limit = inputs.max_results == 0 ? capacity : std::min(inputs.max_results, capacity);
-    // 小集合保留测量更稳的线性选择；排序结果仍使用同一 ordinal 契约。
-    if (limit <= 16) return query_impl<false>(inputs, ids, distances, capacity);
-    return query_impl<true>(inputs, ids, distances, capacity);
 }
 
 } // namespace lattice::world::entity
