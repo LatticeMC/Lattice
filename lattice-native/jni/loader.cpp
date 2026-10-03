@@ -117,7 +117,7 @@ Java_com_latticemc_lattice_nativelib_LatticeNative_nativeCpuSummary(
     const char* s = lattice::cpu::summary();
     const char* density = lattice::world::gen::densityfunction::density_dispatch_summary();
     char summary[256] = {};
-    std::snprintf(summary, sizeof summary, "%s density=%s",
-                  s ? s : "", density ? density : "uninitialized");
+    std::snprintf(summary, sizeof summary, "%s density=%s cache-epoch=%d",
+                  s ? s : "", density ? density : "uninitialized", LATTICE_CACHESTATE_EPOCH);
     return env->NewStringUTF(summary);
 }

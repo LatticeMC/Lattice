@@ -548,7 +548,12 @@ struct InterpolatorState {
 /// Per-chunk / per-evaluation cache state. Allocate once, reset between
 /// chunks via `clear()`. Size each vector to match the arena's slot
 /// counts (or larger).
+// 独立手工编译保持生产默认；CMake 为所有 TU 显式提供同一值。
+#ifndef LATTICE_CACHESTATE_EPOCH
+#define LATTICE_CACHESTATE_EPOCH 1
+#endif
 struct CacheState {
+#if LATTICE_CACHESTATE_EPOCH
 private:
     template<class T> struct EpochSlot {
         std::uint64_t epoch = 0;
@@ -628,6 +633,57 @@ public:
             binding_epoch_ = 1;
         }
     }
+#else
+    std::vector<Cache2DEntry>   cache_2d;
+    std::vector<CacheOnceEntry> cache_once;
+    std::vector<FlatCacheEntry> flat_cache;
+    std::vector<SharedLeafColumnEntry> shared_leaf_columns;
+    // CacheAllInCell uses a per-slot flat open-addressing map keyed by a
+    // packed (cellX, cellZ, y) triple.
+    std::vector<CacheAllInCellMap> cache_all_in_cell;
+    std::vector<const double*> cache_all_in_cell_arrays;
+    std::vector<std::size_t> cache_all_in_cell_array_lengths;
+    std::vector<std::size_t> cache_all_in_cell_array_offsets;
+    // 实验 OFF：恢复 P2 前的八个 vector；accessor 不存储状态、不检查 stamp。
+    struct CellArrayBinding {
+        const double* data = nullptr;
+        std::size_t length = 0;
+        std::size_t offset = 0;
+    };
+    [[nodiscard]] std::size_t cache_2d_size() const noexcept { return cache_2d.size(); }
+    Cache2DEntry& cache_2d_at(std::size_t slot) noexcept { return cache_2d[slot]; }
+    const Cache2DEntry& cache_2d_at(std::size_t slot) const noexcept { return cache_2d[slot]; }
+    [[nodiscard]] std::size_t cache_once_size() const noexcept { return cache_once.size(); }
+    CacheOnceEntry& cache_once_at(std::size_t slot) noexcept { return cache_once[slot]; }
+    const CacheOnceEntry& cache_once_at(std::size_t slot) const noexcept { return cache_once[slot]; }
+    [[nodiscard]] std::size_t flat_cache_size() const noexcept { return flat_cache.size(); }
+    FlatCacheEntry& flat_cache_at(std::size_t slot) noexcept { return flat_cache[slot]; }
+    const FlatCacheEntry& flat_cache_at(std::size_t slot) const noexcept { return flat_cache[slot]; }
+    [[nodiscard]] std::size_t shared_leaf_columns_size() const noexcept { return shared_leaf_columns.size(); }
+    SharedLeafColumnEntry& shared_leaf_columns_at(std::size_t slot) noexcept { return shared_leaf_columns[slot]; }
+    const SharedLeafColumnEntry& shared_leaf_columns_at(std::size_t slot) const noexcept { return shared_leaf_columns[slot]; }
+    [[nodiscard]] std::size_t cache_all_in_cell_size() const noexcept { return cache_all_in_cell.size(); }
+    CacheAllInCellMap& cache_all_in_cell_at(std::size_t slot) noexcept { return cache_all_in_cell[slot]; }
+    const CacheAllInCellMap& cache_all_in_cell_at(std::size_t slot) const noexcept { return cache_all_in_cell[slot]; }
+    [[nodiscard]] std::size_t cell_array_count() const noexcept { return cache_all_in_cell_arrays.size(); }
+    [[nodiscard]] CellArrayBinding cell_array_at(std::size_t slot) const noexcept {
+        return {cache_all_in_cell_arrays[slot], cache_all_in_cell_array_lengths[slot], cache_all_in_cell_array_offsets[slot]};
+    }
+    void bind_cell_array(std::size_t slot, const double* data, std::size_t length,
+                         std::size_t offset = 0) noexcept {
+        cache_all_in_cell_arrays[slot] = data;
+        cache_all_in_cell_array_lengths[slot] = length;
+        cache_all_in_cell_array_offsets[slot] = offset;
+    }
+    void set_cell_array_offset(std::size_t slot, std::size_t offset) noexcept {
+        if (cache_all_in_cell_arrays[slot]) cache_all_in_cell_array_offsets[slot] = offset;
+    }
+    void unbind_cell_arrays() noexcept {
+        for (auto& p : cache_all_in_cell_arrays) p = nullptr;
+        for (auto& n : cache_all_in_cell_array_lengths) n = 0;
+        for (auto& n : cache_all_in_cell_array_offsets) n = 0;
+    }
+#endif
     /// Immutable roots copied from the owning arena for the slice-batch fast
     /// ABI. The cache remains per-evaluation-context; roots are not cleared.
     std::vector<NodeRef> batch_roots;
@@ -680,12 +736,23 @@ public:
     /// Note: this does NOT allocate the per-interpolator buffers —
     /// call `prepare_interpolators(arena, hCC, vCC)` to do that.
     void resize_for(const NodeArena& arena) {
+#if LATTICE_CACHESTATE_EPOCH
         cache_2d_.resize(arena.num_cache_2d_slots);
         cache_once_.resize(arena.num_cache_once_slots);
         flat_cache_.resize(arena.num_flat_cache_slots);
         shared_leaf_columns_.resize(arena.num_shared_leaf_slots);
         cache_all_in_cell_.resize(arena.num_cache_all_in_cell_slots);
         cell_arrays_.resize(arena.num_cache_all_in_cell_slots);
+#else
+        cache_2d.resize(arena.num_cache_2d_slots);
+        cache_once.resize(arena.num_cache_once_slots);
+        flat_cache.resize(arena.num_flat_cache_slots);
+        shared_leaf_columns.resize(arena.num_shared_leaf_slots);
+        cache_all_in_cell.resize(arena.num_cache_all_in_cell_slots);
+        cache_all_in_cell_arrays.resize(arena.num_cache_all_in_cell_slots, nullptr);
+        cache_all_in_cell_array_lengths.resize(arena.num_cache_all_in_cell_slots, 0);
+        cache_all_in_cell_array_offsets.resize(arena.num_cache_all_in_cell_slots, 0);
+#endif
         interpolators.resize(arena.num_interpolator_slots);
     }
 
@@ -705,6 +772,7 @@ public:
 
     /// Invalidate every entry. Call when moving from one chunk to the next.
     void clear_evaluation_caches() noexcept {
+#if LATTICE_CACHESTATE_EPOCH
         if (++evaluation_epoch_ == 0) {
             reset_stamps(cache_2d_);
             reset_stamps(cache_once_);
@@ -713,6 +781,13 @@ public:
             reset_stamps(cache_all_in_cell_);
             evaluation_epoch_ = 1;
         }
+#else
+        for (auto& e : cache_2d)        e.valid = false;
+        for (auto& e : cache_once)      e.valid = false;
+        for (auto& e : flat_cache)      e.valid = false;
+        for (auto& e : shared_leaf_columns) e.valid = false;
+        for (auto& m : cache_all_in_cell) m.clear();
+#endif
         scratch_column_depth = 0;
     }
 

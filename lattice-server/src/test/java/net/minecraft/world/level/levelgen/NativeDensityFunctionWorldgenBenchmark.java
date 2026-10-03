@@ -2,6 +2,7 @@ package net.minecraft.world.level.levelgen;
 
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeDensityFunction;
+import com.latticemc.lattice.nativelib.WorldgenProfiler;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -41,12 +42,13 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     public static void main(final String[] args) throws Exception {
         final Config config = Config.parse(args);
         Locale.setDefault(Locale.ROOT);
+        if (config.profiling) System.setProperty("lattice.worldgenProfilerAvailable", "true");
         bootstrap();
 
         System.out.printf("Native DensityFunction Overworld wrapper benchmark%n");
-        System.out.printf("cpu=%s seed=%d warmup=%d samples=%d workItems=%s workers=%s%n",
+        System.out.printf("cpu=%s seed=%d warmup=%d samples=%d workItems=%s workers=%s profiling=%s%n",
             LatticeNative.cpuSummary(), config.seed, config.warmupRounds, config.sampleCount,
-            Arrays.toString(config.workItems), Arrays.toString(config.workers));
+            Arrays.toString(config.workItems), Arrays.toString(config.workers), config.profiling);
         printCompilerCoverage(config.seed);
         if (config.coverageOnly) return;
         System.out.println("lifecycle cold=fresh worker+RandomState per sample; hot=reused worker+RandomState per mode.");
@@ -73,6 +75,11 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                     if (workItems < workers) continue;
                     runCase("cold", path, workItems, workers, 0, config.coldSamples, config.seed, shape);
                     runCase("hot", path, workItems, workers, config.warmupRounds, config.sampleCount, config.seed, shape);
+                    if (config.profiling) {
+                        for (Mode mode : new Mode[] {Mode.JAVA, Mode.NATIVE_EAGER}) {
+                            profile(path, mode, workItems, workers, config, shape);
+                        }
+                    }
                 }
             }
         }
@@ -173,7 +180,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             results[mode.ordinal()] = measure("cold".equals(phase), path, mode, workItems, workers,
                 warmupRounds, samples, seed, shape);
             if (mode.nativeEnabled) {
-                diagnostics[mode.ordinal()] = collectExecutionStats(path, mode, workItems, workers, seed, shape);
+                diagnostics[mode.ordinal()] = collectExecutionStats(path, mode, workItems, workers, warmupRounds, seed, shape);
             }
         }
         final Stats javaStats = results[Mode.JAVA.ordinal()];
@@ -185,9 +192,39 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                 stats.coverage, mode.nativeEnabled ? "pass" : "n/a");
             if (mode.nativeEnabled) {
                 System.out.printf(Locale.ROOT,
-                    "EXECUTION phase=%s path=%s N=%d P=%d mode=%s samples=1 timed-samples=%d pass=untimed-diagnostics %s%n",
-                    phase, path.name().toLowerCase(Locale.ROOT), workItems, workers, mode.label, samples,
+                    "EXECUTION phase=%s path=%s N=%d P=%d mode=%s samples=1 timed-samples=%d warmup=%d pass=untimed-diagnostics %s%n",
+                    phase, path.name().toLowerCase(Locale.ROOT), workItems, workers, mode.label, samples, warmupRounds,
                     diagnostics[mode.ordinal()].benchmarkFields());
+            }
+        }
+    }
+
+    private static void profile(final Path path, final Mode mode, final int workItems, final int workers,
+                                final Config config, final Shape shape) throws Exception {
+        configureNative(mode.nativeEnabled, false, mode.lazyMixedRange, mode.segmentedMixedRange, false);
+        try (WorkerPool pool = new WorkerPool(workers, config.seed)) {
+            for (int i = 0; i < config.warmupRounds; ++i) runParallel(pool, path, workItems, shape);
+            WorldgenProfiler.reset();
+            WorldgenProfiler.setEnabled(true);
+            WorldgenProfiler.setHotLoopsEnabled(true);
+            NativeDensityFunction.setOption("profiling", mode.nativeEnabled);
+            NativeDensityFunction.resetStats();
+            long workerNanos = 0;
+            try {
+                for (int i = 0; i < config.sampleCount; ++i) workerNanos += runParallel(pool, path, workItems, shape).workerNanos;
+            } finally {
+                WorldgenProfiler.setEnabled(false);
+                WorldgenProfiler.setHotLoopsEnabled(false);
+                NativeDensityFunction.setOption("profiling", false);
+            }
+            System.out.printf("PROFILE_TOTAL path=%s N=%d P=%d mode=%s samples=%d worker-ns=%d coverage=%s status=%s%n",
+                    path, workItems, workers, mode.label, config.sampleCount, workerNanos,
+                    mode.nativeEnabled ? coverage(path, NativeDensityFunction.status()) : "java", NativeDensityFunction.status());
+            for (var probe : WorldgenProfiler.snapshot()) {
+                if (probe.count() == 0) continue;
+                System.out.printf("PROFILE path=%s N=%d P=%d mode=%s probe=%s calls=%d ns=%d inclusive-worker-share=%.6f%n",
+                        path, workItems, workers, mode.label, probe.name(), probe.count(), probe.nanos(),
+                        workerNanos == 0 ? 0.0 : (double) probe.nanos() / workerNanos);
             }
         }
     }
@@ -233,11 +270,14 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     }
 
     private static NativeDensityFunction.ExecutionStatsSnapshot collectExecutionStats(
-        final Path path, final Mode mode, final int workItems, final int workers, final long seed, final Shape shape
+        final Path path, final Mode mode, final int workItems, final int workers, final int warmupRounds,
+        final long seed, final Shape shape
     ) throws Exception {
-        configureNative(true, false, mode.lazyMixedRange, mode.segmentedMixedRange, true);
-        NativeDensityFunction.resetStats();
+        configureNative(true, false, mode.lazyMixedRange, mode.segmentedMixedRange, false);
         try (WorkerPool pool = new WorkerPool(workers, seed)) {
+            for (int i = 0; i < warmupRounds; ++i) runParallel(pool, path, workItems, shape);
+            NativeDensityFunction.setOption("executionStats", true);
+            NativeDensityFunction.resetStats();
             return runParallel(pool, path, workItems, shape, true).executionStats;
         }
     }
@@ -290,7 +330,9 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     }
 
     private static void execute(final Path path, final WorkerContext context, final int workIndex, final Shape shape) throws Exception {
+        final long creationStart = WorldgenProfiler.start();
         final NoiseChunk chunk = newChunk(context.randomState, workIndex, shape);
+        WorldgenProfiler.end("benchmark.newNoiseChunk", creationStart);
         switch (path) {
             case GRID -> chunk.maxPreliminarySurfaceLevel(chunkMinX(workIndex), chunkMinZ(workIndex),
                 chunkMinX(workIndex) + 16, chunkMinZ(workIndex) + 16);
@@ -350,6 +392,9 @@ public final class NativeDensityFunctionWorldgenBenchmark {
         NativeDensityFunction.setOption("stats", enabled);
         NativeDensityFunction.setOption("executionStats", enabled && executionStats);
         NativeDensityFunction.setOption("parity", parity);
+        NativeDensityFunction.setOption("profiling", false);
+        WorldgenProfiler.setEnabled(false);
+        WorldgenProfiler.setHotLoopsEnabled(false);
     }
 
     private static String coverage(final Path path, final String status) {
@@ -512,7 +557,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
     }
 
     private record Config(int warmupRounds, int sampleCount, int coldSamples, long seed, int[] workItems, int[] workers,
-                          boolean coverageOnly, boolean verifyOnly) {
+                          boolean coverageOnly, boolean verifyOnly, boolean profiling) {
         static Config parse(final String[] args) {
             int warmup = 4;
             int samples = 9;
@@ -522,6 +567,7 @@ public final class NativeDensityFunctionWorldgenBenchmark {
             int[] workers = DEFAULT_WORKERS;
             boolean coverageOnly = false;
             boolean verifyOnly = false;
+            boolean profiling = false;
             for (final String argument : args) {
                 if (argument.startsWith("--warmup=")) warmup = positive(argument, "--warmup=");
                 else if (argument.startsWith("--samples=")) samples = positive(argument, "--samples=");
@@ -531,9 +577,10 @@ public final class NativeDensityFunctionWorldgenBenchmark {
                 else if (argument.startsWith("--workers=")) workers = list(argument, "--workers=");
                 else if (argument.equals("--coverage-only")) coverageOnly = true;
                 else if (argument.equals("--verify-only")) verifyOnly = true;
+                else if (argument.equals("--profiling")) profiling = true;
                 else throw new IllegalArgumentException("Unknown benchmark argument: " + argument);
             }
-            return new Config(warmup, samples, coldSamples, seed, workItems, workers, coverageOnly, verifyOnly);
+            return new Config(warmup, samples, coldSamples, seed, workItems, workers, coverageOnly, verifyOnly, profiling);
         }
 
         private static int positive(final String argument, final String prefix) {

@@ -1570,13 +1570,16 @@ TEST_CASE("CacheState generations: logical invalidation and independent binding 
     c.unbind_cell_arrays(); CHECK(c.cell_array_at(0).data == nullptr);
 }
 
-TEST_CASE("CacheState generations: wrap resize and move cannot resurrect stale slots") {
+TEST_CASE("CacheState: resize and move cannot resurrect stale slots (epoch build also tests wrap)") {
     NodeArena a; a.num_cache_once_slots = a.num_cache_all_in_cell_slots = 2;
     CacheState c; c.resize_for(a); const double data = 22;
     // stamp=1 的未访问旧槽须在 wrap 时清掉。
     c.cache_once_at(1) = {true, 1, 2, 3, 99}; c.bind_cell_array(1, &data, 1);
     c.cache_all_in_cell_at(1).get_or_insert(4) = 77;
-    CacheStateTestAccess::force_wrap(c); c.clear();
+#if LATTICE_CACHESTATE_EPOCH
+    CacheStateTestAccess::force_wrap(c);
+#endif
+    c.clear();
     CHECK_FALSE(c.cache_once_at(1).valid); CHECK(c.cell_array_at(1).data == nullptr);
     CHECK(c.cache_all_in_cell_at(1).find(4) == nullptr);
     c.cache_once_at(0) = {true, 1, 2, 3, 44}; c.bind_cell_array(0, &data, 1);

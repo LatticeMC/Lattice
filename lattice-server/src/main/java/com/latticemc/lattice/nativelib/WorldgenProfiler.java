@@ -59,8 +59,22 @@ public final class WorldgenProfiler {
         probe.add(System.nanoTime() - startNanos);
     }
 
+    /** 在诊断批次之间、工作线程静止时清零；保留调用方缓存的 Probe 引用。 */
     public static void reset() {
-        PROBES.clear();
+        for (Probe probe : PROBES.values()) {
+            probe.count.reset();
+            probe.nanos.reset();
+        }
+    }
+
+    public record Sample(String name, long count, long nanos) {}
+
+    /** 探针时间包含内部嵌套调用，不能把嵌套样本当作独立工作相加。 */
+    public static List<Sample> snapshot() {
+        List<Sample> samples = new ArrayList<>();
+        PROBES.forEach((name, probe) -> samples.add(new Sample(name, probe.count.sum(), probe.nanos.sum())));
+        samples.sort(Comparator.comparing(Sample::name));
+        return List.copyOf(samples);
     }
 
     public static String status() {

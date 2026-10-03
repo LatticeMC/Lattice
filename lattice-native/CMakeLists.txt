@@ -35,6 +35,9 @@ option(LATTICE_ENABLE_SIMD     "Enable SIMD specialisations (runtime-dispatched)
 option(LATTICE_ENABLE_LTO      "Enable link-time optimisation in Release builds" ON)
 option(LATTICE_BUILD_TESTS     "Build unit tests + diff-verification harness" OFF)
 option(LATTICE_WARNINGS_AS_ERRORS "Promote warnings to errors" OFF)
+# 布局 A/B 必须覆盖 JNI、SIMD OBJECT 和 doctest 的每个 TU。
+option(LATTICE_CACHESTATE_EPOCH "Use epoch CacheState layout (OFF: pre-P2 experiment)" ON)
+add_compile_definitions(LATTICE_CACHESTATE_EPOCH=$<BOOL:${LATTICE_CACHESTATE_EPOCH}>)
 
 # Native PGO is deliberately a private build interface.  The default is the
 # existing LTO-only artifact; callers must opt in explicitly to either phase.
