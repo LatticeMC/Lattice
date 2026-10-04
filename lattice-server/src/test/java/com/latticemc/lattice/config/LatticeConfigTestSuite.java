@@ -43,6 +43,7 @@ class LatticeConfigTestSuite {
         assertEquals("false", System.getProperty("lattice.nativeIocp"));
         assertEquals("false", System.getProperty("lattice.nativeIoUring"));
         assertEquals("false", System.getProperty("lattice.nativeKqueue"));
+        assertEquals("false", System.getProperty("lattice.nativeEntityVisibilityPrefilter"));
         assertEquals("16", System.getProperty("lattice.nativeEntityVisibilityMinPlayers"));
         assertEquals("false", System.getProperty("lattice.nativeEntityVisibilityBatchEnabled"));
         assertEquals("512", System.getProperty("lattice.nativeEntityVisibilityBatchMinEntities"));
@@ -63,6 +64,7 @@ class LatticeConfigTestSuite {
                   cpu-tier: AVX2
                 entity:
                   visibility:
+                    native-prefilter: true
                     minimum-players: 0
                     batch-enabled: true
                     batch-minimum-entities: 2048
@@ -79,6 +81,7 @@ class LatticeConfigTestSuite {
         assertEquals("true", System.getProperty("lattice.disable"));
         assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("avx2", System.getProperty("lattice.nativeCpu"));
+        assertEquals("true", System.getProperty("lattice.nativeEntityVisibilityPrefilter"));
         assertEquals("300", System.getProperty("lattice.nativeBrainEligibility.minBehaviors"));
         assertEquals("0", System.getProperty("lattice.nativeEntityVisibilityMinPlayers"));
         assertEquals("true", System.getProperty("lattice.nativeEntityVisibilityBatchEnabled"));

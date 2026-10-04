@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice <noreply@latticemc.com>
+Date: Sun, 4 Oct 2026 10:00:00 +0800
+Subject: [PATCH] Defer entity speed vector materialization
+
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+index d01d833..a3e1c4f 100644
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -343,7 +343,10 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     private float crystalSoundIntensity;
+     private int lastCrystalSoundPlayTick;
+     public boolean hasVisualFire;
+-    private Vec3 lastKnownSpeed = Vec3.ZERO;
++    private @Nullable Vec3 lastKnownSpeed = Vec3.ZERO;
++    private double lastKnownSpeedX;
++    private double lastKnownSpeedY;
++    private double lastKnownSpeedZ;
+     private @Nullable Vec3 lastKnownPosition;
+     public net.kyori.adventure.util.TriState visualFire = net.kyori.adventure.util.TriState.NOT_SET; // Paper - improve visual fire API
+     private @Nullable BlockState inBlockState = null;
+@@ -967,7 +970,13 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+             this.lastKnownPosition = this.position();
+         }
+ 
+-        this.lastKnownSpeed = this.position().subtract(this.lastKnownPosition);
++        // Lattice: retain all three sampled components without allocating for unread speeds.
++        final Vec3 current = this.position();
++        final Vec3 previous = this.lastKnownPosition;
++        this.lastKnownSpeedX = current.x + -previous.x;
++        this.lastKnownSpeedY = current.y + -previous.y;
++        this.lastKnownSpeedZ = current.z + -previous.z;
++        this.lastKnownSpeed = null;
+         this.lastKnownPosition = this.position();
+     }
+ 
+@@ -1379,7 +1388,7 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     }
+ 
+     public boolean hasMovedHorizontallyRecently() {
+-        return Math.abs(this.lastKnownSpeed.horizontalDistance()) > 1.0E-5F;
++        return Math.abs(Math.sqrt(this.lastKnownSpeedX * this.lastKnownSpeedX + this.lastKnownSpeedZ * this.lastKnownSpeedZ)) > 1.0E-5F;
+     }
+ 
+     public void applyEffectsFromBlocks(Vec3 oldPosition, Vec3 position) {
+@@ -5582,7 +5591,13 @@ public abstract class Entity implements SyncedDataHolder, DebugValueSource, Name
+     }
+ 
+     public Vec3 getKnownSpeed() {
+-        return this.getControllingPassenger() instanceof Player player && this.isAlive() ? player.getKnownSpeed() : this.lastKnownSpeed;
++        if (this.getControllingPassenger() instanceof Player player && this.isAlive()) {
++            return player.getKnownSpeed();
++        }
++        if (this.lastKnownSpeed == null) {
++            this.lastKnownSpeed = new Vec3(this.lastKnownSpeedX, this.lastKnownSpeedY, this.lastKnownSpeedZ);
++        }
++        return this.lastKnownSpeed;
+     }
+ 
+     public @Nullable ItemStack getWeaponItem() {
