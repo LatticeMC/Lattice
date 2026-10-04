@@ -1,0 +1,10 @@
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1199,6 +_,6 @@
+         profiler.popPush("moonrise:run_all_chunk");
+         // Paper start - rewrite chunk system
+         for (final ServerLevel world : this.getAllLevels()) {
+-            profiler.push(world.toString() + " " + world.dimension().identifier()); // keep same formatting from regular tick, see tickChildren
++            profiler.push(() -> world + " " + world.dimension().identifier()); // keep same formatting from regular tick, see tickChildren
+ 
+             // note: legacy tasks may expect a distance manager update
