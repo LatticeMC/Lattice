@@ -54,6 +54,11 @@ public final class WorldgenProfiler {
         probe(name).add(elapsed);
     }
 
+    public static void end(String prefix, String name, long startNanos) {
+        if (!AVAILABLE || startNanos == 0L) return;
+        end(prefix + name, startNanos);
+    }
+
     public static void end(Probe probe, long startNanos) {
         if (!AVAILABLE || startNanos == 0L) return;
         probe.add(System.nanoTime() - startNanos);

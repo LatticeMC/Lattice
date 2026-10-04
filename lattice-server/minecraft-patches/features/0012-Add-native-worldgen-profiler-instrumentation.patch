@@ -48,7 +48,7 @@ index aa8c40d49756611537e2698b7f2a861c303ef842..e2bf91a23ecf51fbace629a8b2860952
 -            return this.task.doWork(worldGenContext, this, cache, chunk);
 +            lattice$result = this.task.doWork(worldGenContext, this, cache, chunk);
          }
-+        com.latticemc.lattice.nativelib.WorldgenProfiler.end("status." + this.targetStatus.getName(), lattice$profileStart);
++        com.latticemc.lattice.nativelib.WorldgenProfiler.end("status.", this.targetStatus.getName(), lattice$profileStart);
 +        return lattice$result;
      }
  
