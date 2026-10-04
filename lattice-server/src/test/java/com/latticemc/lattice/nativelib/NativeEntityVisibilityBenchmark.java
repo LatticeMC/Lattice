@@ -12,8 +12,8 @@ import java.util.Locale;
  * entities from the world or change production tracking behaviour.</p>
  */
 public final class NativeEntityVisibilityBenchmark {
-    private static final int[] ENTITY_COUNTS = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
-    private static final int[] PLAYER_COUNTS = {1, 2, 4, 8, 16, 32, 64};
+    private static final int[] ENTITY_COUNTS = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192};
+    private static final int[] PLAYER_COUNTS = {1, 2, 4, 8, 16, 30, 32, 64};
     private static final SpatialCase[] SPATIAL_CASES = SpatialCase.values();
     private static final SeenCase[] SEEN_CASES = SeenCase.values();
     private static volatile int blackhole;
@@ -29,6 +29,7 @@ public final class NativeEntityVisibilityBenchmark {
 
         System.out.println("Entity visibility complete-wrapper benchmark");
         System.out.println("matrix=measure only P<=N combinations");
+        System.out.printf("entities=%s players=%s%n", Arrays.toString(config.entityCounts), Arrays.toString(config.playerCounts));
         System.out.printf("cpu=%s warmup=%d samples=%d iterations=%s%n", LatticeNative.cpuSummary(),
             config.warmupRounds, config.sampleCount,
             config.iterations > 0 ? Integer.toString(config.iterations) : "adaptive");
@@ -41,8 +42,8 @@ public final class NativeEntityVisibilityBenchmark {
             "N", "P", "space", "seen", "iters", "path", "p50-ns", "p95-ns", "pair-p50", "pair-p95",
             "prep-p50", "scan-p50", "replay-p50", "jni/call", "array/call", "temp-B", "speed-p50", "speed-p95", "gate");
 
-        for (final int entityCount : ENTITY_COUNTS) {
-            for (final int playerCount : PLAYER_COUNTS) {
+        for (final int entityCount : config.entityCounts) {
+            for (final int playerCount : config.playerCounts) {
                 // Keep only matrix cells where the player count does not exceed the entity count.
                 if (playerCount > entityCount) continue;
                 final GateSummary gates = new GateSummary(entityCount, playerCount);
@@ -834,18 +835,22 @@ public final class NativeEntityVisibilityBenchmark {
     private record Result(PathResult javaDirect, PathResult singleJni, PathResult batchJni,
                           PathResult reusedBatchJni, PathResult reusedSparseBatchJni) {}
 
-    private record Config(int warmupRounds, int sampleCount, int iterations) {
+    private record Config(int warmupRounds, int sampleCount, int iterations, int[] entityCounts, int[] playerCounts) {
         private static Config parse(final String[] args) {
             int warmup = 4;
             int samples = 9;
             int iterations = 0;
+            int[] entities = ENTITY_COUNTS;
+            int[] players = PLAYER_COUNTS;
             for (final String argument : args) {
                 if (argument.startsWith("--warmup=")) warmup = positive(argument, "--warmup=");
                 else if (argument.startsWith("--samples=")) samples = positive(argument, "--samples=");
                 else if (argument.startsWith("--iterations=")) iterations = nonNegative(argument, "--iterations=");
+                else if (argument.startsWith("--entities=")) entities = selection(argument, "--entities=", ENTITY_COUNTS);
+                else if (argument.startsWith("--players=")) players = selection(argument, "--players=", PLAYER_COUNTS);
                 else throw new IllegalArgumentException("unknown benchmark argument: " + argument);
             }
-            return new Config(warmup, samples, iterations);
+            return new Config(warmup, samples, iterations, entities, players);
         }
 
         private static int positive(final String argument, final String prefix) {
@@ -858,6 +863,22 @@ public final class NativeEntityVisibilityBenchmark {
             final int value = Integer.parseInt(argument.substring(prefix.length()));
             if (value < 0) throw new IllegalArgumentException(prefix + " must be non-negative");
             return value;
+        }
+
+        private static int[] selection(final String argument, final String prefix, final int[] supported) {
+            final String[] parts = argument.substring(prefix.length()).split(",");
+            final int[] values = new int[parts.length];
+            for (int i = 0; i < parts.length; ++i) {
+                values[i] = Integer.parseInt(parts[i]);
+                boolean found = false;
+                for (final int candidate : supported) found |= candidate == values[i];
+                if (!found) throw new IllegalArgumentException("unsupported benchmark size: " + values[i]);
+                for (int previous = 0; previous < i; ++previous) {
+                    if (values[previous] == values[i]) throw new IllegalArgumentException("duplicate benchmark size: " + values[i]);
+                }
+            }
+            if (values.length == 0) throw new IllegalArgumentException(prefix + " requires at least one value");
+            return values;
         }
     }
 }

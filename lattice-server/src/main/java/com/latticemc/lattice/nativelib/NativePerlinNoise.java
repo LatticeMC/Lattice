@@ -4,6 +4,7 @@ import java.lang.ref.Cleaner;
 
 public final class NativePerlinNoise {
     private static final Cleaner CLEANER = Cleaner.create();
+    private static final ThreadLocal<double[]> DERIVATIVE_SCRATCH = ThreadLocal.withInitial(() -> new double[3]);
 
     private final long handle;
     @SuppressWarnings("unused")
@@ -40,6 +41,15 @@ public final class NativePerlinNoise {
 
     public double sampleDerivative(double x, double y, double z, double[] outDeriv) {
         return nativeSampleDerivative(this.handle, x, y, z, outDeriv);
+    }
+
+    public double sampleDerivativeAndAddTo(double x, double y, double z, double[] values) {
+        double[] derivative = DERIVATIVE_SCRATCH.get();
+        double value = this.sampleDerivative(x, y, z, derivative);
+        values[0] += derivative[0];
+        values[1] += derivative[1];
+        values[2] += derivative[2];
+        return value;
     }
 
     private record Destroy(long handle) implements Runnable {

@@ -5,6 +5,7 @@ import com.latticemc.lattice.bridge.NativeNormalNoiseAccess;
 import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeDoublePerlinNoise;
 import com.latticemc.lattice.nativelib.NativeInterpolatedNoise;
+import com.latticemc.lattice.nativelib.NativePerlinNoise;
 import com.latticemc.lattice.nativelib.NativeScalarNoiseControl;
 import com.latticemc.lattice.nativelib.NativeSimplexNoise;
 import java.util.ArrayList;
@@ -43,6 +44,11 @@ public final class NativeNoiseJniBenchmark {
         }
 
         ImprovedNoise improved = new ImprovedNoise(RandomSource.create(0x1A2B3C4DL));
+        NativePerlinNoise derivativeSampler = NativePerlinNoise.tryCreate(
+            ((com.latticemc.lattice.bridge.ImprovedNoiseAccessor) improved).lattice$getPermutation(),
+            improved.xo, improved.yo, improved.zo);
+        if (derivativeSampler == null) throw new IllegalStateException("Native derivative sampler could not be created");
+        verifyDerivativeScratch(derivativeSampler);
         PerlinNoise perlin = PerlinNoise.create(RandomSource.create(0x22334455L), -7,
             1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0);
         NormalNoise normal = NormalNoise.create(RandomSource.create(0x33445566L), -7,
@@ -112,6 +118,27 @@ public final class NativeNoiseJniBenchmark {
         if (!parityPassed) {
             throw new IllegalStateException("native scalar-noise parity exceeded " + PARITY_TOLERANCE);
         }
+    }
+
+    private static void verifyDerivativeScratch(NativePerlinNoise sampler) {
+        for (int i = 0; i < 257; ++i) {
+            double x = -8192.25 + i * 0.371;
+            double y = -64.5 + i * 0.413;
+            double z = 4096.75 - i * 0.437;
+            double[] expected = {i * 0.125, -i * 0.25, i * 0.5};
+            double[] actual = expected.clone();
+            double[] derivative = new double[3];
+            double expectedValue = sampler.sampleDerivative(x, y, z, derivative);
+            for (int axis = 0; axis < 3; ++axis) expected[axis] += derivative[axis];
+            double actualValue = sampler.sampleDerivativeAndAddTo(x, y, z, actual);
+            if (Double.doubleToRawLongBits(expectedValue) != Double.doubleToRawLongBits(actualValue)
+                || Double.doubleToRawLongBits(expected[0]) != Double.doubleToRawLongBits(actual[0])
+                || Double.doubleToRawLongBits(expected[1]) != Double.doubleToRawLongBits(actual[1])
+                || Double.doubleToRawLongBits(expected[2]) != Double.doubleToRawLongBits(actual[2])) {
+                throw new AssertionError("native derivative scratch mismatch at sample " + i);
+            }
+        }
+        System.out.println("derivative-scratch parity=bitwise samples=257");
     }
 
     private static Operation toggleOperation(String name, int targetPoints, Sample sample) {

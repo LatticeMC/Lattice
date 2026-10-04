@@ -59,19 +59,14 @@ index 8d1ec147f230d9bed0a4c740be7cd41ab8c4951f..c5101d650334a4d91deccb821bced41d
          double d = x + this.xo;
          double d1 = y + this.yo;
          double d2 = z + this.zo;
-@@ -86,6 +104,18 @@ public final class ImprovedNoise implements com.latticemc.lattice.bridge.Improve
+@@ -86,6 +104,13 @@ public final class ImprovedNoise implements com.latticemc.lattice.bridge.Improve
      }
  
      public double noiseWithDerivative(double x, double y, double z, double[] values) {
 +        if (NativeScalarNoiseControl.perlinEnabled()) {
 +            NativePerlinNoise nativeSampler = this.lattice$native;
 +            if (nativeSampler != null && values != null && values.length >= 3) {
-+                double[] derivative = new double[3];
-+                double value = nativeSampler.sampleDerivative(x, y, z, derivative);
-+                values[0] += derivative[0];
-+                values[1] += derivative[1];
-+                values[2] += derivative[2];
-+                return value;
++                return nativeSampler.sampleDerivativeAndAddTo(x, y, z, values);
 +            }
 +        }
 +

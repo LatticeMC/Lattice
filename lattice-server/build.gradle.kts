@@ -336,6 +336,8 @@ val entityVisibilityBenchmark by tasks.registering(JavaExec::class) {
         "--warmup=" + providers.gradleProperty("entityVisibilityBenchmarkWarmup").getOrElse("4"),
         "--samples=" + providers.gradleProperty("entityVisibilityBenchmarkSamples").getOrElse("9"),
         "--iterations=" + providers.gradleProperty("entityVisibilityBenchmarkIterations").getOrElse("0"),
+        "--entities=" + providers.gradleProperty("entityVisibilityBenchmarkEntities").getOrElse("512,2048,8192"),
+        "--players=" + providers.gradleProperty("entityVisibilityBenchmarkPlayers").getOrElse("16,30,64"),
     )
 }
 
