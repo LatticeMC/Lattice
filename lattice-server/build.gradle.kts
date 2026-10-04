@@ -341,6 +341,23 @@ val entityVisibilityBenchmark by tasks.registering(JavaExec::class) {
     )
 }
 
+val entityVisibilityEndToEndBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Benchmark tracked-entity visibility prefilter plus downstream update decisions"
+    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.nativelib.NativeEntityVisibilityEndToEndBenchmark")
+    workingDir = rootProject.layout.projectDirectory.asFile
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    args(
+        "--warmup=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkWarmup").getOrElse("4"),
+        "--samples=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkSamples").getOrElse("11"),
+        "--iterations=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkIterations").getOrElse("0"),
+        "--entities=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkEntities").getOrElse("512,2048,8192"),
+        "--players=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkPlayers").getOrElse("16,30,64"),
+    )
+}
+
 val nativeDensityWorldgenBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "Benchmark real Overworld NoiseChunk Java and native density wrappers"
