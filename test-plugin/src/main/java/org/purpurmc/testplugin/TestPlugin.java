@@ -10,6 +10,7 @@ public class TestPlugin extends JavaPlugin implements Listener {
     private PathfinderBenchmarkCommand pathfinderBenchmark;
     private ItemBenchmarkCommand itemBenchmark;
     private EntityActivationBenchmarkCommand entityActivationBenchmark;
+    private EntityStressCommand entityStress;
 
     @Override
     public void onEnable() {
@@ -17,6 +18,7 @@ public class TestPlugin extends JavaPlugin implements Listener {
         this.pathfinderBenchmark = new PathfinderBenchmarkCommand(this);
         this.itemBenchmark = new ItemBenchmarkCommand(this);
         this.entityActivationBenchmark = new EntityActivationBenchmarkCommand(this);
+        this.entityStress = new EntityStressCommand(this);
         this.getServer().getCommandMap().register(
             this.getName().toLowerCase(Locale.ROOT),
             this.pathfinderBenchmark
@@ -28,6 +30,10 @@ public class TestPlugin extends JavaPlugin implements Listener {
         this.getServer().getCommandMap().register(
             this.getName().toLowerCase(Locale.ROOT),
             this.entityActivationBenchmark
+        );
+        this.getServer().getCommandMap().register(
+            this.getName().toLowerCase(Locale.ROOT),
+            this.entityStress
         );
     }
 
@@ -48,6 +54,9 @@ public class TestPlugin extends JavaPlugin implements Listener {
         }
         if (this.entityActivationBenchmark != null) {
             this.entityActivationBenchmark.shutdown();
+        }
+        if (this.entityStress != null) {
+            this.entityStress.shutdown();
         }
     }
 }
