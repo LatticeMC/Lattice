@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 4 Oct 2026 20:00:00 +0800
+Subject: [PATCH] Cache TPS window sums
+
+Maintain the last queried integer sum during sample insertion and eviction.
+Rebuild on tick interval changes and keep lagging updates at their existing cadence.
+
+diff --git a/src/main/java/ca/spottedleaf/moonrise/common/time/TickData.java b/src/main/java/ca/spottedleaf/moonrise/common/time/TickData.java
+index 9d46b26ab531b01189b7e57bfc5befa11de9f0b1..b4fd9b76095757b6828325c718b7a9b07b64cadc 100644
+--- a/src/main/java/ca/spottedleaf/moonrise/common/time/TickData.java
++++ b/src/main/java/ca/spottedleaf/moonrise/common/time/TickData.java
+@@ -12,6 +12,11 @@ public final class TickData {
+ 
+     private final ArrayDeque<TickTime> timeData = new ArrayDeque<>();
+ 
++    // Lattice - maintain the last queried TPS sum under the caller's existing lock.
++    private boolean hasTPSInterval;
++    private long tpsInterval;
++    private long timeBetweenTicks;
++
+     public TickData(final long intervalNS) {
+         this.interval = intervalNS;
+     }
+@@ -26,9 +31,15 @@ public final class TickData {
+                 break;
+             }
+             this.timeData.pollFirst();
++            if (this.hasTPSInterval) {
++                this.timeBetweenTicks -= first.differenceFromLastTick(this.tpsInterval);
++            }
+         }
+ 
+         this.timeData.add(time);
++        if (this.hasTPSInterval) {
++            this.timeBetweenTicks += time.differenceFromLastTick(this.tpsInterval);
++        }
+     }
+ 
+     // fromIndex inclusive, toIndex exclusive
+@@ -102,7 +113,17 @@ public final class TickData {
+             return null;
+         }
+ 
+-        long totalTimeBetweenTicks = 0L;
++        // The interval affects samples without a previous tick. Rebuild on rate changes.
++        if (!this.hasTPSInterval || this.tpsInterval != tickInterval) {
++            long total = 0L;
++            for (final TickTime time : this.timeData) {
++                total += time.differenceFromLastTick(tickInterval);
++            }
++            this.timeBetweenTicks = total;
++            this.tpsInterval = tickInterval;
++            this.hasTPSInterval = true;
++        }
++        long totalTimeBetweenTicks = this.timeBetweenTicks;
+         int collectedTicks = this.timeData.size();
+ 
+         if (inProgress != null) {
+@@ -110,9 +131,6 @@ public final class TickData {
+             totalTimeBetweenTicks += inProgress.differenceFromLastTick(tickInterval);
+         }
+ 
+-        for (final TickTime time : this.timeData) {
+-            totalTimeBetweenTicks += time.differenceFromLastTick(tickInterval);
+-        }
+         return Double.valueOf((double)collectedTicks / ((double)totalTimeBetweenTicks / 1.0E9));
+     }
+ 
