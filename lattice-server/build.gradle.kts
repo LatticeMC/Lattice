@@ -358,6 +358,20 @@ val entityVisibilityEndToEndBenchmark by tasks.registering(JavaExec::class) {
     )
 }
 
+val worldgenProfilerPushBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Benchmark eager versus lazy world-generation profiler scope names"
+    dependsOn(tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.nativelib.WorldgenProfilerPushBenchmark")
+    workingDir = rootProject.layout.projectDirectory.asFile
+    args(
+        "--warmup=" + providers.gradleProperty("worldgenProfilerPushBenchmarkWarmup").getOrElse("5"),
+        "--samples=" + providers.gradleProperty("worldgenProfilerPushBenchmarkSamples").getOrElse("11"),
+        "--iterations=" + providers.gradleProperty("worldgenProfilerPushBenchmarkIterations").getOrElse("2000000"),
+    )
+}
+
 val nativeDensityWorldgenBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "Benchmark real Overworld NoiseChunk Java and native density wrappers"
