@@ -16,9 +16,8 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  * positions through {@link PathfinderStaticCache}.
  */
 final class PathfinderTickStateCache {
-    // A busy target can have several hundred nearby navigation regions in
-    // flight. 64 sections saturated before the second wave of mobs ran; 512
-    // retains an 8 MiB upper bound while covering that shared working set.
+    // 单个 level 最多保留 8 MiB 的 cell 描述数组。容量外的 section 直接查询
+    // BlockState 描述表，不能分配一个不入缓存的 16 KiB 数组。
     private static final int MAX_CACHED_SECTIONS = 512;
     private static final IdentityHashMap<Object, PathfinderTickStateCache> ACTIVE_CACHES = new IdentityHashMap<>();
 
@@ -28,7 +27,6 @@ final class PathfinderTickStateCache {
     private float[] floorHeights = new float[16];
     private Object level;
     private int descriptorCount;
-    private boolean cacheCells = true;
     private long hits;
     private long misses;
     private long lastSectionKey = Long.MIN_VALUE;
@@ -47,7 +45,6 @@ final class PathfinderTickStateCache {
         this.lastSection = null;
         this.descriptors.clear();
         this.descriptorCount = 0;
-        this.cacheCells = true;
     }
 
     static void invalidate(Object level, BlockPos pos) {
@@ -57,17 +54,19 @@ final class PathfinderTickStateCache {
 
     int descriptorAt(PathNavigationRegion region, BlockPos.MutableBlockPos pos) {
         Section section = this.sectionAt(pos);
-        int index = sectionIndex(pos);
-        int descriptor = section.descriptors[index];
-        if (descriptor >= 0) {
-            this.hits++;
-            return descriptor;
+        int index = section == null ? -1 : sectionIndex(pos);
+        if (section != null) {
+            int descriptor = section.descriptors[index];
+            if (descriptor >= 0) {
+                this.hits++;
+                return descriptor;
+            }
         }
         this.misses++;
         BlockState state = region.getBlockStateIfLoaded(pos);
         if (state == null || state.getBlock().hasDynamicShape()) return -1;
-        descriptor = this.descriptorFor(region, pos, state);
-        if (this.cacheCells) section.descriptors[index] = descriptor;
+        int descriptor = this.descriptorFor(region, pos, state);
+        if (section != null) section.descriptors[index] = descriptor;
         return descriptor;
     }
 
@@ -101,13 +100,9 @@ final class PathfinderTickStateCache {
         long key = SectionPos.asLong(pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
         if (this.lastSectionKey == key) return this.lastSection;
         Section section = this.sections.get(key);
-        if (section == null) {
+        if (section == null && this.sections.size() < MAX_CACHED_SECTIONS) {
             section = new Section();
-            if (this.cacheCells && this.sections.size() < MAX_CACHED_SECTIONS) {
-                this.sections.put(key, section);
-            } else {
-                this.cacheCells = false;
-            }
+            this.sections.put(key, section);
         }
         this.lastSectionKey = key;
         this.lastSection = section;

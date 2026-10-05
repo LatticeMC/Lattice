@@ -324,6 +324,25 @@ tasks.test {
     jvmArgumentProviders.add(provider)
 }
 
+val pathfinderCacheAllocationBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "测量寻路section缓存的冷热查询、饱和扫描和分配"
+    dependsOn(tasks.testClasses)
+    val baseline = providers.gradleProperty("pathfinderCacheBenchmarkBaseline")
+    classpath = if (baseline.isPresent) files(baseline.get()) + sourceSets.test.get().runtimeClasspath
+        else sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.bridge.PathfinderCacheAllocationBenchmark")
+    workingDir = temporaryDir
+    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
+    systemProperty("lattice.pathCacheBenchMode", if (baseline.isPresent) "baseline" else "fixed")
+    systemProperty("lattice.pathCacheBenchReverse", providers.gradleProperty("pathfinderCacheBenchmarkReverse").getOrElse("false"))
+    doFirst {
+        if (baseline.isPresent) require(file(baseline.get()).resolve("com/latticemc/lattice/bridge/PathfinderTickStateCache.class").isFile) {
+            "Baseline must contain the separately compiled PathfinderTickStateCache class"
+        }
+    }
+}
+
 val chunkLookupBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "对照单项区块查询缓存；每个 JVM 只运行 original 或 cached 一种模式"
