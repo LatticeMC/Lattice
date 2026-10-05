@@ -343,6 +343,27 @@ val pathfinderCacheAllocationBenchmark by tasks.registering(JavaExec::class) {
     }
 }
 
+val chunkReadBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "对照 Leaf 0253 适配和草块局部查询复用，独立 JVM 加载前后类"
+    dependsOn(tasks.testClasses)
+    val baseline = providers.gradleProperty("chunkReadBaseline")
+    classpath = if (baseline.isPresent) files(baseline.get()) + sourceSets.test.get().runtimeClasspath else sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.world.ChunkReadBenchmark")
+    workingDir = temporaryDir
+    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
+    systemProperty("lattice.chunkReadMode", if (baseline.isPresent) "baseline" else "fixed")
+    systemProperty("lattice.chunkReadReverse", providers.gradleProperty("chunkReadReverse").getOrElse("false"))
+    doFirst {
+        if (baseline.isPresent) {
+            listOf("net/minecraft/world/level/Level.class", "net/minecraft/world/level/block/SpreadingSnowyDirtBlock.class",
+                "ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.class").forEach { name ->
+                require(file(baseline.get()).resolve(name).isFile) { "Baseline class missing: $name" }
+            }
+        }
+    }
+}
+
 val chunkLookupBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "对照单项区块查询缓存；每个 JVM 只运行 original 或 cached 一种模式"

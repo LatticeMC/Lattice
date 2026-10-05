@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 5 Oct 2026 17:00:30 +0800
+Subject: [PATCH] perf: reuse chunk and block reads during grass ticks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Leaf 0253 适配：Level 方块读取使用坐标重载，草块读取使用现有安全整数入口。
+原作者：hayanesuru <hayanesuru@outlook.jp>
+原补丁：https://github.com/Winds-Studio/Leaf/blob/fcbabf5412325fdf54c8ded71f3117b4b930bbbc/leaf-server/minecraft-patches/features/0253-optimize-get-chunk.patch
+许可证：MIT（Leaf LICENSE.md 的默认 patch 许可证）。
+Leaf 原 SpreadingSnowyBlock 在本版本适配为 SpreadingSnowyDirtBlock。
+不移植其依赖的 0251 非同步镜像表；这些入口本身仍保留一次查表。
+
+Lattice 额外优化：草块在首次事件前将已知区块传给 Starlight，省去重复 holder 查询；
+每次传播判定复用上方方块状态，插件事件后的下一次尝试重新读取。
+保持随机调用、世界边界、实时光照、邻区块加载及插件事件语义。
+
+Upstream MIT notice:
+Copyright (c) 2022-2024 Respective authors of parts of Leaf, or software included therein
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+---
+ .../starlight/light/StarLightInterface.java        | 14 +++++++--
+ net/minecraft/world/level/Level.java               |  7 +++--
+ .../world/level/block/SpreadingSnowyDirtBlock.java | 36 +++++++++++++++++-----
+ 3 files changed, 44 insertions(+), 13 deletions(-)
+
+diff --git a/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java b/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
+index 7faf226b753a03e03b0dec9bbfcc94a6c3f5bc0f..c27bd5ed436b016e5bbd58fc08c6918e17202125 100644
+--- a/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
++++ b/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
+@@ -294,7 +294,11 @@ public final class StarLightInterface {
+         if (!this.hasBlockLight) {
+             return 0;
+         }
+-        final int y = blockPos.getY();
++        return this.getBlockLightValue(blockPos.getX(), blockPos.getY(), blockPos.getZ(), chunk);
++    }
++
++    // Lattice：冷方块光分支未内联时，也不让上方临时 BlockPos 逃逸。
++    private int getBlockLightValue(final int x, final int y, final int z, final ChunkAccess chunk) {
+         final int cy = y >> 4;
+
+         final int minLightSection = this.minLightSection;
+@@ -309,18 +313,22 @@ public final class StarLightInterface {
+         }
+
+         final SWMRNibbleArray nibble = ((StarlightChunk)chunk).starlight$getBlockNibbles()[cy - minLightSection];
+-        return nibble.getVisible(blockPos.getX(), y, blockPos.getZ());
++        return nibble.getVisible(x, y, z);
+     }
+
+     public int getRawBrightness(final BlockPos pos, final int ambientDarkness) {
+         final ChunkAccess chunk = this.getAnyChunkNow(pos.getX() >> 4, pos.getZ() >> 4);
++        return this.getRawBrightness(pos, ambientDarkness, chunk);
++    }
+
++    // Lattice：调用方在同一读取阶段已取得该列的区块时复用引用，光照仍实时读取。
++    public int getRawBrightness(final BlockPos pos, final int ambientDarkness, final ChunkAccess chunk) {
+         final int sky = this.getSkyLightValue(pos, chunk) - ambientDarkness;
+         // Don't fetch the block light level if the skylight level is 15, since the value will never be higher.
+         if (sky == 15) {
+             return 15;
+         }
+-        final int block = this.getBlockLightValue(pos, chunk);
++        final int block = this.hasBlockLight ? this.getBlockLightValue(pos.getX(), pos.getY(), pos.getZ(), chunk) : 0;
+         return Math.max(sky, block);
+     }
+
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 49408c95551ec39f4394346f7ee55dd7ec3b73e7..06ec2d959e6e2e6602076490aa844db4290106e8 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1375,8 +1375,11 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         if (!this.isInValidBounds(pos)) {
+             return Blocks.VOID_AIR.defaultBlockState();
+         } else {
+-            ChunkAccess chunk = this.getChunk(pos.getX() >> 4, pos.getZ() >> 4, ChunkStatus.FULL, true); // Paper - manually inline to reduce hops and avoid unnecessary null check to reduce total byte code size, this should never return null and if it does we will see it the next line but the real stack trace will matter in the chunk engine
+-            return chunk.getBlockState(pos);
++            // Leaf 0253 适配，hayanesuru，MIT；保留区块覆写与原 FULL 查询。
++            // https://github.com/Winds-Studio/Leaf/blob/fcbabf5412325fdf54c8ded71f3117b4b930bbbc/leaf-server/minecraft-patches/features/0253-optimize-get-chunk.patch
++            final int x = pos.getX(), y = pos.getY(), z = pos.getZ();
++            ChunkAccess chunk = this.getChunk(x >> 4, z >> 4, ChunkStatus.FULL, true); // Paper - manually inline to reduce hops and avoid unnecessary null check to reduce total byte code size, this should never return null and if it does we will see it the next line but the real stack trace will matter in the chunk engine
++            return chunk.getBlockState(x, y, z);
+         }
+     }
+
+diff --git a/net/minecraft/world/level/block/SpreadingSnowyDirtBlock.java b/net/minecraft/world/level/block/SpreadingSnowyDirtBlock.java
+index b11c6d76cb9df1f92a4581646929d0dc79ec3e4a..d6294d5dfb32762b35f306f5a79575dbe083f26e 100644
+--- a/net/minecraft/world/level/block/SpreadingSnowyDirtBlock.java
++++ b/net/minecraft/world/level/block/SpreadingSnowyDirtBlock.java
+@@ -22,8 +22,11 @@ public abstract class SpreadingSnowyDirtBlock extends SnowyDirtBlock {
+     }
+     private static boolean canBeGrass(net.minecraft.world.level.chunk.ChunkAccess chunk, BlockState state, LevelReader level, BlockPos pos) {
+         // Paper end - Perf: optimize dirt and snow spreading
+-        BlockPos blockPos = pos.above();
+-        BlockState blockState = chunk.getBlockState(blockPos); // Paper - Perf: optimize dirt and snow spreading
++        return canBeGrass(state, chunk.getBlockState(pos.getX(), pos.getY() + 1, pos.getZ()));
++    }
++
++    // Lattice：单次传播判定复用上方状态；不能跨插件事件或下一次尝试缓存。
++    private static boolean canBeGrass(BlockState state, BlockState blockState) {
+         if (blockState.is(Blocks.SNOW) && blockState.getValue(SnowLayerBlock.LAYERS) == 1) {
+             return true;
+         } else if (blockState.getFluidState().getAmount() == 8) {
+@@ -44,15 +47,29 @@ public abstract class SpreadingSnowyDirtBlock extends SnowyDirtBlock {
+
+     private static boolean canPropagate(net.minecraft.world.level.chunk.ChunkAccess chunk, BlockState state, LevelReader level, BlockPos pos) {
+         // Paper end - Perf: optimize dirt and snow spreading
+-        BlockPos blockPos = pos.above();
+-        return canBeGrass(chunk, state, level, pos) && !chunk.getFluidState(blockPos).is(FluidTags.WATER); // Paper - Perf: optimize dirt and snow spreading
++        return canPropagate(state, chunk.getBlockState(pos.getX(), pos.getY() + 1, pos.getZ()));
++    }
++
++    private static boolean canPropagate(BlockState state, BlockState aboveState) {
++        return canBeGrass(state, aboveState) && !aboveState.getFluidState().is(FluidTags.WATER);
++    }
++
++    private static int lattice$getBrightness(ServerLevel level, BlockPos pos, net.minecraft.world.level.chunk.LevelChunk chunk) {
++        // 与 LevelReader.getMaxLocalRawBrightness 保持相同边界；此处尚未进入插件事件。
++        final int ambientDarkness = level.getSkyDarken();
++        if (pos.getX() < -30000000 || pos.getZ() < -30000000 || pos.getX() >= 30000000 || pos.getZ() >= 30000000) {
++            return 15;
++        }
++        return level.getLightEngine().starlight$getLightEngine().getRawBrightness(pos, ambientDarkness, chunk);
+     }
+
+     @Override
+     protected void randomTick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
+         if (this instanceof GrassBlock && level.paperConfig().tickRates.grassSpread != 1 && (level.paperConfig().tickRates.grassSpread < 1 || (net.minecraft.server.MinecraftServer.currentTick + pos.hashCode()) % level.paperConfig().tickRates.grassSpread != 0)) { return; } // Paper - Configurable random tick rates for blocks
+         // Paper start - Perf: optimize dirt and snow spreading
+-        final net.minecraft.world.level.chunk.ChunkAccess cachedBlockChunk = level.getChunkIfLoaded(pos);
++        // Leaf 0253 适配（hayanesuru，MIT）：使用 Lattice 现有安全入口，不引入 0251 非同步镜像。
++        // https://github.com/Winds-Studio/Leaf/blob/fcbabf5412325fdf54c8ded71f3117b4b930bbbc/leaf-server/minecraft-patches/features/0253-optimize-get-chunk.patch
++        final net.minecraft.world.level.chunk.LevelChunk cachedBlockChunk = level.getChunkSource().getChunkAtIfLoadedImmediately(pos.getX() >> 4, pos.getZ() >> 4);
+         if (cachedBlockChunk == null) { // Is this needed?
+             return;
+         }
+@@ -66,7 +83,7 @@ public abstract class SpreadingSnowyDirtBlock extends SnowyDirtBlock {
+             // CraftBukkit end
+             level.setBlockAndUpdate(pos, Blocks.DIRT.defaultBlockState());
+         } else {
+-            if (level.getMaxLocalRawBrightness(pos.above()) >= 9) {
++            if (lattice$getBrightness(level, pos.above(), cachedBlockChunk) >= 9) {
+                 BlockState blockState = this.defaultBlockState();
+
+                 for (int i = 0; i < 4; i++) {
+@@ -82,8 +99,11 @@ public abstract class SpreadingSnowyDirtBlock extends SnowyDirtBlock {
+                     } else {
+                         access = level.getChunkAt(blockPos);
+                     }
+-                    if (access.getBlockState(blockPos).is(Blocks.DIRT) && SpreadingSnowyDirtBlock.canPropagate(access, blockState, level, blockPos)) {
+-                        org.bukkit.craftbukkit.event.CraftEventFactory.handleBlockSpreadEvent(level, pos, blockPos, blockState.setValue(SNOWY, isSnowySetting(access.getBlockState(blockPos.above()))), Block.UPDATE_ALL); // CraftBukkit
++                    if (access.getBlockState(blockPos).is(Blocks.DIRT)) {
++                        final BlockState aboveState = access.getBlockState(blockPos.getX(), blockPos.getY() + 1, blockPos.getZ());
++                        if (SpreadingSnowyDirtBlock.canPropagate(blockState, aboveState)) {
++                            org.bukkit.craftbukkit.event.CraftEventFactory.handleBlockSpreadEvent(level, pos, blockPos, blockState.setValue(SNOWY, isSnowySetting(aboveState)), Block.UPDATE_ALL); // CraftBukkit
++                        }
+                         // Paper end - Perf: optimize dirt and snow spreading
+                     }
+                 }
