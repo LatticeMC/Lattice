@@ -3,7 +3,6 @@ package com.latticemc.lattice.world;
 import ca.spottedleaf.moonrise.common.list.ReferenceList;
 import ca.spottedleaf.moonrise.common.list.ShortList;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-import it.unimi.dsi.fastutil.longs.LongArrays;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.profiling.Profiler;
@@ -20,18 +19,14 @@ import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import net.minecraft.world.level.material.FluidState;
 
 /**
- * 默认关闭的加权系统采样实验。静态列表保持期望刻数，但分布、相关性和成长行为与原版不同。
- * 列表大小每轮直接读取 Moonrise 的统计，不持有可能漏失效的跨 tick 计数缓存。
+ * 默认关闭的逐 section 抽样实验。每个非空 section 保留原版的独立 Bernoulli
+ * 试验分布，同时用一个 long 携带最多五次 12-bit 命中试验。
  */
 public final class RandomTickSystem {
     public static final boolean ENABLED = Boolean.getBoolean("lattice.optimizeRandomTick");
-    static final long SCALE = 1L << 20;
     private static final int SECTION_BITS = 16;
     private static final int SECTION_MASK = 0xFFFF;
-    private static final long CHUNK_WEIGHT_SCALE = SCALE / 4096 * 4;
     private final LongArrayList queue = new LongArrayList();
-    private long[] samples = LongArrays.EMPTY_ARRAY;
-    private long[] weights = LongArrays.EMPTY_ARRAY;
     // 选择流不能与天气、位置和方块回调共用，否则分支消耗会反馈到下一次选择。
     private final RandomSource selectionRandom;
 
@@ -86,41 +81,25 @@ public final class RandomTickSystem {
     LongArrayList selectSections(final LevelChunk[] chunks, final int size, final int speed) {
         this.queue.clear();
         if (speed <= 0 || size == 0) return this.queue;
-        int sampleCount = 0;
-        long totalWeight = 0L;
-        final long scale = speed * CHUNK_WEIGHT_SCALE;
         for (int chunkIndex = 0; chunkIndex < size; ++chunkIndex) {
-            if (this.selectionRandom.nextInt(4) != 0) continue;
             final LevelChunkSection[] sections = chunks[chunkIndex].getSections();
-            this.samples = LongArrays.grow(this.samples, sampleCount + sections.length, sampleCount);
-            this.weights = LongArrays.grow(this.weights, sampleCount + sections.length, sampleCount);
             for (int sectionIndex = 0; sectionIndex < sections.length; ++sectionIndex) {
                 final int count = sections[sectionIndex].moonrise$getTickingBlockList().size();
                 if (count == 0) continue;
-                final long weight = count * scale;
-                totalWeight += weight;
-                this.samples[sampleCount] = ((long) chunkIndex << SECTION_BITS) | sectionIndex;
-                this.weights[sampleCount++] = weight;
+                int remaining = speed;
+                while (remaining > 0) {
+                    final long bits = this.selectionRandom.nextLong();
+                    final int trials = Math.min(5, remaining);
+                    for (int trial = 0; trial < trials; ++trial) {
+                        if (((bits >>> (trial * 12)) & 4095L) < count) {
+                            this.queue.add(((long) chunkIndex << SECTION_BITS) | sectionIndex);
+                        }
+                    }
+                    remaining -= trials;
+                }
             }
         }
-        if (totalWeight != 0L) {
-            sample(this.samples, this.weights, totalWeight, this.selectionRandom.nextInt((int) SCALE), this.queue);
-        }
         return this.queue;
-    }
-
-    // 对半开区间作固定相位采样，期望命中数恰为 weight / SCALE。
-    static void sample(final long[] samples, final long[] weights, final long totalWeight,
-                       final long phase, final LongArrayList output) {
-        if (phase >= totalWeight) return;
-        int index = 0;
-        long accumulated = weights[0];
-        for (long point = phase; point < totalWeight;) {
-            while (point >= accumulated) accumulated += weights[++index];
-            output.add(samples[index]);
-            if (totalWeight - point <= SCALE) break; // 同时避免最后一步 long 加法溢出。
-            point += SCALE;
-        }
     }
 
     static void tickBlock(final ServerLevel world, final LevelChunk chunk, final int sectionIndex,
@@ -136,7 +115,11 @@ public final class RandomTickSystem {
         final BlockPos pos = new BlockPos((location & 15) | chunkPos.getMinBlockX(),
             (location >>> 8) | ((minSection + sectionIndex) << 4),
             ((location >>> 4) & 15) | chunkPos.getMinBlockZ());
-        state.randomTick(world, pos, random);
+        if (state.getBlock() instanceof LatticeTickingBlock optimized) {
+            optimized.lattice$randomTick(state, world, pos, random, chunk, section);
+        } else {
+            state.randomTick(world, pos, random);
+        }
         if (doubleTickFluids) {
             final FluidState fluid = state.getFluidState();
             if (fluid.isRandomlyTicking()) fluid.randomTick(world, pos, random);

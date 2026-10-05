@@ -135,6 +135,7 @@ public final class ChunkCacheLookupBenchmark {
         // 冷查询每轮只遍历每个正值一次；只重置逻辑缓存，不声称清空 CPU cache。
         if (pattern.equals("churn") || pattern.equals("cold")) state.reset(keys, values[0]);
         int kind = switch (pattern) { case "repeat" -> 0; case "locality" -> 1; case "miss" -> 3; case "churn" -> 4; default -> 2; };
+        if (!state.full && state.optimized) state.holders.beginTick();
         long thread = Thread.currentThread().threadId(), allocation = ALLOC.getThreadAllocatedBytes(thread);
         long start = System.nanoTime(), sum = 0;
         for (int i = 0; i < iterations; i++) {
@@ -146,6 +147,7 @@ public final class ChunkCacheLookupBenchmark {
             if (value != null) sum += value.token;
         }
         long nanos = System.nanoTime() - start, bytes = ALLOC.getThreadAllocatedBytes(thread) - allocation;
+        if (!state.full && state.optimized) state.holders.endTick();
         sink = sum;
         return new Measurement(nanos, bytes, sum);
     }

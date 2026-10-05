@@ -3,37 +3,39 @@ From: sweepikun <laomgba@outlook.com>
 Date: Mon, 5 Oct 2026 12:00:00 +0800
 Subject: [PATCH] Cache chunk lookups and add experimental random ticks
 
----
- .../chunk_system/scheduling/ChunkHolderManager.java   |  9 ++++++---
- net/minecraft/server/level/ServerChunkCache.java      | 11 +++++++++--
- net/minecraft/server/level/ServerLevel.java           |  6 ++++++
- 3 files changed, 21 insertions(+), 5 deletions(-)
-
 diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
 index 41b4c5a87b5153f845421a7df8df04c9231253a8..b8a64a31f992b6c89f2cec4ecb41a3e184d7c179 100644
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
 +++ b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ChunkHolderManager.java
-@@ -80,6 +80,7 @@ public final class ChunkHolderManager {
+@@ -80,6 +80,17 @@ public final class ChunkHolderManager {
      final ChunkUnloadQueue unloadQueue;
- 
+
      private final ConcurrentLong2ReferenceChainedHashTable<NewChunkHolder> chunkHolders = ConcurrentLong2ReferenceChainedHashTable.createWithCapacity(16384, 0.25f);
 +    private final com.latticemc.lattice.util.ChunkCache<NewChunkHolder> lattice$holderCache = com.latticemc.lattice.util.ChunkCache.ENABLED ? new com.latticemc.lattice.util.ChunkCache<>(Thread.currentThread(), this.chunkHolders::get) : null;
      private final ServerLevel world;
      private final ChunkTaskScheduler taskScheduler;
      private long currentTick;
++
++    public void lattice$beginTick() {
++        if (this.lattice$holderCache != null) this.lattice$holderCache.beginTick();
++    }
++
++    public void lattice$endTick() {
++        if (this.lattice$holderCache != null) this.lattice$holderCache.endTick();
++    }
 @@ -910,11 +911,11 @@ public final class ChunkHolderManager {
      }
- 
+
      public NewChunkHolder getChunkHolder(final int chunkX, final int chunkZ) {
 -        return this.chunkHolders.get(CoordinateUtils.getChunkKey(chunkX, chunkZ));
 +        return this.getChunkHolder(CoordinateUtils.getChunkKey(chunkX, chunkZ));
      }
- 
+
      public NewChunkHolder getChunkHolder(final long position) {
 -        return this.chunkHolders.get(position);
 +        return com.latticemc.lattice.util.ChunkCache.ENABLED ? this.lattice$holderCache.get(position) : this.chunkHolders.get(position);
      }
- 
+
      public void raisePriority(final int x, final int z, final Priority priority) {
 @@ -1145,7 +1146,9 @@ public final class ChunkHolderManager {
          holder.onUnload();
@@ -44,40 +46,28 @@ index 41b4c5a87b5153f845421a7df8df04c9231253a8..b8a64a31f992b6c89f2cec4ecb41a3e1
 +        if (com.latticemc.lattice.util.ChunkCache.ENABLED) this.lattice$holderCache.invalidate(key);
 +        this.chunkHolders.remove(key);
      }
- 
+
      // note: never call while inside the chunk system, this will absolutely break everything
 diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
-index af67b07722bb0125acd081dab767d7e7b360623b..78541297380c5ea53d0d1b60f0a8aaa1fa56e95e 100644
+index af67b07722bb0125acd081dab767d7e7b360623b..f8c7e9d6b2eab9d5d8bb2b6b5f2f5c7f6b2a1a00 100644
 --- a/net/minecraft/server/level/ServerChunkCache.java
 +++ b/net/minecraft/server/level/ServerChunkCache.java
-@@ -77,7 +77,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
-     @VisibleForDebug
-     private NaturalSpawner.@Nullable SpawnState lastSpawnState;
-     // Paper start
--    public final ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<net.minecraft.world.level.chunk.LevelChunk> fullChunks = new ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<>();
-+    public final ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<net.minecraft.world.level.chunk.LevelChunk> fullChunks;
-     public int getFullChunksCount() {
-         return this.fullChunks.size();
-     }
-@@ -200,6 +200,9 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
-         this.level = level;
-         this.mainThreadProcessor = new ServerChunkCache.MainThreadExecutor(level);
-         this.mainThread = Thread.currentThread();
-+        this.fullChunks = com.latticemc.lattice.util.ChunkCache.ENABLED
-+            ? new com.latticemc.lattice.util.CachedChunkMap<>(this.mainThread)
-+            : new ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable<>();
-         Path path = levelStorageAccess.getDimensionPath(level.dimension()).resolve("data");
- 
-         try {
-@@ -591,7 +594,11 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+@@ -591,7 +591,19 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moonrise.patches.chunk_system.world.ChunkSystemServerChunkCache { // Paper - rewrite chunk system
          }
- 
+
          profiler.popPush("tickTickingChunks");
 -        this.iterateTickingChunksFaster(); // Paper - chunk tick iteration optimizations
-+        if (com.latticemc.lattice.world.RandomTickSystem.ENABLED) {
-+            this.level.lattice$randomTickSystem.tick(this.level);
-+        } else {
-+            this.iterateTickingChunksFaster(); // Paper - chunk tick iteration optimizations
++        final var lattice$holderManager = ((ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemServerLevel)this.level)
++            .moonrise$getChunkTaskScheduler().chunkHolderManager;
++        if (com.latticemc.lattice.util.ChunkCache.ENABLED) lattice$holderManager.lattice$beginTick();
++        try {
++            if (com.latticemc.lattice.world.RandomTickSystem.ENABLED) {
++                this.level.lattice$randomTickSystem.tick(this.level);
++            } else {
++                this.iterateTickingChunksFaster(); // Paper - chunk tick iteration optimizations
++            }
++        } finally {
++            if (com.latticemc.lattice.util.ChunkCache.ENABLED) lattice$holderManager.lattice$endTick();
 +        }
          if (flag) {
              profiler.popPush("customSpawners");
@@ -86,10 +76,10 @@ diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/
 index 48ff3c35af86a0f41e1c7ccae1ac302598243aac..83ff819f1586e50e2b5242139f1b79fbccd59249 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -979,6 +979,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -979,6 +979,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLevel
      // Paper start - optimise random ticking
      private final ca.spottedleaf.moonrise.common.util.SimpleThreadUnsafeRandom simpleRandom = new ca.spottedleaf.moonrise.common.util.SimpleThreadUnsafeRandom(net.minecraft.world.level.levelgen.RandomSupport.generateUniqueSeed());
- 
+
 +    public final com.latticemc.lattice.world.RandomTickSystem lattice$randomTickSystem = com.latticemc.lattice.world.RandomTickSystem.ENABLED ? new com.latticemc.lattice.world.RandomTickSystem() : null;
 +
 +    public final net.minecraft.world.level.levelgen.BitRandomSource lattice$getRandomTickRandom() {
