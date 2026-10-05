@@ -38,6 +38,8 @@ class LatticeConfigTestSuite {
         assertTrue(contents.contains("# Legacy JVM property: -Dlattice.disable"));
         assertTrue(contents.contains("disable-native"));
         assertEquals("false", System.getProperty("lattice.disable"));
+        assertEquals("false", System.getProperty("lattice.optimizeRandomTick"));
+        assertEquals("false", System.getProperty("lattice.chunkMapCache"));
         assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("1024", System.getProperty("lattice.nativeDensityFunctionParityInterval"));
         assertEquals("false", System.getProperty("lattice.nativeIocp"));
@@ -72,6 +74,8 @@ class LatticeConfigTestSuite {
                 brain:
                   minimum-behaviors: 300
                 performance:
+                  chunk-map-cache: true
+                  optimize-random-tick: true
                   los:
                     section-lookup-reuse: false
                 """);
@@ -88,6 +92,8 @@ class LatticeConfigTestSuite {
         assertEquals("2048", System.getProperty("lattice.nativeEntityVisibilityBatchMinEntities"));
         assertEquals("2097152", System.getProperty("lattice.nativeEntityVisibilityBatchMaxScratchBytes"));
         assertEquals("false", System.getProperty("lattice.nativeLosSectionLookupReuse"));
+        assertEquals("true", System.getProperty("lattice.chunkMapCache"));
+        assertEquals("true", System.getProperty("lattice.optimizeRandomTick"));
     }
 
     @Test

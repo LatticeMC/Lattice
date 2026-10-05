@@ -324,6 +324,29 @@ tasks.test {
     jvmArgumentProviders.add(provider)
 }
 
+val chunkLookupBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "对照单项区块查询缓存；每个 JVM 只运行 original 或 cached 一种模式"
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.util.ChunkCacheLookupBenchmark")
+    workingDir = temporaryDir
+    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
+    systemProperty("lattice.benchMode", providers.gradleProperty("benchMode").getOrElse("cached"))
+}
+
+val randomTickBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "对照原随机刻循环和实验加权选择器，包含轻量方块回调"
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.world.RandomTickBenchmark")
+    workingDir = temporaryDir
+    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
+    systemProperty("lattice.benchReverse", providers.gradleProperty("benchReverse").getOrElse("false"))
+    systemProperty("lattice.randomBenchMode", providers.gradleProperty("randomBenchMode").getOrElse("weighted"))
+}
+
 val entityVisibilityBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "Benchmark the complete Java and JNI tracked-entity visibility wrappers"

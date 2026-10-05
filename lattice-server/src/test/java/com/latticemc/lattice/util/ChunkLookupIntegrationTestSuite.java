@@ -1,0 +1,71 @@
+package com.latticemc.lattice.util;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static com.latticemc.lattice.world.RandomTickTestSupport.*;
+import ca.spottedleaf.concurrentutil.map.ConcurrentLong2ReferenceChainedHashTable;
+import ca.spottedleaf.moonrise.patches.chunk_system.scheduling.ChunkHolderManager;
+import ca.spottedleaf.moonrise.patches.chunk_system.scheduling.NewChunkHolder;
+import net.minecraft.server.level.ServerChunkCache;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodInsnNode;
+
+class ChunkLookupIntegrationTestSuite {
+    @Test void actualServerEntryPointsReturnReplacedAndUnloadedChunks() throws Exception {
+        ServerChunkCache server=allocate(ServerChunkCache.class);
+        var map=new CachedChunkMap<LevelChunk>(Thread.currentThread());
+        field(server,ServerChunkCache.class,"fullChunks",map);
+        LevelChunk first=allocate(LevelChunk.class),second=allocate(LevelChunk.class);
+        server.moonrise$setFullChunk(-2,3,first);
+        assertSame(first,server.moonrise$getFullChunkIfLoaded(-2,3));
+        assertSame(first,server.getChunkAtIfLoadedImmediately(-2,3));
+        assertSame(first,server.getChunk(-2,3,ChunkStatus.FULL,false));
+        assertSame(first,server.getChunkNow(-2,3));
+        server.fullChunks.compute(ChunkPos.asLong(-2,3),(key,old)->second);
+        assertSame(second,server.getChunkAtIfLoadedImmediately(-2,3));
+        ChunkCacheTestSuite.runWorker(()->server.fullChunks.replace(ChunkPos.asLong(-2,3),first));
+        assertSame(first,server.getChunkNow(-2,3));
+        server.moonrise$setFullChunk(-2,3,null);
+        assertNull(server.moonrise$getFullChunkIfLoaded(-2,3));
+        assertNull(server.getChunk(-2,3,ChunkStatus.FULL,false));
+        assertEquals(ConcurrentLong2ReferenceChainedHashTable.class,ServerChunkCache.class.getField("fullChunks").getType());
+    }
+
+    @Test void actualHolderLookupSeesAsynchronousCreationAndInvalidation() throws Exception {
+        ChunkHolderManager manager=allocate(ChunkHolderManager.class);
+        var source=new ConcurrentLong2ReferenceChainedHashTable<NewChunkHolder>();
+        var reads=new java.util.concurrent.atomic.AtomicInteger();
+        var cache=new ChunkCache<NewChunkHolder>(Thread.currentThread(), key -> { reads.incrementAndGet(); return source.get(key); });
+        field(manager,ChunkHolderManager.class,"chunkHolders",source);
+        field(manager,ChunkHolderManager.class,"lattice$holderCache",cache);
+        assertNull(manager.getChunkHolder(-1,2));
+        NewChunkHolder holder=allocate(NewChunkHolder.class);long key=ChunkPos.asLong(-1,2);
+        ChunkCacheTestSuite.runWorker(()->source.put(key,holder));
+        assertSame(holder,manager.getChunkHolder(key));assertSame(holder,manager.getChunkHolder(-1,2));
+        assertEquals(ChunkCache.ENABLED ? 2 : 0,reads.get(),"实际入口应按开关使用缓存或直接查询");
+        cache.invalidate(key);source.remove(key);assertNull(manager.getChunkHolder(key));
+    }
+
+    @Test void removalHookAndRandomSchedulerBranchesArePresent() throws Exception {
+        ClassNode holder=new ClassNode();new ClassReader(ChunkHolderManager.class.getName()).accept(holder,0);
+        var remove=holder.methods.stream().filter(m->m.name.equals("removeChunkHolder")).findFirst().orElseThrow();
+        int invalidate=-1,delete=-1,index=0;
+        for(var instruction:remove.instructions) {
+            if(instruction instanceof MethodInsnNode call) {
+                if(call.owner.endsWith("/ChunkCache")&&call.name.equals("invalidate"))invalidate=index;
+                if(call.owner.endsWith("/ConcurrentLong2ReferenceChainedHashTable")&&call.name.equals("remove"))delete=index;
+            }index++;
+        }
+        assertTrue(invalidate>=0 && delete>invalidate);
+        ClassNode server=new ClassNode();new ClassReader(ServerChunkCache.class.getName()).accept(server,0);
+        long weighted=server.methods.stream().flatMap(m->java.util.stream.StreamSupport.stream(m.instructions.spliterator(),false))
+            .filter(i->i instanceof MethodInsnNode c && c.owner.endsWith("/RandomTickSystem")&&c.name.equals("tick")).count();
+        long original=server.methods.stream().flatMap(m->java.util.stream.StreamSupport.stream(m.instructions.spliterator(),false))
+            .filter(i->i instanceof MethodInsnNode c && c.name.equals("iterateTickingChunksFaster")).count();
+        assertEquals(1,weighted);assertEquals(1,original);
+    }
+}
