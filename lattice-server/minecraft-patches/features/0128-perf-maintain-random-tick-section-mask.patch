@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Tue, 6 Oct 2026 05:22:22 +0800
+Subject: [PATCH] perf: maintain random tick section mask
+
+
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 3f91f6a..2664906 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -129,6 +129,31 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+     private final int maxSection;
+     private final boolean debug;
+     private final BlockState defaultBlockState;
++    private long lattice$randomTickingSections;
++
++    public final long lattice$getRandomTickingSections() {
++        return this.lattice$randomTickingSections;
++    }
++
++    final void lattice$setRandomTickingSection(final int sectionIndex, final boolean nonEmpty) {
++        final long bit = 1L << sectionIndex;
++        if (nonEmpty) {
++            this.lattice$randomTickingSections |= bit;
++        } else {
++            this.lattice$randomTickingSections &= ~bit;
++        }
++    }
++
++    private void lattice$bindRandomTickSections() {
++        if (this.sections.length > Long.SIZE) return;
++        long mask = 0L;
++        for (int sectionIndex = 0; sectionIndex < this.sections.length; ++sectionIndex) {
++            final LevelChunkSection section = this.sections[sectionIndex];
++            section.lattice$bindRandomTickOwner(this, sectionIndex);
++            if (section.moonrise$getTickingBlockList().size() != 0) mask |= 1L << sectionIndex;
++        }
++        this.lattice$randomTickingSections = mask;
++    }
+ 
+     @Override
+     public final BlockState moonrise$getBlock(final int x, final int y, final int z) {
+@@ -171,6 +196,7 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+         final boolean empty = ((Object)this instanceof EmptyLevelChunk);
+         this.debug = !empty && this.level.isDebug();
+         this.defaultBlockState = empty ? VOID_AIR_BLOCKSTATE : AIR_BLOCKSTATE;
++        if (com.latticemc.lattice.world.RandomTickSystem.ENABLED) this.lattice$bindRandomTickSections();
+         // Paper end - get block chunk optimisation
+     }
+ 
+diff --git a/net/minecraft/world/level/chunk/LevelChunkSection.java b/net/minecraft/world/level/chunk/LevelChunkSection.java
+index 381f26b..dffc945 100644
+--- a/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -32,6 +32,13 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+     private static final short CLIENT_FORCED_SPECIAL_COLLIDING_BLOCKS = (short)9999;
+     private short specialCollidingBlocks;
+     private final ca.spottedleaf.moonrise.common.list.ShortList tickingBlocks = new ca.spottedleaf.moonrise.common.list.ShortList();
++    private LevelChunk lattice$randomTickOwner;
++    private int lattice$randomTickSectionIndex = -1;
++
++    final void lattice$bindRandomTickOwner(final LevelChunk owner, final int sectionIndex) {
++        this.lattice$randomTickOwner = owner;
++        this.lattice$randomTickSectionIndex = sectionIndex;
++    }
+ 
+     @Override
+     public final boolean moonrise$hasSpecialCollidingBlocks() {
+@@ -122,6 +129,12 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+             } else {
+                 tickingBlocks.add(position);
+             }
++
++            if (this.lattice$randomTickOwner != null) {
++                this.lattice$randomTickOwner.lattice$setRandomTickingSection(
++                    this.lattice$randomTickSectionIndex, tickingBlocks.size() != 0
++                );
++            }
+         }
+     }
+     // Paper end - block counting
+@@ -249,6 +262,11 @@ public class LevelChunkSection implements ca.spottedleaf.moonrise.patches.block_
+                 }
+             }
+         }
++        if (this.lattice$randomTickOwner != null) {
++            this.lattice$randomTickOwner.lattice$setRandomTickingSection(
++                this.lattice$randomTickSectionIndex, this.tickingBlocks.size() != 0
++            );
++        }
+         // Paper end - block counting
+     }
+ 

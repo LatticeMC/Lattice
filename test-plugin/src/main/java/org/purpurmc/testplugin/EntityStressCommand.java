@@ -83,6 +83,7 @@ final class EntityStressCommand extends Command {
     private boolean prepared;
     private boolean running;
     private long startedAtNanos;
+    private java.util.Random seededRandom;
 
     private boolean restoreMobSpawning;
     private boolean restoreDaylightCycle;
@@ -143,6 +144,9 @@ final class EntityStressCommand extends Command {
         }
 
         this.stopInternal();
+
+        final Long seed = Long.getLong("lattice.entityStressSeed");
+        this.seededRandom = seed == null ? null : new java.util.Random(seed);
 
         this.world = this.plugin.getServer().getWorlds().getFirst();
         this.targetZombies = zombies;
@@ -338,14 +342,14 @@ final class EntityStressCommand extends Command {
     }
 
     private Location randomLocation() {
-        final ThreadLocalRandom random = ThreadLocalRandom.current();
+        final java.util.random.RandomGenerator random = this.seededRandom == null ? ThreadLocalRandom.current() : this.seededRandom;
         final int cx = this.minChunkX + random.nextInt(this.chunkSide);
         final int cz = this.minChunkZ + random.nextInt(this.chunkSide);
         return this.locationInChunk(cx, cz);
     }
 
     private Location locationInChunk(final int cx, final int cz) {
-        final ThreadLocalRandom random = ThreadLocalRandom.current();
+        final java.util.random.RandomGenerator random = this.seededRandom == null ? ThreadLocalRandom.current() : this.seededRandom;
         final double x = (cx << 4) + random.nextDouble() * 16.0D;
         final double z = (cz << 4) + random.nextDouble() * 16.0D;
         final Location location = new Location(this.world, x, 0.0D, z);

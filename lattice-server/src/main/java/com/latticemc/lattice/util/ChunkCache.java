@@ -47,13 +47,10 @@ public final class ChunkCache<V> {
         if (Thread.currentThread() != this.owner) {
             throw new IllegalStateException("Chunk cache owner mismatch");
         }
-        if (++this.generation == 0) {
-            Arrays.fill(this.generations, 0);
-            this.generation = 1;
-        }
-        this.size = 0;
+        this.advanceGeneration();
         this.active = true;
-        this.disabled = false;
+        // An off-thread invalidation may precede an in-flight source mutation.
+        // Never re-enable this instance at a window boundary without a completion protocol.
     }
 
     public void endTick() {
@@ -61,6 +58,8 @@ public final class ChunkCache<V> {
             throw new IllegalStateException("Chunk cache owner mismatch");
         }
         this.active = false;
+        // Generation stamps invalidate lookups, but do not release unloaded holder graphs.
+        Arrays.fill(this.values, null);
     }
 
     public void invalidateAll() {
@@ -68,12 +67,7 @@ public final class ChunkCache<V> {
             this.disabled = true;
             return;
         }
-        this.size = 0;
-        this.generation++;
-        if (this.generation == 0) {
-            Arrays.fill(this.generations, 0);
-            this.generation = 1;
-        }
+        this.advanceGeneration();
     }
 
     public void invalidate(final long key) {
@@ -81,11 +75,16 @@ public final class ChunkCache<V> {
             this.disabled = true;
             return;
         }
-        final int slot = this.find(key);
-        if (slot >= 0) {
-            this.generations[slot] = 0;
-            this.values[slot] = null;
-            this.size--;
+        // Clearing one open-addressing slot would break the probe chain. Mutations are rare,
+        // so invalidate the current generation in O(1) and keep all lookups correct.
+        this.advanceGeneration();
+    }
+
+    private void advanceGeneration() {
+        this.size = 0;
+        if (++this.generation == 0) {
+            Arrays.fill(this.generations, 0);
+            this.generation = 1;
         }
     }
 

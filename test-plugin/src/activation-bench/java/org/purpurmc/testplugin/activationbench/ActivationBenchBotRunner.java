@@ -197,7 +197,6 @@ public final class ActivationBenchBotRunner {
             boolean ready = true;
             for (BotState state : states) {
                 state.recordProtocolStateIfChanged();
-                state.sendClientInformationIfConfiguration();
                 if (!state.session.isConnected()
                     || state.session.getPacketProtocol().getOutboundState() != ProtocolState.GAME) {
                     ready = false;
@@ -485,6 +484,10 @@ public final class ActivationBenchBotRunner {
                     || current.getPacketProtocol().getOutboundState() != ProtocolState.CONFIGURATION) {
                     return;
                 }
+                // Send CONFIGURATION packets in the receive callback, before the reply
+                // that lets the server finish configuration. A polling-thread send can
+                // otherwise race with the finish ACK and be decoded as a GAME packet.
+                sendClientInformationIfConfiguration();
                 current.send(new ServerboundSelectKnownPacks(Collections.emptyList()));
                 knownPacksResponseSent = true;
                 connectionEvents.add(new ConnectionEvent(Instant.now().toString(), "known_packs_response_sent"));

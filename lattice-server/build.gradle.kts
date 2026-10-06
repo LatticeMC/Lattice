@@ -354,6 +354,7 @@ val chunkReadBenchmark by tasks.registering(JavaExec::class) {
     jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
     systemProperty("lattice.chunkReadMode", if (baseline.isPresent) "baseline" else "fixed")
     systemProperty("lattice.chunkReadReverse", providers.gradleProperty("chunkReadReverse").getOrElse("false"))
+    systemProperty("lattice.chunkReadKnownChunk", providers.gradleProperty("chunkReadKnownChunk").getOrElse("false"))
     doFirst {
         if (baseline.isPresent) {
             listOf("net/minecraft/world/level/Level.class", "net/minecraft/world/level/block/SpreadingSnowyDirtBlock.class",
@@ -377,14 +378,14 @@ val chunkLookupBenchmark by tasks.registering(JavaExec::class) {
 
 val randomTickBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
-    description = "对照原随机刻循环和实验加权选择器，包含轻量方块回调"
+    description = "对照原随机刻循环和逐 section 精确选择器，包含轻量方块回调"
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("com.latticemc.lattice.world.RandomTickBenchmark")
     workingDir = temporaryDir
     jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
     systemProperty("lattice.benchReverse", providers.gradleProperty("benchReverse").getOrElse("false"))
-    systemProperty("lattice.randomBenchMode", providers.gradleProperty("randomBenchMode").getOrElse("weighted"))
+    systemProperty("lattice.randomBenchMode", providers.gradleProperty("randomBenchMode").getOrElse("exact"))
 }
 
 val entityVisibilityBenchmark by tasks.registering(JavaExec::class) {

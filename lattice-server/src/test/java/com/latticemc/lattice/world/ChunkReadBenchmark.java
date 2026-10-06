@@ -31,6 +31,7 @@ public final class ChunkReadBenchmark {
     private static final ThreadMXBean ALLOC = (ThreadMXBean) ManagementFactory.getThreadMXBean();
     private static volatile long sink;
     private static final int ITERATIONS = 100_000, WARMUP = 8, SAMPLES = 15;
+    private static final boolean KNOWN_CHUNK = Boolean.getBoolean("lattice.chunkReadKnownChunk");
 
     public static void main(String[] args) {
         Locale.setDefault(Locale.ROOT); ALLOC.setThreadAllocatedMemoryEnabled(true);
@@ -39,7 +40,8 @@ public final class ChunkReadBenchmark {
             Level.class.getProtectionDomain().getCodeSource().getLocation(),
             net.minecraft.world.level.block.SpreadingSnowyDirtBlock.class.getProtectionDomain().getCodeSource().getLocation(),
             ca.spottedleaf.moonrise.patches.starlight.light.StarLightInterface.class.getProtectionDomain().getCodeSource().getLocation(), WARMUP, SAMPLES);
-        String[] patterns = {"level", "grass", "water", "dark", "unloaded"};
+        String[] patterns = KNOWN_CHUNK ? new String[]{"grass", "water", "dark"} : new String[]{"level", "grass", "water", "dark", "unloaded"};
+        System.out.println("CHUNK_READ_CONTEXT knownChunk=" + KNOWN_CHUNK);
         boolean reverse = Boolean.getBoolean("lattice.chunkReadReverse");
         for (int p = 0; p < patterns.length; p++) {
             String pattern = patterns[reverse ? patterns.length - 1 - p : p];
@@ -82,7 +84,16 @@ public final class ChunkReadBenchmark {
         for (int i = 0; i < ITERATIONS; i++) {
             BlockPos pos = f.positions[i & (f.positions.length - 1)];
             if (read) sum += Block.getId(f.world.getBlockState(pos)) + 1;
-            else { Blocks.GRASS_BLOCK.defaultBlockState().randomTick(f.world, pos, random); sum += random.nextInt(); }
+            else {
+                if (KNOWN_CHUNK) {
+                    LevelChunk chunk = f.chunks[(i & (f.positions.length - 1)) >>> 2];
+                    ((LatticeTickingBlock) Blocks.GRASS_BLOCK).lattice$randomTick(Blocks.GRASS_BLOCK.defaultBlockState(),
+                        f.world, pos, random, chunk, chunk.getSection(0));
+                } else {
+                    Blocks.GRASS_BLOCK.defaultBlockState().randomTick(f.world, pos, random);
+                }
+                sum += random.nextInt();
+            }
         }
         long nanos = System.nanoTime() - start, bytes = ALLOC.getThreadAllocatedBytes(tid) - before;
         sink = sum; return new Measurement(nanos, bytes, sum);
@@ -93,6 +104,7 @@ public final class ChunkReadBenchmark {
     private static final class Fixture {
         final BenchWorld world = RandomTickTestSupport.allocate(BenchWorld.class);
         final BlockPos[] positions;
+        final LevelChunk[] chunks;
         Fixture(String pattern, int count) {
             world.source = RandomTickTestSupport.allocate(ServerChunkCache.class);
             var full = new ConcurrentLong2ReferenceChainedHashTable<LevelChunk>();
@@ -108,9 +120,11 @@ public final class ChunkReadBenchmark {
             RandomTickTestSupport.field(scheduler, ChunkTaskScheduler.class, "chunkHolderManager", manager);
             RandomTickTestSupport.field(world, ServerLevel.class, "chunkTaskScheduler", scheduler);
             positions = new BlockPos[count * 4];
+            chunks = new LevelChunk[count];
             for (int i = 0; i < count; i++) {
                 int x = (i % 32) * 2 - 32, z = (i / 32) * 2 - 32;
                 LevelChunk chunk = RandomTickTestSupport.chunk(x, z, 2, 0);
+                chunks[i] = chunk;
                 RandomTickTestSupport.field(chunk, ChunkAccess.class, "levelHeightAccessor", LevelHeightAccessor.create(0, 32));
                 RandomTickTestSupport.field(chunk, ChunkAccess.class, "locX", x); RandomTickTestSupport.field(chunk, ChunkAccess.class, "locZ", z);
                 BlockState floor = pattern.equals("water") ? Blocks.DIRT.defaultBlockState() : Blocks.GRASS_BLOCK.defaultBlockState();

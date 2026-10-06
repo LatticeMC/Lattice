@@ -95,8 +95,35 @@ class GrassLookupTestSuite {
         verifyNoInteractions(f.random, f.light);
     }
 
-    @Test void nonDirtTargetsDoNotReadAboveAndPreserveRandomConsumption() {
-        GrassFixture f = new GrassFixture();
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void grassSpreadDisabledSkipsBothEntrypoints(boolean knownChunk) {
+        GrassFixture f = new GrassFixture(knownChunk);
+        f.world.paperConfig().tickRates.grassSpread = 0;
+        f.tick();
+        verifyNoInteractions(f.random, f.light);
+        verify(f.source, never()).getChunkAtIfLoadedImmediately(anyInt(), anyInt());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void crossChunkAttemptsStillUseLiveWorldLookup(boolean knownChunk) {
+        GrassFixture f = new GrassFixture(knownChunk);
+        BlockPos edge = new BlockPos(15, 3, 8), target = new BlockPos(16, 3, 8);
+        LevelChunk neighbor = mock(LevelChunk.class);
+        when(f.world.getChunkAt(target)).thenReturn(neighbor);
+        when(neighbor.getBlockState(target)).thenReturn(Blocks.STONE.defaultBlockState());
+        if (knownChunk) {
+            ((LatticeTickingBlock) Blocks.GRASS_BLOCK).lattice$randomTick(Blocks.GRASS_BLOCK.defaultBlockState(),
+                f.world, edge, f.random, f.chunk, null);
+        } else {
+            Blocks.GRASS_BLOCK.defaultBlockState().randomTick(f.world, edge, f.random);
+        }
+        verify(f.world, times(4)).getChunkAt(target);
+        verify(neighbor, times(4)).getBlockState(target);
+        verify(f.chunk, never()).getBlockState(target);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true}) void nonDirtTargetsDoNotReadAboveAndPreserveRandomConsumption(boolean knownChunk) {
+        GrassFixture f = new GrassFixture(knownChunk);
         when(f.chunk.getBlockState(TARGET)).thenReturn(Blocks.STONE.defaultBlockState());
         f.tick();
         verify(f.chunk, times(4)).getBlockState(TARGET);
@@ -107,8 +134,8 @@ class GrassLookupTestSuite {
         verify(f.light, never()).getRawBrightness(any(), anyInt());
     }
 
-    @Test void propagationReadsAboveOncePerAttemptAndHonorsEventChanges() {
-        GrassFixture f = new GrassFixture();
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true}) void propagationReadsAboveOncePerAttemptAndHonorsEventChanges(boolean knownChunk) {
+        GrassFixture f = new GrassFixture(knownChunk);
         BlockState[] above = {Blocks.AIR.defaultBlockState()};
         // Bootstrap 不加载数据包标签；在此依赖边界提供已标记的雪状态，不改全局注册表。
         BlockState snow = mock(BlockState.class);
@@ -135,15 +162,15 @@ class GrassLookupTestSuite {
         verify(f.random, times(4)).nextInt(5);
     }
 
-    @Test void waterAndBlockedTargetsDoNotPropagate() {
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true}) void waterAndBlockedTargetsDoNotPropagate(boolean knownChunk) {
         for (BlockState above : List.of(Blocks.WATER.defaultBlockState(), Blocks.STONE.defaultBlockState())) {
-            GrassFixture f = new GrassFixture(); when(f.chunk.getBlockState(TARGET.above())).thenReturn(above);
+            GrassFixture f = new GrassFixture(knownChunk); when(f.chunk.getBlockState(TARGET.above())).thenReturn(above);
             try (var events = mockStatic(CraftEventFactory.class)) { f.tick(); events.verifyNoInteractions(); }
         }
     }
 
-    @Test void flowingWaterTagStillPreventsPropagation() {
-        GrassFixture f = new GrassFixture();
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true}) void flowingWaterTagStillPreventsPropagation(boolean knownChunk) {
+        GrassFixture f = new GrassFixture(knownChunk);
         BlockState above = mock(BlockState.class); FluidState fluid = mock(FluidState.class);
         when(above.getFluidState()).thenReturn(fluid); when(fluid.getAmount()).thenReturn(1); when(fluid.is(FluidTags.WATER)).thenReturn(true);
         when(f.chunk.getBlockState(TARGET.above())).thenReturn(above);
@@ -151,8 +178,8 @@ class GrassLookupTestSuite {
         verify(f.chunk, times(4)).getBlockState(TARGET.above());
     }
 
-    @Test void propagationFailureEscapesImmediately() {
-        GrassFixture f = new GrassFixture(); RuntimeException error = new RuntimeException("spread callback");
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true}) void propagationFailureEscapesImmediately(boolean knownChunk) {
+        GrassFixture f = new GrassFixture(knownChunk); RuntimeException error = new RuntimeException("spread callback");
         try (var events = mockStatic(CraftEventFactory.class)) {
             events.when(() -> CraftEventFactory.handleBlockSpreadEvent(eq(f.world), eq(ORIGIN), eq(TARGET), any(), anyInt())).thenThrow(error);
             assertSame(error, assertThrows(RuntimeException.class, f::tick));
@@ -185,7 +212,10 @@ class GrassLookupTestSuite {
         final LevelChunk chunk = mock(LevelChunk.class);
         final RandomSource random = mock(RandomSource.class);
         final StarLightInterface light = mock(StarLightInterface.class);
-        GrassFixture() {
+        final boolean knownChunk;
+        GrassFixture() { this(false); }
+        GrassFixture(boolean knownChunk) {
+            this.knownChunk = knownChunk;
             WorldConfiguration config = RandomTickTestSupport.allocate(WorldConfiguration.class); config.tickRates = config.new TickRates();
             when(world.paperConfig()).thenReturn(config); when(world.getChunkSource()).thenReturn(source);
             when(source.getChunkAtIfLoadedImmediately(anyInt(), anyInt())).thenReturn(chunk);
@@ -198,6 +228,13 @@ class GrassLookupTestSuite {
             when(engine.starlight$getLightEngine()).thenReturn(light); when(light.getRawBrightness(any(), anyInt(), same(chunk))).thenReturn(15);
             when(random.nextInt(3)).thenReturn(2, 1, 2, 1, 2, 1, 2, 1); when(random.nextInt(5)).thenReturn(3);
         }
-        void tick() { Blocks.GRASS_BLOCK.defaultBlockState().randomTick(world, ORIGIN, random); }
+        void tick() {
+            if (this.knownChunk) {
+                ((LatticeTickingBlock) Blocks.GRASS_BLOCK).lattice$randomTick(Blocks.GRASS_BLOCK.defaultBlockState(), world, ORIGIN, random, chunk, null);
+                verify(source, never()).getChunkAtIfLoadedImmediately(anyInt(), anyInt());
+            } else {
+                Blocks.GRASS_BLOCK.defaultBlockState().randomTick(world, ORIGIN, random);
+            }
+        }
     }
 }

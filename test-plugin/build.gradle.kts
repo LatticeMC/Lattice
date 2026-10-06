@@ -10,11 +10,27 @@ val activationBench by sourceSets.creating {
     java.srcDir("src/activation-bench/java")
 }
 
+val mockitoAgent = configurations.register("mockitoAgent")
+configurations.testImplementation {
+    extendsFrom(configurations[activationBench.implementationConfigurationName])
+}
+
 dependencies {
     compileOnly(project(":lattice-api"))
     // This configuration belongs only to activationBench. It is deliberately
     // not a plugin implementation dependency and is never packaged in jar.
     add(activationBench.implementationConfigurationName, "org.geysermc.mcprotocollib:protocol:1.21.11-1")
+    testImplementation(project(":lattice-api"))
+    testImplementation(activationBench.output)
+    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
+    testImplementation("org.mockito:mockito-core:5.14.1")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    mockitoAgent("org.mockito:mockito-core:5.14.1") { isTransitive = false }
+}
+
+tasks.test {
+    useJUnitPlatform()
+    jvmArgs("-javaagent:${mockitoAgent.get().singleFile.absolutePath}")
 }
 
 tasks.register<JavaExec>("runActivationBench") {

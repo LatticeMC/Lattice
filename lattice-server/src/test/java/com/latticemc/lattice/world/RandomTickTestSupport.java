@@ -55,14 +55,22 @@ public final class RandomTickTestSupport {
         catch(ReflectiveOperationException e) { throw new AssertionError(e); }
     }
     static LevelChunk chunk(int x,int z,int sections,int count) {
+        return chunk(x,z,sections,count==0?0:sections,count);
+    }
+    static LevelChunk chunk(int x,int z,int sections,int activeSections,int count) {
+        if(activeSections<0||activeSections>sections)throw new IllegalArgumentException("activeSections");
         LevelChunk chunk=allocate(LevelChunk.class);
         LevelChunkSection[] data=new LevelChunkSection[sections];
         for(int n=0;n<sections;n++) {
             var states=new PalettedContainer<>(Blocks.AIR.defaultBlockState(),Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY));
             data[n]=new LevelChunkSection(states,null);
-            for(int i=0;i<count;i++) data[n].setBlockState(i&15,(i>>>8)&15,(i>>>4)&15,PROBE);
+            if(n<activeSections)for(int i=0;i<count;i++) data[n].setBlockState(i&15,(i>>>8)&15,(i>>>4)&15,PROBE);
         }
         field(chunk,ChunkAccess.class,"sections",data);field(chunk,ChunkAccess.class,"chunkPos",new ChunkPos(x,z));
+        try {
+            var bind=LevelChunk.class.getDeclaredMethod("lattice$bindRandomTickSections");
+            bind.setAccessible(true);bind.invoke(chunk);
+        } catch(ReflectiveOperationException e) { throw new AssertionError(e); }
         return chunk;
     }
 }

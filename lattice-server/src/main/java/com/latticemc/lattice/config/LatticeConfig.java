@@ -30,9 +30,9 @@ public final class LatticeConfig {
             bool("global.verify-native", "lattice.verify", false, "Check native results against the Java implementation."),
             bool("global.disable-vanilla-profiler", "lattice.disableVanillaProfiler", true, "Disable Minecraft's vanilla profiler fast-path overhead."),
             bool("performance.chunk-map-cache", "lattice.chunkMapCache", false,
-                    "Experimental single-entry chunk lookup cache. Disabled by default: repeated lookups can improve, but scattered lookups regress. Asynchronous reads use the concurrent table."),
+                    "Experimental owner-thread per-tick chunk-holder cache. Disabled by default because isolated lookup benchmarks regress; asynchronous reads use the authoritative concurrent table."),
             bool("performance.optimize-random-tick", "lattice.optimizeRandomTick", false,
-                    "Use the experimental weighted random-tick scheduler. Disabled by default; changes random-tick distribution, correlation, order and growth behavior when enabled."),
+                    "Use exact per-section random-tick sampling with a maintained non-empty section mask. Disabled by default pending server-level validation."),
 
             string("native.library-path", "lattice.native.path", "", "Optional absolute path to a native library; leave empty to use the bundled library."),
             string("native.cache-directory", "lattice.native.cacheDir", "", "Optional native-library extraction cache directory; leave empty for the platform default."),

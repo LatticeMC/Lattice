@@ -62,4 +62,8 @@ Exit code `0` means every requested bot completed login and remained connected t
 
 The JSON includes the MCProtocolLib and Minecraft protocol versions, timestamps, requested bot names, per-bot connection events, disconnect errors, teleport IDs and server/target/latest coordinates, and the checks used to determine success. A successful 1.21.11 configuration handshake records `known_packs_requested`, `known_packs_response_sent`, and `client_information_sent` before the runner enters GAME and accepts the server teleport.
 
+客户端信息包在 known-packs 接收回调中先于回复发送；等待 GAME 的轮询只观察状态，避免配置包越过完成确认后被服务端按游戏包解码。
+
+随机刻与区块查询 A/B 可通过 `-Dlattice.schedulingBenchmark=true` 启用测试插件的 `schedulingbench` 命令。`start <20..72000>` 从命令后的下一次 `ServerTickStartEvent` 开始，采集指定数量的 `ServerTickEndEvent`，完成后输出实际 tick 编号、毫秒 CSV 和 mean/median/p95/p99；偶数样本的 median 取中间两数平均，p95/p99 使用 nearest-rank。计时采用事件提供的 tick 主循环耗时，不包含 EndEvent 后及 tick 间等待期的工作。文件名唯一，重启后不会覆盖旧结果。`status` 查询进度；`census` 统计 entity-ticking chunk 的 section 分布及掩码一致性，采样中拒绝执行，避免干扰计时。`-Dlattice.entityStressSeed=<long>` 固定 `entitystress` 的位置随机流，不能固定实体 AI 或方块随机刻轨迹。
+
 For a failed configuration handshake, each bot also reports `configurationPackets`: the first 256 consecutive packet-type runs observed while either protocol direction is in CONFIGURATION, with adjacent identical packet types compressed into `{type,count}`. `configurationPacketsDropped` reports later distinct runs that were not retained. `protocolStateEvents` reports timestamped observed inbound/outbound state-pair changes. These are diagnostics only: they do not change handshake behavior or timeout handling.

@@ -35,6 +35,11 @@ public class TestPlugin extends JavaPlugin implements Listener {
             this.getName().toLowerCase(Locale.ROOT),
             this.entityStress
         );
+        if (Boolean.getBoolean("lattice.schedulingBenchmark")) {
+            final SchedulingBenchmarkCommand benchmark = new SchedulingBenchmarkCommand(this);
+            this.getServer().getCommandMap().register(this.getName().toLowerCase(Locale.ROOT), benchmark);
+            this.getServer().getPluginManager().registerEvents(benchmark, this);
+        }
     }
 
     @EventHandler

@@ -87,3 +87,165 @@
  tasks.compileTestJava {
      options.compilerArgs.add("-parameters")
  }
+@@ -293,6 +_,161 @@
+     val provider = objects.newInstance<MockitoAgentProvider>()
+     provider.fileCollection.from(mockitoAgent)
+     jvmArgumentProviders.add(provider)
++}
++
++val pathfinderCacheAllocationBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "测量寻路section缓存的冷热查询、饱和扫描和分配"
++    dependsOn(tasks.testClasses)
++    val baseline = providers.gradleProperty("pathfinderCacheBenchmarkBaseline")
++    classpath = if (baseline.isPresent) files(baseline.get()) + sourceSets.test.get().runtimeClasspath
++        else sourceSets.test.get().runtimeClasspath
++    mainClass.set("com.latticemc.lattice.bridge.PathfinderCacheAllocationBenchmark")
++    workingDir = temporaryDir
++    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
++    systemProperty("lattice.pathCacheBenchMode", if (baseline.isPresent) "baseline" else "fixed")
++    systemProperty("lattice.pathCacheBenchReverse", providers.gradleProperty("pathfinderCacheBenchmarkReverse").getOrElse("false"))
++    doFirst {
++        if (baseline.isPresent) require(file(baseline.get()).resolve("com/latticemc/lattice/bridge/PathfinderTickStateCache.class").isFile) {
++            "Baseline must contain the separately compiled PathfinderTickStateCache class"
++        }
++    }
++}
++
++val chunkReadBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "对照 Leaf 0253 适配和草块局部查询复用，独立 JVM 加载前后类"
++    dependsOn(tasks.testClasses)
++    val baseline = providers.gradleProperty("chunkReadBaseline")
++    classpath = if (baseline.isPresent) files(baseline.get()) + sourceSets.test.get().runtimeClasspath else sourceSets.test.get().runtimeClasspath
++    mainClass.set("com.latticemc.lattice.world.ChunkReadBenchmark")
++    workingDir = temporaryDir
++    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
++    systemProperty("lattice.chunkReadMode", if (baseline.isPresent) "baseline" else "fixed")
++    systemProperty("lattice.chunkReadReverse", providers.gradleProperty("chunkReadReverse").getOrElse("false"))
++    systemProperty("lattice.chunkReadKnownChunk", providers.gradleProperty("chunkReadKnownChunk").getOrElse("false"))
++    doFirst {
++        if (baseline.isPresent) {
++            listOf("net/minecraft/world/level/Level.class", "net/minecraft/world/level/block/SpreadingSnowyDirtBlock.class",
++                "ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.class").forEach { name ->
++                require(file(baseline.get()).resolve(name).isFile) { "Baseline class missing: $name" }
++            }
++        }
++    }
++}
++
++val chunkLookupBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "对照单项区块查询缓存；每个 JVM 只运行 original 或 cached 一种模式"
++    dependsOn(tasks.testClasses)
++    classpath = sourceSets.test.get().runtimeClasspath
++    mainClass.set("com.latticemc.lattice.util.ChunkCacheLookupBenchmark")
++    workingDir = temporaryDir
++    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
++    systemProperty("lattice.benchMode", providers.gradleProperty("benchMode").getOrElse("cached"))
++}
++
++val randomTickBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "对照原随机刻循环和逐 section 精确选择器，包含轻量方块回调"
++    dependsOn(tasks.testClasses)
++    classpath = sourceSets.test.get().runtimeClasspath
++    mainClass.set("com.latticemc.lattice.world.RandomTickBenchmark")
++    workingDir = temporaryDir
++    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
++    systemProperty("lattice.benchReverse", providers.gradleProperty("benchReverse").getOrElse("false"))
++    systemProperty("lattice.randomBenchMode", providers.gradleProperty("randomBenchMode").getOrElse("exact"))
++}
++
++val entityVisibilityBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "Benchmark the complete Java and JNI tracked-entity visibility wrappers"
++    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
++    classpath = sourceSets.test.get().runtimeClasspath
++    mainClass.set("com.latticemc.lattice.nativelib.NativeEntityVisibilityBenchmark")
++    workingDir = rootProject.layout.projectDirectory.asFile
++    jvmArgs("--enable-native-access=ALL-UNNAMED")
++    args(
++        "--warmup=" + providers.gradleProperty("entityVisibilityBenchmarkWarmup").getOrElse("4"),
++        "--samples=" + providers.gradleProperty("entityVisibilityBenchmarkSamples").getOrElse("9"),
++        "--iterations=" + providers.gradleProperty("entityVisibilityBenchmarkIterations").getOrElse("0"),
++        "--entities=" + providers.gradleProperty("entityVisibilityBenchmarkEntities").getOrElse("512,2048,8192"),
++        "--players=" + providers.gradleProperty("entityVisibilityBenchmarkPlayers").getOrElse("16,30,64"),
++    )
++}
++
++val entityVisibilityEndToEndBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "Benchmark tracked-entity visibility prefilter plus downstream update decisions"
++    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
++    classpath = sourceSets.test.get().runtimeClasspath
++    mainClass.set("com.latticemc.lattice.nativelib.NativeEntityVisibilityEndToEndBenchmark")
++    workingDir = rootProject.layout.projectDirectory.asFile
++    jvmArgs("--enable-native-access=ALL-UNNAMED")
++    args(
++        "--warmup=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkWarmup").getOrElse("4"),
++        "--samples=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkSamples").getOrElse("11"),
++        "--iterations=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkIterations").getOrElse("0"),
++        "--entities=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkEntities").getOrElse("512,2048,8192"),
++        "--players=" + providers.gradleProperty("entityVisibilityEndToEndBenchmarkPlayers").getOrElse("16,30,64"),
++    )
++}
++
++val worldgenProfilerPushBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "Benchmark eager versus lazy world-generation profiler scope names"
++    dependsOn(tasks.processResources, tasks.testClasses)
++    classpath = sourceSets.test.get().runtimeClasspath
++    mainClass.set("com.latticemc.lattice.nativelib.WorldgenProfilerPushBenchmark")
++    workingDir = rootProject.layout.projectDirectory.asFile
++    args(
++        "--warmup=" + providers.gradleProperty("worldgenProfilerPushBenchmarkWarmup").getOrElse("5"),
++        "--samples=" + providers.gradleProperty("worldgenProfilerPushBenchmarkSamples").getOrElse("11"),
++        "--iterations=" + providers.gradleProperty("worldgenProfilerPushBenchmarkIterations").getOrElse("2000000"),
++    )
++}
++
++val nativeDensityWorldgenBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "Benchmark real Overworld NoiseChunk Java and native density wrappers"
++    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
++    classpath = sourceSets.test.get().runtimeClasspath
++    mainClass.set("net.minecraft.world.level.levelgen.NativeDensityFunctionWorldgenBenchmark")
++    workingDir = rootProject.layout.projectDirectory.asFile
++    jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dlattice.nativeDensityFunctionGrid=true")
++    if (providers.gradleProperty("nativeDensityWorldgenProfiling").getOrElse("false").toBoolean()) {
++        args("--profiling")
++    }
++    if (providers.gradleProperty("nativeDensityWorldgenCoverageOnly").getOrElse("false").toBoolean()) {
++        args("--coverage-only")
++    }
++    if (providers.gradleProperty("nativeDensityWorldgenVerifyOnly").getOrElse("false").toBoolean()) {
++        args("--verify-only")
++    }
++    args(
++        "--warmup=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkWarmup").getOrElse("4"),
++        "--samples=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkSamples").getOrElse("9"),
++        "--cold-samples=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkColdSamples").getOrElse("3"),
++        "--work-items=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkWorkItems").getOrElse("1,2,4,6,8,16,32"),
++        "--workers=" + providers.gradleProperty("nativeDensityWorldgenBenchmarkWorkers").getOrElse("1,2,4,6,8"),
++    )
++}
++
++val nativeNoiseJniBenchmark by tasks.registering(JavaExec::class) {
++    group = "verification"
++    description = "Benchmark Java scalar noise against existing single-point JNI wrappers"
++    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
++    classpath = sourceSets.test.get().runtimeClasspath
++    mainClass.set("net.minecraft.world.level.levelgen.synth.NativeNoiseJniBenchmark")
++    workingDir = rootProject.layout.projectDirectory.asFile
++    jvmArgs("--enable-native-access=ALL-UNNAMED", "-Dlattice.nativeScalarPerlin=false")
++    args(
++        "--warmup=" + providers.gradleProperty("nativeNoiseJniBenchmarkWarmup").getOrElse("5"),
++        "--samples=" + providers.gradleProperty("nativeNoiseJniBenchmarkSamples").getOrElse("15"),
++        "--target-points=" + providers.gradleProperty("nativeNoiseJniBenchmarkTargetPoints").getOrElse("100000"),
++        "--heavy-target-points=" + providers.gradleProperty("nativeNoiseJniBenchmarkHeavyTargetPoints").getOrElse("5000"),
++        "--counts=" + providers.gradleProperty("nativeNoiseJniBenchmarkCounts").getOrElse("1,8,49,245,2048"),
++    )
+ }
+ 
+ val generatedDir: java.nio.file.Path = layout.projectDirectory.dir("../paper-server/src/generated/java").asFile.toPath() // Purpur
