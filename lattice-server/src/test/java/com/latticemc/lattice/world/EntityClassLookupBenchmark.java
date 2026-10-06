@@ -17,7 +17,7 @@ public final class EntityClassLookupBenchmark {
         var allocation = (ThreadMXBean)ManagementFactory.getThreadMXBean();
         allocation.setThreadAllocatedMemoryEnabled(true);
         System.out.println("SOURCE " + ChunkEntitySlices.class.getProtectionDomain().getCodeSource().getLocation());
-        System.out.println("MODE " + Boolean.getBoolean("lattice.entityClassLookup"));
+        System.out.println("生产 Class 查询基线（历史四槽实验参数当前无效）");
         Scenario[] scenarios = {
             new Scenario("empty1",1,0,0), new Scenario("empty2",2,0,0),
             new Scenario("empty3",3,0,0), new Scenario("empty4",4,0,0),
