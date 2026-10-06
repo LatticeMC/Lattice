@@ -69,3 +69,6 @@ The JSON includes the MCProtocolLib and Minecraft protocol versions, timestamps,
 安全 X holder 缓存已从生产路径移除，`performance.chunk-map-cache` 与 `-Dlattice.chunkMapCache` 不再启用缓存；旧 YAML 键会按未知键告警并保留。`census` 固定显示 `cache=retired`。历史四组合 A/B 仅适用于退役前版本；当前随机刻仍可通过 `performance.optimize-random-tick` 或 `-Dlattice.optimizeRandomTick` 选择，默认关闭。缓存查询微基准保留在测试源集中，结果不代表当前生产代码存在缓存路径。
 
 For a failed configuration handshake, each bot also reports `configurationPackets`: the first 256 consecutive packet-type runs observed while either protocol direction is in CONFIGURATION, with adjacent identical packet types compressed into `{type,count}`. `configurationPacketsDropped` reports later distinct runs that were not retained. `protocolStateEvents` reports timestamped observed inbound/outbound state-pair changes. These are diagnostics only: they do not change handshake behavior or timeout handling.
+
+
+2026-10-06 的 L2-only 对照保留原随机刻 RNG 和回调顺序，仅用非空 section 掩码减少遍历。冻结旧产物、新关闭、新掩码三者的 27 组完整轨迹相同，四种开关组合各 26 项测试通过；9 个独立 JVM 的微基准中，稀疏档约 1.35 倍，单 chunk 满 section 档约 0.94 倍。随后 off/mask/exact/exact/mask/off 六轮各采集 1200 tick，mean 均值分别为 10.254/11.568/11.972 ms，各轮 p99 均值分别为 29.347/49.511/48.594 ms。每组只有两个 JVM，且两轮基线自身相差约 19.5%，未证明整服收益。该新增掩码实验已撤回，不提供生产开关；既有 EXACT 仍默认关闭。完整实验补丁、语义轨迹、XML、微基准、整服 CSV/JFR 与产物摘要保留在本地 `build/reports/optimization-candidates-20261006/l2/`，不把局部吞吐提升视作生产收益。
