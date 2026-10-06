@@ -1,6 +1,7 @@
 package com.latticemc.lattice.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -39,7 +40,7 @@ class LatticeConfigTestSuite {
         assertTrue(contents.contains("disable-native"));
         assertEquals("false", System.getProperty("lattice.disable"));
         assertEquals("false", System.getProperty("lattice.optimizeRandomTick"));
-        assertEquals("false", System.getProperty("lattice.chunkMapCache"));
+        assertFalse(contents.contains("chunk-map-cache"));
         assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("1024", System.getProperty("lattice.nativeDensityFunctionParityInterval"));
         assertEquals("false", System.getProperty("lattice.nativeIocp"));
@@ -92,7 +93,8 @@ class LatticeConfigTestSuite {
         assertEquals("2048", System.getProperty("lattice.nativeEntityVisibilityBatchMinEntities"));
         assertEquals("2097152", System.getProperty("lattice.nativeEntityVisibilityBatchMaxScratchBytes"));
         assertEquals("false", System.getProperty("lattice.nativeLosSectionLookupReuse"));
-        assertEquals("true", System.getProperty("lattice.chunkMapCache"));
+        assertFalse(LatticeConfig.managedProperties().contains("lattice.chunkMapCache"));
+        assertTrue(Files.readString(config).contains("chunk-map-cache: true"), "退役键按未知键保留，不改写用户配置");
         assertEquals("true", System.getProperty("lattice.optimizeRandomTick"));
     }
 

@@ -4,9 +4,8 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.function.LongFunction;
 
-/** A per-tick, owner-thread cache in front of an authoritative long-keyed source. */
+/** 已退役的 holder 缓存，仅供历史微基准与回归测试使用，不接入生产代码。 */
 public final class ChunkCache<V> {
-    public static final boolean ENABLED = Boolean.getBoolean("lattice.chunkMapCache");
     private static final int INITIAL_CAPACITY = 1024;
     private static final float LOAD_FACTOR = 0.5f;
 

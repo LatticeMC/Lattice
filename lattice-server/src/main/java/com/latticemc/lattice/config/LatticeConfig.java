@@ -29,8 +29,6 @@ public final class LatticeConfig {
             bool("global.disable-native", "lattice.disable", false, "Disable all Lattice native acceleration."),
             bool("global.verify-native", "lattice.verify", false, "Check native results against the Java implementation."),
             bool("global.disable-vanilla-profiler", "lattice.disableVanillaProfiler", true, "Disable Minecraft's vanilla profiler fast-path overhead."),
-            bool("performance.chunk-map-cache", "lattice.chunkMapCache", false,
-                    "Experimental owner-thread per-tick chunk-holder cache. Disabled by default because isolated lookup benchmarks regress; asynchronous reads use the authoritative concurrent table."),
             bool("performance.optimize-random-tick", "lattice.optimizeRandomTick", false,
                     "Use exact per-section random-tick sampling with a maintained non-empty section mask. Disabled by default pending server-level validation."),
 

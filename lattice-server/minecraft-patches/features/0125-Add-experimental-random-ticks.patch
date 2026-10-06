@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Mon, 5 Oct 2026 12:00:00 +0800
+Subject: [PATCH] Add experimental random ticks
+
+
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index af67b07722bb0125acd081dab767d7e7b360623b..d752a841c5519adcdd7b7a59e58a8f724924c70c 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -591,7 +591,11 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+         }
+ 
+         profiler.popPush("tickTickingChunks");
+-        this.iterateTickingChunksFaster(); // Paper - chunk tick iteration optimizations
++        if (com.latticemc.lattice.world.RandomTickSystem.ENABLED) {
++            this.level.lattice$randomTickSystem.tick(this.level);
++        } else {
++            this.iterateTickingChunksFaster(); // Paper - chunk tick iteration optimizations
++        }
+         if (flag) {
+             profiler.popPush("customSpawners");
+             this.level.tickCustomSpawners(this.spawnEnemies);
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 48ff3c35af86a0f41e1c7ccae1ac302598243aac..83ff819f1586e50e2b5242139f1b79fbccd59249 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -979,6 +979,12 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     // Paper start - optimise random ticking
+     private final ca.spottedleaf.moonrise.common.util.SimpleThreadUnsafeRandom simpleRandom = new ca.spottedleaf.moonrise.common.util.SimpleThreadUnsafeRandom(net.minecraft.world.level.levelgen.RandomSupport.generateUniqueSeed());
+ 
++    public final com.latticemc.lattice.world.RandomTickSystem lattice$randomTickSystem = com.latticemc.lattice.world.RandomTickSystem.ENABLED ? new com.latticemc.lattice.world.RandomTickSystem() : null;
++
++    public final net.minecraft.world.level.levelgen.BitRandomSource lattice$getRandomTickRandom() {
++        return this.simpleRandom;
++    }
++
+     private void optimiseRandomTick(final LevelChunk chunk, final int tickSpeed) {
+         final LevelChunkSection[] sections = chunk.getSections();
+         final int minSection = ca.spottedleaf.moonrise.common.util.WorldUtil.getMinSection((ServerLevel)(Object)this);

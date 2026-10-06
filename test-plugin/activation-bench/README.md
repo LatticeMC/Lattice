@@ -66,4 +66,6 @@ The JSON includes the MCProtocolLib and Minecraft protocol versions, timestamps,
 
 随机刻与区块查询 A/B 可通过 `-Dlattice.schedulingBenchmark=true` 启用测试插件的 `schedulingbench` 命令。`start <20..72000>` 从命令后的下一次 `ServerTickStartEvent` 开始，采集指定数量的 `ServerTickEndEvent`，完成后输出实际 tick 编号、毫秒 CSV 和 mean/median/p95/p99；偶数样本的 median 取中间两数平均，p95/p99 使用 nearest-rank。计时采用事件提供的 tick 主循环耗时，不包含 EndEvent 后及 tick 间等待期的工作。文件名唯一，重启后不会覆盖旧结果。`status` 查询进度；`census` 统计 entity-ticking chunk 的 section 分布及掩码一致性，采样中拒绝执行，避免干扰计时。`-Dlattice.entityStressSeed=<long>` 固定 `entitystress` 的位置随机流，不能固定实体 AI 或方块随机刻轨迹。
 
+安全 X holder 缓存已从生产路径移除，`performance.chunk-map-cache` 与 `-Dlattice.chunkMapCache` 不再启用缓存；旧 YAML 键会按未知键告警并保留。`census` 固定显示 `cache=retired`。历史四组合 A/B 仅适用于退役前版本；当前随机刻仍可通过 `performance.optimize-random-tick` 或 `-Dlattice.optimizeRandomTick` 选择，默认关闭。缓存查询微基准保留在测试源集中，结果不代表当前生产代码存在缓存路径。
+
 For a failed configuration handshake, each bot also reports `configurationPackets`: the first 256 consecutive packet-type runs observed while either protocol direction is in CONFIGURATION, with adjacent identical packet types compressed into `{type,count}`. `configurationPacketsDropped` reports later distinct runs that were not retained. `protocolStateEvents` reports timestamped observed inbound/outbound state-pair changes. These are diagnostics only: they do not change handshake behavior or timeout handling.

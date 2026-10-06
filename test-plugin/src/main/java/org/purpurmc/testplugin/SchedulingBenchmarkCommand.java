@@ -154,7 +154,7 @@ final class SchedulingBenchmarkCommand extends Command implements Listener {
             }
         }
         return "census chunks=" + chunks + " sections=" + sections + " active=" + active + " maskMismatches=" + mismatches
-            + " buckets=" + Arrays.toString(buckets) + " cache=" + System.getProperty("lattice.chunkMapCache")
+            + " buckets=" + Arrays.toString(buckets) + " cache=retired"
             + " random=" + optimized;
     }
 }
