@@ -40,6 +40,8 @@ class LatticeConfigTestSuite {
         assertTrue(contents.contains("disable-native"));
         assertEquals("false", System.getProperty("lattice.disable"));
         assertEquals("false", System.getProperty("lattice.optimizeRandomTick"));
+        assertEquals("true", System.getProperty("lattice.poiBfsScratch"));
+        assertTrue(contents.contains("poi-bfs-scratch"));
         assertFalse(contents.contains("chunk-map-cache"));
         assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("1024", System.getProperty("lattice.nativeDensityFunctionParityInterval"));
@@ -77,6 +79,7 @@ class LatticeConfigTestSuite {
                 performance:
                   chunk-map-cache: true
                   optimize-random-tick: true
+                  poi-bfs-scratch: false
                   los:
                     section-lookup-reuse: false
                 """);
@@ -96,6 +99,7 @@ class LatticeConfigTestSuite {
         assertFalse(LatticeConfig.managedProperties().contains("lattice.chunkMapCache"));
         assertTrue(Files.readString(config).contains("chunk-map-cache: true"), "退役键按未知键保留，不改写用户配置");
         assertEquals("true", System.getProperty("lattice.optimizeRandomTick"));
+        assertEquals("false", System.getProperty("lattice.poiBfsScratch"));
     }
 
     @Test
@@ -108,18 +112,21 @@ class LatticeConfigTestSuite {
                 density:
                   native-function: false
                 performance:
+                  poi-bfs-scratch: true
                   los:
                     section-lookup-reuse: true
                 """);
         System.setProperty("lattice.nativePaletteOps", "false");
         System.setProperty("lattice.nativeDensityFunction", "true");
         System.setProperty("lattice.nativeLosSectionLookupReuse", "false");
+        System.setProperty("lattice.poiBfsScratch", "false");
 
         LatticeConfig.preload(config);
 
         assertEquals("false", System.getProperty("lattice.nativePaletteOps"));
         assertEquals("true", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("false", System.getProperty("lattice.nativeLosSectionLookupReuse"));
+        assertEquals("false", System.getProperty("lattice.poiBfsScratch"));
     }
 
     @Test

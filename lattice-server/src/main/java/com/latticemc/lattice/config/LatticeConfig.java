@@ -31,6 +31,8 @@ public final class LatticeConfig {
             bool("global.disable-vanilla-profiler", "lattice.disableVanillaProfiler", true, "Disable Minecraft's vanilla profiler fast-path overhead."),
             bool("performance.optimize-random-tick", "lattice.optimizeRandomTick", false,
                     "Use exact per-section random-tick sampling with a maintained non-empty section mask. Disabled by default pending server-level validation."),
+            bool("performance.poi-bfs-scratch", "lattice.poiBfsScratch", true,
+                    "复用每线程 POI BFS 容器，不缓存查询结果；修改后需要重启。"),
 
             string("native.library-path", "lattice.native.path", "", "Optional absolute path to a native library; leave empty to use the bundled library."),
             string("native.cache-directory", "lattice.native.cacheDir", "", "Optional native-library extraction cache directory; leave empty for the platform default."),

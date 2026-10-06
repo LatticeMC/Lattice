@@ -1,0 +1,468 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Tue, 6 Oct 2026 21:00:00 +0800
+Subject: [PATCH] perf: reuse POI BFS scratch per thread
+
+
+diff --git a/io/papermc/paper/util/PoiAccess.java b/io/papermc/paper/util/PoiAccess.java
+index f39294b..78fa12c 100644
+--- a/io/papermc/paper/util/PoiAccess.java
++++ b/io/papermc/paper/util/PoiAccess.java
+@@ -224,112 +224,118 @@ public final class PoiAccess {
+         final int centerZ = sourcePosition.getZ() >> 4;
+         final long centerKey = CoordinateUtils.getChunkSectionKey(centerX, centerY, centerZ);
+ 
+-        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+-        final LongOpenHashSet seen = new LongOpenHashSet();
+-        seen.add(centerKey);
+-        queue.enqueue(centerKey);
+-
+-        while (!queue.isEmpty()) {
+-            final long key = queue.dequeueLong();
+-            final int sectionX = CoordinateUtils.getChunkSectionX(key);
+-            final int sectionY = CoordinateUtils.getChunkSectionY(key);
+-            final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
+-
+-            if (sectionX < lowerX || sectionX > upperX || sectionY < lowerY || sectionY > upperY || sectionZ < lowerZ || sectionZ > upperZ) {
+-                // out of bound chunk
+-                continue;
+-            }
++        final com.latticemc.lattice.world.PoiBfsScratch scratch = com.latticemc.lattice.world.PoiBfsScratch.ENABLED
++            ? com.latticemc.lattice.world.PoiBfsScratch.acquire() : null;
++        final LongArrayFIFOQueue queue = scratch == null ? new LongArrayFIFOQueue() : scratch.queue;
++        final LongOpenHashSet seen = scratch == null ? new LongOpenHashSet() : null;
++        try {
++            if (scratch == null) seen.add(centerKey); else scratch.seen.add(centerKey);
++            queue.enqueue(centerKey);
++
++            while (!queue.isEmpty()) {
++                final long key = queue.dequeueLong();
++                final int sectionX = CoordinateUtils.getChunkSectionX(key);
++                final int sectionY = CoordinateUtils.getChunkSectionY(key);
++                final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
++
++                if (sectionX < lowerX || sectionX > upperX || sectionY < lowerY || sectionY > upperY || sectionZ < lowerZ || sectionZ > upperZ) {
++                    // out of bound chunk
++                    continue;
++                }
+ 
+-            final double sectionDistanceSquared = getSmallestDistanceSquared(
+-                    (sectionX << 4) + 0.5,
+-                    (sectionY << 4) + 0.5,
+-                    (sectionZ << 4) + 0.5,
+-                    (sectionX << 4) + 15.5,
+-                    (sectionY << 4) + 15.5,
+-                    (sectionZ << 4) + 15.5,
+-                    (double)sourcePosition.getX(), (double)sourcePosition.getY(), (double)sourcePosition.getZ()
+-            );
+-            if (sectionDistanceSquared > closestDistanceSquared) {
+-                continue;
+-            }
++                final double sectionDistanceSquared = getSmallestDistanceSquared(
++                        (sectionX << 4) + 0.5,
++                        (sectionY << 4) + 0.5,
++                        (sectionZ << 4) + 0.5,
++                        (sectionX << 4) + 15.5,
++                        (sectionY << 4) + 15.5,
++                        (sectionZ << 4) + 15.5,
++                        (double)sourcePosition.getX(), (double)sourcePosition.getY(), (double)sourcePosition.getZ()
++                );
++                if (sectionDistanceSquared > closestDistanceSquared) {
++                    continue;
++                }
+ 
+-            // queue all neighbours
+-            for (int dz = -1; dz <= 1; ++dz) {
+-                for (int dx = -1; dx <= 1; ++dx) {
+-                    for (int dy = -1; dy <= 1; ++dy) {
+-                        // -1 and 1 have the 1st bit set. so just add up the first bits, and it will tell us how many
+-                        // values are set. we only care about cardinal neighbours, so, we only care if one value is set
+-                        if ((dx & 1) + (dy & 1) + (dz & 1) != 1) {
+-                            continue;
+-                        }
++                // queue all neighbours
++                for (int dz = -1; dz <= 1; ++dz) {
++                    for (int dx = -1; dx <= 1; ++dx) {
++                        for (int dy = -1; dy <= 1; ++dy) {
++                            // -1 and 1 have the 1st bit set. so just add up the first bits, and it will tell us how many
++                            // values are set. we only care about cardinal neighbours, so, we only care if one value is set
++                            if ((dx & 1) + (dy & 1) + (dz & 1) != 1) {
++                                continue;
++                            }
+ 
+-                        final int neighbourX = sectionX + dx;
+-                        final int neighbourY = sectionY + dy;
+-                        final int neighbourZ = sectionZ + dz;
++                            final int neighbourX = sectionX + dx;
++                            final int neighbourY = sectionY + dy;
++                            final int neighbourZ = sectionZ + dz;
+ 
+-                        final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
+-                        if (seen.add(neighbourKey)) {
+-                            queue.enqueue(neighbourKey);
++                            final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
++                            if (scratch == null ? seen.add(neighbourKey) : scratch.seen.add(neighbourKey)) {
++                                queue.enqueue(neighbourKey);
++                            }
+                         }
+                     }
+                 }
+-            }
+ 
+-            final Optional<PoiSection> poiSectionOptional = load ? poiStorage.getOrLoad(key) : poiStorage.get(key);
+-
+-            if (poiSectionOptional == null || !poiSectionOptional.isPresent()) {
+-                continue;
+-            }
++                final Optional<PoiSection> poiSectionOptional = load ? poiStorage.getOrLoad(key) : poiStorage.get(key);
+ 
+-            final PoiSection poiSection = poiSectionOptional.get();
++                if (poiSectionOptional == null || !poiSectionOptional.isPresent()) {
++                    continue;
++                }
+ 
+-            final Map<Holder<PoiType>, Set<PoiRecord>> sectionData = poiSection.getData();
+-            if (sectionData.isEmpty()) {
+-                continue;
+-            }
++                final PoiSection poiSection = poiSectionOptional.get();
+ 
+-            // now we search the section data
+-            for (final Map.Entry<Holder<PoiType>, Set<PoiRecord>> entry : sectionData.entrySet()) {
+-                if (!villagePlaceType.test(entry.getKey())) {
+-                    // filter out by poi type
++                final Map<Holder<PoiType>, Set<PoiRecord>> sectionData = poiSection.getData();
++                if (sectionData.isEmpty()) {
+                     continue;
+                 }
+ 
+-                // now we can look at the poi data
+-                for (final PoiRecord poiData : entry.getValue()) {
+-                    if (!occupancyFilter.test(poiData)) {
+-                        // filter by occupancy
++                // now we search the section data
++                for (final Map.Entry<Holder<PoiType>, Set<PoiRecord>> entry : sectionData.entrySet()) {
++                    if (!villagePlaceType.test(entry.getKey())) {
++                        // filter out by poi type
+                         continue;
+                     }
+ 
+-                    final BlockPos poiPosition = poiData.getPos();
++                    // now we can look at the poi data
++                    for (final PoiRecord poiData : entry.getValue()) {
++                        if (!occupancyFilter.test(poiData)) {
++                            // filter by occupancy
++                            continue;
++                        }
+ 
+-                    if (Math.abs(poiPosition.getX() - sourcePosition.getX()) > range
+-                            || Math.abs(poiPosition.getZ() - sourcePosition.getZ()) > range) {
+-                        // out of range for square radius
+-                        continue;
+-                    }
++                        final BlockPos poiPosition = poiData.getPos();
+ 
+-                    // it's important that it's poiPosition.distSqr(source) : the value actually is different IF the values are swapped!
+-                    final double dataRange = poiPosition.distSqr(sourcePosition);
++                        if (Math.abs(poiPosition.getX() - sourcePosition.getX()) > range
++                                || Math.abs(poiPosition.getZ() - sourcePosition.getZ()) > range) {
++                            // out of range for square radius
++                            continue;
++                        }
+ 
+-                    if (dataRange > closestDistanceSquared) {
+-                        // out of range for distance check
+-                        continue;
+-                    }
++                        // it's important that it's poiPosition.distSqr(source) : the value actually is different IF the values are swapped!
++                        final double dataRange = poiPosition.distSqr(sourcePosition);
+ 
+-                    if (predicate != null && !predicate.test(poiData.getPoiType(), poiPosition)) {
+-                        // filter by position
+-                        continue;
+-                    }
++                        if (dataRange > closestDistanceSquared) {
++                            // out of range for distance check
++                            continue;
++                        }
+ 
+-                    if (dataRange < closestDistanceSquared) {
+-                        closestRecords.clear();
+-                        closestDistanceSquared = dataRange;
++                        if (predicate != null && !predicate.test(poiData.getPoiType(), poiPosition)) {
++                            // filter by position
++                            continue;
++                        }
++
++                        if (dataRange < closestDistanceSquared) {
++                            closestRecords.clear();
++                            closestDistanceSquared = dataRange;
++                        }
++                        closestRecords.add(poiData);
+                     }
+-                    closestRecords.add(poiData);
+                 }
+             }
++        } finally {
++            if (scratch != null) scratch.close();
+         }
+ 
+         // uh oh! we might have multiple records that match the distance sorting!
+@@ -467,144 +473,150 @@ public final class PoiAccess {
+         final int centerZ = sourcePosition.getZ() >> 4;
+         final long centerKey = CoordinateUtils.getChunkSectionKey(centerX, centerY, centerZ);
+ 
+-        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+-        final LongOpenHashSet seen = new LongOpenHashSet();
+-        seen.add(centerKey);
+-        queue.enqueue(centerKey);
+-
+-        while (!queue.isEmpty()) {
+-            final long key = queue.dequeueLong();
+-            final int sectionX = CoordinateUtils.getChunkSectionX(key);
+-            final int sectionY = CoordinateUtils.getChunkSectionY(key);
+-            final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
++        final com.latticemc.lattice.world.PoiBfsScratch scratch = com.latticemc.lattice.world.PoiBfsScratch.ENABLED
++            ? com.latticemc.lattice.world.PoiBfsScratch.acquire() : null;
++        final LongArrayFIFOQueue queue = scratch == null ? new LongArrayFIFOQueue() : scratch.queue;
++        final LongOpenHashSet seen = scratch == null ? new LongOpenHashSet() : null;
++        try {
++            if (scratch == null) seen.add(centerKey); else scratch.seen.add(centerKey);
++            queue.enqueue(centerKey);
++
++            while (!queue.isEmpty()) {
++                final long key = queue.dequeueLong();
++                final int sectionX = CoordinateUtils.getChunkSectionX(key);
++                final int sectionY = CoordinateUtils.getChunkSectionY(key);
++                final int sectionZ = CoordinateUtils.getChunkSectionZ(key);
++
++                if (sectionX < lowerX || sectionX > upperX || sectionY < lowerY || sectionY > upperY || sectionZ < lowerZ || sectionZ > upperZ) {
++                    // out of bound chunk
++                    continue;
++                }
+ 
+-            if (sectionX < lowerX || sectionX > upperX || sectionY < lowerY || sectionY > upperY || sectionZ < lowerZ || sectionZ > upperZ) {
+-                // out of bound chunk
+-                continue;
+-            }
++                final double sectionDistanceSquared = getSmallestDistanceSquared(
++                        (sectionX << 4) + 0.5,
++                        (sectionY << 4) + 0.5,
++                        (sectionZ << 4) + 0.5,
++                        (sectionX << 4) + 15.5,
++                        (sectionY << 4) + 15.5,
++                        (sectionZ << 4) + 15.5,
++                        (double) sourcePosition.getX(), (double) sourcePosition.getY(), (double) sourcePosition.getZ()
++                );
+ 
+-            final double sectionDistanceSquared = getSmallestDistanceSquared(
+-                    (sectionX << 4) + 0.5,
+-                    (sectionY << 4) + 0.5,
+-                    (sectionZ << 4) + 0.5,
+-                    (sectionX << 4) + 15.5,
+-                    (sectionY << 4) + 15.5,
+-                    (sectionZ << 4) + 15.5,
+-                    (double) sourcePosition.getX(), (double) sourcePosition.getY(), (double) sourcePosition.getZ()
+-            );
+-
+-            if (sectionDistanceSquared > (totalRecords >= max ? furthestDistanceSquared : maxDistanceSquared)) {
+-                continue;
+-            }
++                if (sectionDistanceSquared > (totalRecords >= max ? furthestDistanceSquared : maxDistanceSquared)) {
++                    continue;
++                }
+ 
+-            // queue all neighbours
+-            for (int dz = -1; dz <= 1; ++dz) {
+-                for (int dx = -1; dx <= 1; ++dx) {
+-                    for (int dy = -1; dy <= 1; ++dy) {
+-                        // -1 and 1 have the 1st bit set. so just add up the first bits, and it will tell us how many
+-                        // values are set. we only care about cardinal neighbours, so, we only care if one value is set
+-                        if ((dx & 1) + (dy & 1) + (dz & 1) != 1) {
+-                            continue;
+-                        }
++                // queue all neighbours
++                for (int dz = -1; dz <= 1; ++dz) {
++                    for (int dx = -1; dx <= 1; ++dx) {
++                        for (int dy = -1; dy <= 1; ++dy) {
++                            // -1 and 1 have the 1st bit set. so just add up the first bits, and it will tell us how many
++                            // values are set. we only care about cardinal neighbours, so, we only care if one value is set
++                            if ((dx & 1) + (dy & 1) + (dz & 1) != 1) {
++                                continue;
++                            }
+ 
+-                        final int neighbourX = sectionX + dx;
+-                        final int neighbourY = sectionY + dy;
+-                        final int neighbourZ = sectionZ + dz;
++                            final int neighbourX = sectionX + dx;
++                            final int neighbourY = sectionY + dy;
++                            final int neighbourZ = sectionZ + dz;
+ 
+-                        final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
+-                        if (seen.add(neighbourKey)) {
+-                            queue.enqueue(neighbourKey);
++                            final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
++                            if (scratch == null ? seen.add(neighbourKey) : scratch.seen.add(neighbourKey)) {
++                                queue.enqueue(neighbourKey);
++                            }
+                         }
+                     }
+                 }
+-            }
+ 
+-            final Optional<PoiSection> poiSectionOptional = load ? poiStorage.getOrLoad(key) : poiStorage.get(key);
++                final Optional<PoiSection> poiSectionOptional = load ? poiStorage.getOrLoad(key) : poiStorage.get(key);
+ 
+-            if (poiSectionOptional == null || !poiSectionOptional.isPresent()) {
+-                continue;
+-            }
+-
+-            final PoiSection poiSection = poiSectionOptional.get();
+-
+-            final Map<Holder<PoiType>, Set<PoiRecord>> sectionData = poiSection.getData();
+-            if (sectionData.isEmpty()) {
+-                continue;
+-            }
+-
+-            // now we search the section data
+-            for (final Map.Entry<Holder<PoiType>, Set<PoiRecord>> entry : sectionData.entrySet()) {
+-                if (!villagePlaceType.test(entry.getKey())) {
+-                    // filter out by poi type
++                if (poiSectionOptional == null || !poiSectionOptional.isPresent()) {
+                     continue;
+                 }
+ 
+-                // now we can look at the poi data
+-                for (final PoiRecord poiData : entry.getValue()) {
+-                    if (!occupancyFilter.test(poiData)) {
+-                        // filter by occupancy
+-                        continue;
+-                    }
++                final PoiSection poiSection = poiSectionOptional.get();
+ 
+-                    final BlockPos poiPosition = poiData.getPos();
++                final Map<Holder<PoiType>, Set<PoiRecord>> sectionData = poiSection.getData();
++                if (sectionData.isEmpty()) {
++                    continue;
++                }
+ 
+-                    if (Math.abs(poiPosition.getX() - sourcePosition.getX()) > range
+-                            || Math.abs(poiPosition.getZ() - sourcePosition.getZ()) > range) {
+-                        // out of range for square radius
++                // now we search the section data
++                for (final Map.Entry<Holder<PoiType>, Set<PoiRecord>> entry : sectionData.entrySet()) {
++                    if (!villagePlaceType.test(entry.getKey())) {
++                        // filter out by poi type
+                         continue;
+                     }
+ 
+-                    // it's important that it's poiPosition.distSqr(source) : the value actually is different IF the values are swapped!
+-                    final double dataRange = poiPosition.distSqr(sourcePosition);
+-
+-                    if (dataRange > maxDistanceSquared) {
+-                        // out of range for distance check
+-                        continue;
+-                    }
++                    // now we can look at the poi data
++                    for (final PoiRecord poiData : entry.getValue()) {
++                        if (!occupancyFilter.test(poiData)) {
++                            // filter by occupancy
++                            continue;
++                        }
+ 
+-                    if (dataRange > furthestDistanceSquared && totalRecords >= max) {
+-                        // out of range for distance check
+-                        continue;
+-                    }
++                        final BlockPos poiPosition = poiData.getPos();
+ 
+-                    if (positionPredicate != null && !positionPredicate.test(poiPosition)) {
+-                        // filter by position
+-                        continue;
+-                    }
++                        if (Math.abs(poiPosition.getX() - sourcePosition.getX()) > range
++                                || Math.abs(poiPosition.getZ() - sourcePosition.getZ()) > range) {
++                            // out of range for square radius
++                            continue;
++                        }
+ 
+-                    if (dataRange > furthestDistanceSquared) {
+-                        // we know totalRecords < max, so this entry is now our furthest
+-                        furthestDistanceSquared = dataRange;
+-                    }
++                        // it's important that it's poiPosition.distSqr(source) : the value actually is different IF the values are swapped!
++                        final double dataRange = poiPosition.distSqr(sourcePosition);
+ 
+-                    closestRecords.computeIfAbsent(dataRange, (final double unused) -> {
+-                        return new ArrayList<>();
+-                    }).add(poiData);
++                        if (dataRange > maxDistanceSquared) {
++                            // out of range for distance check
++                            continue;
++                        }
+ 
+-                    if (++totalRecords >= max) {
+-                        if (closestRecords.size() >= 2) {
+-                            int entriesInClosest = 0;
+-                            final Iterator<Double2ObjectMap.Entry<List<PoiRecord>>> iterator = closestRecords.double2ObjectEntrySet().iterator();
+-                            double nextFurthestDistanceSquared = 0.0;
++                        if (dataRange > furthestDistanceSquared && totalRecords >= max) {
++                            // out of range for distance check
++                            continue;
++                        }
+ 
+-                            for (int i = 0, len = closestRecords.size() - 1; i < len; ++i) {
+-                                final Double2ObjectMap.Entry<List<PoiRecord>> recordEntry = iterator.next();
+-                                entriesInClosest += recordEntry.getValue().size();
+-                                nextFurthestDistanceSquared = recordEntry.getDoubleKey();
+-                            }
++                        if (positionPredicate != null && !positionPredicate.test(poiPosition)) {
++                            // filter by position
++                            continue;
++                        }
+ 
+-                            if (entriesInClosest >= max) {
+-                                // the last set of entries at range wont even be considered for sure... nuke em
+-                                final Double2ObjectMap.Entry<List<PoiRecord>> recordEntry = iterator.next();
+-                                totalRecords -= recordEntry.getValue().size();
+-                                iterator.remove();
++                        if (dataRange > furthestDistanceSquared) {
++                            // we know totalRecords < max, so this entry is now our furthest
++                            furthestDistanceSquared = dataRange;
++                        }
+ 
+-                                furthestDistanceSquared = nextFurthestDistanceSquared;
++                        closestRecords.computeIfAbsent(dataRange, (final double unused) -> {
++                            return new ArrayList<>();
++                        }).add(poiData);
++
++                        if (++totalRecords >= max) {
++                            if (closestRecords.size() >= 2) {
++                                int entriesInClosest = 0;
++                                final Iterator<Double2ObjectMap.Entry<List<PoiRecord>>> iterator = closestRecords.double2ObjectEntrySet().iterator();
++                                double nextFurthestDistanceSquared = 0.0;
++
++                                for (int i = 0, len = closestRecords.size() - 1; i < len; ++i) {
++                                    final Double2ObjectMap.Entry<List<PoiRecord>> recordEntry = iterator.next();
++                                    entriesInClosest += recordEntry.getValue().size();
++                                    nextFurthestDistanceSquared = recordEntry.getDoubleKey();
++                                }
++
++                                if (entriesInClosest >= max) {
++                                    // the last set of entries at range wont even be considered for sure... nuke em
++                                    final Double2ObjectMap.Entry<List<PoiRecord>> recordEntry = iterator.next();
++                                    totalRecords -= recordEntry.getValue().size();
++                                    iterator.remove();
++
++                                    furthestDistanceSquared = nextFurthestDistanceSquared;
++                                }
+                             }
+                         }
+                     }
+                 }
+             }
++        } finally {
++            if (scratch != null) scratch.close();
+         }
+ 
+         final List<PoiRecord> closestRecordsUnsorted = new ArrayList<>();
