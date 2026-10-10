@@ -1,6 +1,7 @@
 package com.latticemc.lattice.bridge;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.PathNavigationRegion;
 
 /**
@@ -39,8 +40,14 @@ final class PathfinderStateSnapshot {
         int index = 0;
         for (int y = minY; y < minY + sizeY; ++y) {
             for (int z = minZ; z < minZ + sizeZ; ++z) {
-                for (int x = minX; x < minX + sizeX; ++x, ++index) {
-                    int descriptor = cache.descriptorAt(region, cursor.set(x, y, z));
+                long sectionKey = 0;
+                int localIndex = 0;
+                for (int x = minX; x < minX + sizeX; ++x, ++index, ++localIndex) {
+                    if (x == minX || (x & 15) == 0) {
+                        sectionKey = SectionPos.asLong(x >> 4, y >> 4, z >> 4);
+                        localIndex = (x & 15) | ((z & 15) << 4) | ((y & 15) << 8);
+                    }
+                    int descriptor = cache.descriptorAt(region, cursor.set(x, y, z), sectionKey, localIndex);
                     if (descriptor < 0) return false;
                     this.cells[index] = descriptor;
                 }

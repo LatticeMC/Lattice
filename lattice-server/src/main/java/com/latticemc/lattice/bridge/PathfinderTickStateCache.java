@@ -53,8 +53,12 @@ final class PathfinderTickStateCache {
     }
 
     int descriptorAt(PathNavigationRegion region, BlockPos.MutableBlockPos pos) {
-        Section section = this.sectionAt(pos);
-        int index = section == null ? -1 : sectionIndex(pos);
+        return this.descriptorAt(region, pos, SectionPos.asLong(pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4), sectionIndex(pos));
+    }
+
+    int descriptorAt(PathNavigationRegion region, BlockPos.MutableBlockPos pos, long sectionKey, int index) {
+        // Rebind after every possible world callback, including reentrant cache resets.
+        Section section = this.lastSectionKey == sectionKey ? this.lastSection : this.sectionAt(sectionKey);
         if (section != null) {
             int descriptor = section.descriptors[index];
             if (descriptor >= 0) {
@@ -96,8 +100,7 @@ final class PathfinderTickStateCache {
         if (section != null) section.descriptors[sectionIndex(pos)] = -1;
     }
 
-    private Section sectionAt(BlockPos pos) {
-        long key = SectionPos.asLong(pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
+    private Section sectionAt(long key) {
         if (this.lastSectionKey == key) return this.lastSection;
         Section section = this.sections.get(key);
         if (section == null && this.sections.size() < MAX_CACHED_SECTIONS) {

@@ -112,10 +112,11 @@ public final class NativeLineOfSight {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int y = 0; y < sizeY; ++y) {
             for (int z = 0; z < sizeZ; ++z) {
+                int rowBase = (y * sizeZ + z) * sizeX;
                 for (int x = 0; x < sizeX; ++x) {
                     pos.set(minX + x, minY + y, minZ + z);
                     if (isCollidableToLos(level, pos, level.getBlockState(pos))) {
-                        data[index(x, y, z, sizeX, sizeZ)] = 1;
+                        data[rowBase + x] = 1;
                     }
                 }
             }
@@ -523,7 +524,7 @@ public final class NativeLineOfSight {
         }
 
         SectionMask mask = getSectionMask(level, sectionX, sectionY, sectionZ);
-        int localIndex = index(x & 15, y & 15, z & 15, SECTION_SIZE, SECTION_SIZE);
+        int localIndex = (x & 15) | ((z & 15) << 4) | ((y & 15) << 8);
         byte value = mask.data[localIndex];
         if (value < 0) {
             pos.set(x, y, z);

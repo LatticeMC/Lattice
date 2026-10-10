@@ -19,6 +19,25 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class HeightmapCombinedUpdateTestSuite {
+    @Test void combinedUpdatePreservesNonzeroColumnIndexesAndIndependentMinY() {
+        Heightmap[] actual = new Heightmap[4], expected = new Heightmap[4];
+        for (int i = 0; i < 4; i++) {
+            ChunkAccess chunk = mock(ChunkAccess.class);
+            when(chunk.getHeight()).thenReturn(384); when(chunk.getMinY()).thenReturn(-64 + i * 16);
+            actual[i] = new Heightmap(chunk, Heightmap.Types.WORLD_SURFACE);
+            expected[i] = new Heightmap(chunk, Heightmap.Types.WORLD_SURFACE);
+        }
+        java.util.Random random = new java.util.Random(928734);
+        for (int i = 0; i < 300; i++) {
+            int x = random.nextInt(16), z = random.nextInt(16), y = random.nextInt(256);
+            Heightmap.updateAll(actual[0], actual[1], actual[2], actual[3], x, y, z, Blocks.STONE.defaultBlockState());
+            for (int map = 0; map < 4; map++) {
+                expected[map].update(x, y, z, Blocks.STONE.defaultBlockState());
+                assertArrayEquals(expected[map].getRawData(), actual[map].getRawData());
+            }
+        }
+    }
+
     @BeforeAll
     static void bootstrapRegistries() {
         SharedConstants.tryDetectVersion();

@@ -10,8 +10,8 @@ import net.minecraft.core.BlockPos;
 public final class PathfinderCacheAllocationBenchmark {
     private static final ThreadMXBean ALLOCATION = (ThreadMXBean) ManagementFactory.getThreadMXBean();
     private static volatile long sink;
-    private static final int WARMUP = 5;
-    private static final int SAMPLES = 11;
+    private static final int WARMUP = Integer.getInteger("lattice.pathCacheWarmup", 5);
+    private static final int SAMPLES = Integer.getInteger("lattice.pathCacheSamples", 11);
     private static final int SNAPSHOT_POINTS = 65 * 8 * 17;
 
     public static void main(String[] args) {
@@ -24,6 +24,8 @@ public final class PathfinderCacheAllocationBenchmark {
         boolean reverse = Boolean.getBoolean("lattice.pathCacheBenchReverse");
         for (int order = 0; order < patterns.length; order++) {
             String pattern = patterns[reverse ? patterns.length - 1 - order : order];
+            String selectedPattern = System.getProperty("lattice.pathCachePattern");
+            if (selectedPattern != null && !selectedPattern.equals(pattern)) continue;
             PathfinderCacheTestSupport fixture = new PathfinderCacheTestSupport();
             PathfinderTickStateCache cache = new PathfinderTickStateCache();
             cache.begin(fixture.level, 0);
@@ -35,6 +37,7 @@ public final class PathfinderCacheAllocationBenchmark {
             if (!pattern.equals("hot")) cache.descriptorAt(fixture.region, pos.set(8192, 0, 0));
             PathfinderStateSnapshot snapshot = new PathfinderStateSnapshot();
             int iterations = pattern.equals("snapshot-cold") ? 8 : pattern.startsWith("cold-") && !pattern.equals("cold-repeat") ? 8192 : 500_000;
+            iterations = Integer.getInteger("lattice.pathCacheIterations", iterations);
             long points = (long) iterations * (pattern.equals("snapshot-cold") ? SNAPSHOT_POINTS : 1);
             for (int i = 0; i < WARMUP; i++) check(run(pattern, fixture, cache, snapshot, pos, iterations), points);
             double[] ns = new double[SAMPLES], bytes = new double[SAMPLES];

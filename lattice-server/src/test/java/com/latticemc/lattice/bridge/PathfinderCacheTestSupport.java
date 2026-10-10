@@ -58,6 +58,7 @@ final class PathfinderCacheTestSupport {
         BlockState state;
         boolean patterned;
         long reads;
+        java.util.function.Consumer<BlockPos> onRead;
 
         private StateChunk() { super(null, new ChunkPos(0, 0), null); }
 
@@ -65,6 +66,7 @@ final class PathfinderCacheTestSupport {
 
         @Override public BlockState getBlockState(BlockPos pos) {
             reads++;
+            if (onRead != null) onRead.accept(pos);
             return patterned ? STATES[(pos.getX() ^ pos.getY() ^ pos.getZ()) & 3] : state;
         }
     }

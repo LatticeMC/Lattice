@@ -1,6 +1,6 @@
 package net.minecraft.world.level.levelgen;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.Random;
 import net.minecraft.SharedConstants;
@@ -10,6 +10,15 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class NoiseInterpolatorCellFillTest {
+    @Test
+    void emptyDimensionsDoNotTouchTheOutput() {
+        for (int[] size : new int[][]{{0, 8}, {-1, 8}, {4, 0}, {4, -1}, {12, 0}, {12, -1}}) {
+            double[] values = {Double.longBitsToDouble(0x7ff8123456789abcL)};
+            NoiseChunk.NoiseInterpolator.lattice$fillCellArray(values, size[0], size[1], 1, 2, 3, 4, 5, 6, 7, 8);
+            assertEquals(0x7ff8123456789abcL, Double.doubleToRawLongBits(values[0]));
+        }
+    }
+
     @BeforeAll
     static void bootstrapRegistries() {
         SharedConstants.tryDetectVersion();
@@ -19,9 +28,9 @@ class NoiseInterpolatorCellFillTest {
     @Test
     void directCellFillMatchesScalarLerp3BitForBit() {
         Random random = new Random(0x4c415454494345L);
-        for (int cellWidth : new int[] {1, 2, 4, 8}) {
-            for (int cellHeight : new int[] {1, 2, 4, 8}) {
-                for (int sample = 0; sample < 128; sample++) {
+        for (int cellWidth : new int[] {1, 2, 3, 4, 5, 8, 12, 16}) {
+            for (int cellHeight : new int[] {1, 2, 3, 4, 5, 8, 12, 16}) {
+                for (int sample = 0; sample < 32; sample++) {
                     double[] noise = new double[8];
                     for (int i = 0; i < noise.length; i++) {
                         noise[i] = random.nextDouble(-2.0, 2.0);
@@ -43,7 +52,9 @@ class NoiseInterpolatorCellFillTest {
                         noise[7]
                     );
 
-                    assertArrayEquals(expected, actual);
+                    for (int i = 0; i < expected.length; i++) {
+                        assertEquals(Double.doubleToRawLongBits(expected[i]), Double.doubleToRawLongBits(actual[i]));
+                    }
                 }
             }
         }

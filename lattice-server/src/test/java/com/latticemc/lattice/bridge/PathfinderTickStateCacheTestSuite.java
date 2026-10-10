@@ -12,6 +12,48 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class PathfinderTickStateCacheTestSuite {
+    private record ScanResult(boolean success, int[] cells, java.util.List<BlockPos> reads, long hits, long misses) {}
+
+    private static ScanResult scan(boolean snapshot, boolean reset) {
+        var fixture = new PathfinderCacheTestSupport();
+        var cache = new PathfinderTickStateCache();
+        cache.begin(fixture.level, 0);
+        var cursor = new BlockPos.MutableBlockPos();
+        fixture.chunk.patterned = true;
+        cache.descriptorAt(fixture.region, cursor.set(-16, -1, 0));
+        var reads = new java.util.ArrayList<BlockPos>();
+        fixture.chunk.onRead = pos -> {
+            reads.add(pos.immutable());
+            if (reads.size() == 1) PathfinderTickStateCache.invalidate(fixture.level, new BlockPos(-16, -1, 0));
+            if (reset && reads.size() == 2) cache.begin(new Object(), 1);
+        };
+        int[] cells;
+        boolean success = true;
+        if (snapshot) {
+            var value = new PathfinderStateSnapshot();
+            success = value.fill(fixture.region, cache, -17, -1, 0, 35, 2, 2);
+            cells = java.util.Arrays.copyOf(value.cells(), value.cellCount());
+        } else {
+            cells = new int[35 * 2 * 2]; int index = 0;
+            for (int y = -1; y < 1; y++) for (int z = 0; z < 2; z++) for (int x = -17; x < 18; x++) {
+                cells[index++] = cache.descriptorAt(fixture.region, cursor.set(x, y, z));
+            }
+        }
+        ScanResult result = new ScanResult(success, cells, reads, cache.hits(), cache.misses());
+        cache.begin(null, 0);
+        return result;
+    }
+
+    @Test void snapshotMatchesPointQueriesAcrossInvalidationAndReentrantLevelReset() {
+        for (boolean reset : new boolean[]{false, true}) {
+            ScanResult expected = scan(false, reset), actual = scan(true, reset);
+            assertEquals(expected.success, actual.success);
+            assertArrayEquals(expected.cells, actual.cells);
+            assertEquals(expected.reads, actual.reads);
+            assertEquals(expected.hits, actual.hits); assertEquals(expected.misses, actual.misses);
+        }
+    }
+
     private final PathfinderCacheTestSupport fixture = new PathfinderCacheTestSupport();
     private final PathfinderTickStateCache cache = new PathfinderTickStateCache();
     private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();

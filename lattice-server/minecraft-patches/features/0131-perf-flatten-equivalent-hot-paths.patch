@@ -1,0 +1,945 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 11 Oct 2026 16:00:00 +0800
+Subject: [PATCH] perf: flatten equivalent hot paths
+
+Preserve traversal, callback, arithmetic and partial-write semantics.
+
+diff --git a/net/minecraft/core/MappedRegistry.java b/net/minecraft/core/MappedRegistry.java
+--- a/net/minecraft/core/MappedRegistry.java
++++ b/net/minecraft/core/MappedRegistry.java
+@@ -61,6 +61,12 @@
+     // Lattice end - invalidate direct-mapped BlockState tag caches across datapack reloads
+ 
+     private final ResourceKey<? extends Registry<T>> key;
++    private final IdMap<Holder<T>> holderIdMap = WritableRegistry.super.asHolderIdMap();
++
++    @Override
++    public IdMap<Holder<T>> asHolderIdMap() {
++        return this.holderIdMap;
++    }
+     private final ObjectList<Holder.Reference<T>> byId = new ObjectArrayList<>(256);
+     private final Reference2IntMap<T> toId = Util.make(new Reference2IntOpenHashMap<>(2048), map -> map.defaultReturnValue(-1)); // Paper - Perf: Use bigger expected size to reduce collisions
+     private final Map<Identifier, Holder.Reference<T>> byLocation = new HashMap<>(2048); // Paper - Perf: Use bigger expected size to reduce collisions
+diff --git a/net/minecraft/core/Cursor3D.java b/net/minecraft/core/Cursor3D.java
+--- a/net/minecraft/core/Cursor3D.java
++++ b/net/minecraft/core/Cursor3D.java
+@@ -12,6 +12,7 @@
+     private final int height;
+     private final int depth;
+     private final int end;
++    private final boolean rolling;
+     private int index;
+     private int x;
+     private int y;
+@@ -25,16 +26,27 @@
+         this.height = endY - originY + 1;
+         this.depth = endZ - originZ + 1;
+         this.end = this.width * this.height * this.depth;
++        this.rolling = this.width > 0 && this.height > 0 && this.end >= 0;
+     }
+ 
+     public boolean advance() {
+         if (this.index == this.end) {
+             return false;
+         } else {
+-            this.x = this.index % this.width;
+-            int i = this.index / this.width;
+-            this.y = i % this.height;
+-            this.z = i / this.height;
++            if (this.rolling) {
++                if (this.index != 0 && ++this.x == this.width) {
++                    this.x = 0;
++                    if (++this.y == this.height) {
++                        this.y = 0;
++                        ++this.z;
++                    }
++                }
++            } else {
++                this.x = this.index % this.width;
++                int i = this.index / this.width;
++                this.y = i % this.height;
++                this.z = i / this.height;
++            }
+             this.index++;
+             return true;
+         }
+diff --git a/net/minecraft/core/BlockPos.java b/net/minecraft/core/BlockPos.java
+--- a/net/minecraft/core/BlockPos.java
++++ b/net/minecraft/core/BlockPos.java
+@@ -455,15 +455,30 @@
+         int i1 = maxY - minY + 1;
+         int i2 = maxZ - minZ + 1;
+         int i3 = i * i1 * i2;
++        boolean rolling = i > 0 && i1 > 0 && i3 >= 0;
+         return () -> new AbstractIterator<BlockPos>() {
+             private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+             private int index;
++            private int offsetX;
++            private int offsetY;
++            private int offsetZ;
+ 
+             @Override
+             protected BlockPos computeNext() {
+                 if (this.index == i3) {
+                     return this.endOfData();
+                 } else {
++                    if (rolling) {
++                        if (this.index != 0 && ++this.offsetX == i) {
++                            this.offsetX = 0;
++                            if (++this.offsetY == i1) {
++                                this.offsetY = 0;
++                                ++this.offsetZ;
++                            }
++                        }
++                        ++this.index;
++                        return this.cursor.set(minX + this.offsetX, minY + this.offsetY, minZ + this.offsetZ);
++                    }
+                     int i4 = this.index % i;
+                     int i5 = this.index / i;
+                     int i6 = i5 % i1;
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ThreadedTicketLevelPropagator.java b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ThreadedTicketLevelPropagator.java
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ThreadedTicketLevelPropagator.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/scheduling/ThreadedTicketLevelPropagator.java
+@@ -9,7 +9,6 @@
+ import it.unimi.dsi.fastutil.longs.Long2ByteLinkedOpenHashMap;
+ import it.unimi.dsi.fastutil.shorts.Short2ByteLinkedOpenHashMap;
+ import it.unimi.dsi.fastutil.shorts.Short2ByteMap;
+-import it.unimi.dsi.fastutil.shorts.ShortOpenHashSet;
+ import java.lang.invoke.VarHandle;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+@@ -176,7 +175,7 @@
+                 return false;
+             }
+ 
+-            final int oldSourceSize = section.sources.size();
++            final int oldSourceSize = section.sourceCount;
+ 
+             // process pending sources
+             for (final Iterator<Short2ByteMap.Entry> iterator = section.queuedSources.short2ByteEntrySet().fastIterator(); iterator.hasNext();) {
+@@ -200,6 +199,7 @@
+                     section.levels[pos] = (short)(currLevel | (newSource << 8));
+                     // level is unchanged, don't add to changed positions
+                 } else {
++                    final long encodedPosition = ((long)(posX + (posZ << Propagator.COORDINATE_BITS) + coordinateOffset) & ((1L << (Propagator.COORDINATE_BITS + Propagator.COORDINATE_BITS)) - 1));
+                     // set current level and current source to new source
+                     section.levels[pos] = (short)(newSource | (newSource << 8));
+                     // must add to updated positions in case this is final
+@@ -207,7 +207,7 @@
+                     if (newSource != 0) {
+                         // queue increase with new source level
+                         propagator.appendToIncreaseQueue(
+-                            ((long)(posX + (posZ << Propagator.COORDINATE_BITS) + coordinateOffset) & ((1L << (Propagator.COORDINATE_BITS + Propagator.COORDINATE_BITS)) - 1)) |
++                            encodedPosition |
+                                 ((newSource & (LEVEL_COUNT - 1L)) << (Propagator.COORDINATE_BITS + Propagator.COORDINATE_BITS)) |
+                                 (Propagator.ALL_DIRECTIONS_BITSET << (Propagator.COORDINATE_BITS + Propagator.COORDINATE_BITS + LEVEL_BITS))
+                         );
+@@ -215,7 +215,7 @@
+                     // queue decrease with previous level
+                     if (newSource < currLevel) {
+                         propagator.appendToDecreaseQueue(
+-                            ((long)(posX + (posZ << Propagator.COORDINATE_BITS) + coordinateOffset) & ((1L << (Propagator.COORDINATE_BITS + Propagator.COORDINATE_BITS)) - 1)) |
++                            encodedPosition |
+                                 ((currLevel & (LEVEL_COUNT - 1L)) << (Propagator.COORDINATE_BITS + Propagator.COORDINATE_BITS)) |
+                                 (Propagator.ALL_DIRECTIONS_BITSET << (Propagator.COORDINATE_BITS + Propagator.COORDINATE_BITS + LEVEL_BITS))
+                         );
+@@ -224,16 +224,16 @@
+ 
+                 if (newSource == 0) {
+                     // prevSource != newSource, so we are removing this source
+-                    section.sources.remove((short)pos);
++                    --section.sourceCount;
+                 } else if (prevSource == 0) {
+                     // prevSource != newSource, so we are adding this source
+-                    section.sources.add((short)pos);
++                    ++section.sourceCount;
+                 }
+             }
+ 
+             section.queuedSources.clear();
+ 
+-            final int newSourceSize = section.sources.size();
++            final int newSourceSize = section.sourceCount;
+ 
+             if (oldSourceSize == 0 && newSourceSize != 0) {
+                 // need to make sure the sections in 1 radius are initialised
+@@ -290,7 +290,7 @@
+ 
+                         // we need to check the current section for de-init as well
+                         if (neighbour.oneRadNeighboursWithSources == 0) {
+-                            if (neighbour.queuedSources.isEmpty() && neighbour.sources.isEmpty()) {
++                            if (neighbour.queuedSources.isEmpty() && neighbour.sourceCount == 0) {
+                                 // need to de-init
+                                 this.sections.remove(coordinate);
+                             } // else: neighbour is queued for an update, and it will de-init itself
+@@ -697,8 +697,8 @@
+         // if we REALLY wanted to get crazy, we could make the increase propagator use MethodHandles#byteArrayViewVarHandle
+         // to read and write the lower 8 bits of this array directly rather than reading, updating the bits, then writing back.
+         private final short[] levels = new short[SECTION_SIZE * SECTION_SIZE];
+-        // set of local positions that represent sources
+-        private final ShortOpenHashSet sources = new ShortOpenHashSet();
++        // Number of positions with nonzero source levels (the high eight bits of levels).
++        private int sourceCount;
+         // map of local index to new source level
+         // the source level _cannot_ be updated in the backing storage immediately since the update
+         private static final byte NO_QUEUED_UPDATE = (byte)-1;
+diff --git a/net/minecraft/network/VarLong.java b/net/minecraft/network/VarLong.java
+--- a/net/minecraft/network/VarLong.java
++++ b/net/minecraft/network/VarLong.java
+@@ -7,15 +7,16 @@
+     private static final int DATA_BITS_MASK = 127;
+     private static final int CONTINUATION_BIT_MASK = 128;
+     private static final int DATA_BITS_PER_BYTE = 7;
++    private static final int[] BYTE_LENGTHS = new int[65];
++
++    static {
++        for (int zeros = 0; zeros <= 64; zeros++) {
++            BYTE_LENGTHS[zeros] = Math.max(1, (64 - zeros + 6) / 7);
++        }
++    }
+ 
+     public static int getByteSize(long data) {
+-        for (int i = 1; i < MAX_VARLONG_SIZE; i++) {
+-            if ((data & -1L << i * 7) == 0L) {
+-                return i;
+-            }
+-        }
+-
+-        return MAX_VARLONG_SIZE;
++        return BYTE_LENGTHS[Long.numberOfLeadingZeros(data)];
+     }
+ 
+     public static boolean hasContinuationBit(byte data) {
+@@ -39,6 +40,15 @@
+     }
+ 
+     public static ByteBuf write(ByteBuf buffer, long value) {
++        if ((value & -128L) == 0L) {
++            buffer.writeByte((int)value);
++            return buffer;
++        }
++        if ((value & -16384L) == 0L) {
++            buffer.writeByte((int)(value & 127L) | 128);
++            buffer.writeByte((int)(value >>> 7));
++            return buffer;
++        }
+         while ((value & -128L) != 0L) {
+             buffer.writeByte((int)(value & 127L) | 128);
+             value >>>= 7;
+diff --git a/net/minecraft/network/Varint21FrameDecoder.java b/net/minecraft/network/Varint21FrameDecoder.java
+--- a/net/minecraft/network/Varint21FrameDecoder.java
++++ b/net/minecraft/network/Varint21FrameDecoder.java
+@@ -1,7 +1,6 @@
+ package net.minecraft.network;
+ 
+ import io.netty.buffer.ByteBuf;
+-import io.netty.buffer.Unpooled;
+ import io.netty.channel.ChannelHandlerContext;
+ import io.netty.handler.codec.ByteToMessageDecoder;
+ import io.netty.handler.codec.CorruptedFrameException;
+@@ -10,28 +9,23 @@
+ 
+ public class Varint21FrameDecoder extends ByteToMessageDecoder {
+     private static final int MAX_VARINT21_BYTES = 3;
+-    private final ByteBuf helperBuf = Unpooled.directBuffer(3);
+     private final @Nullable BandwidthDebugMonitor monitor;
+ 
+     public Varint21FrameDecoder(@Nullable BandwidthDebugMonitor monitor) {
+         this.monitor = monitor;
+     }
+ 
+-    @Override
+-    protected void handlerRemoved0(ChannelHandlerContext ctx) {
+-        this.helperBuf.release();
+-    }
+-
+-    private static boolean copyVarint(ByteBuf in, ByteBuf out) {
++    private static int readVarint(ByteBuf in) {
++        int value = 0;
+         for (int i = 0; i < 3; i++) {
+             if (!in.isReadable()) {
+-                return false;
++                return -1;
+             }
+ 
+             byte _byte = in.readByte();
+-            out.writeByte(_byte);
++            value |= (_byte & 127) << (i * 7);
+             if (!VarInt.hasContinuationBit(_byte)) {
+-                return true;
++                return value;
+             }
+         }
+ 
+@@ -47,11 +41,10 @@
+         }
+         // Paper end - Perf: Optimize exception handling
+         in.markReaderIndex();
+-        this.helperBuf.clear();
+-        if (!copyVarint(in, this.helperBuf)) {
++        int i = readVarint(in);
++        if (i < 0) {
+             in.resetReaderIndex();
+         } else {
+-            int i = VarInt.read(this.helperBuf);
+             if (i == 0) {
+                 throw new CorruptedFrameException("Frame length cannot be zero");
+             } else if (in.readableBytes() < i) {
+diff --git a/net/minecraft/resources/Identifier.java b/net/minecraft/resources/Identifier.java
+--- a/net/minecraft/resources/Identifier.java
++++ b/net/minecraft/resources/Identifier.java
+@@ -23,6 +23,7 @@
+     public static final String PAPER_NAMESPACE = "paper"; // Paper
+     private final String namespace;
+     private final String path;
++    private final int hash;
+ 
+     private Identifier(String namespace, String path) {
+         assert isValidNamespace(namespace);
+@@ -38,6 +39,7 @@
+         // Paper end - Validate Identifier
+         this.namespace = namespace;
+         this.path = path;
++        this.hash = 31 * namespace.hashCode() + path.hashCode();
+     }
+ 
+     private static Identifier createUntrusted(String namespace, String path) {
+@@ -140,7 +142,7 @@
+ 
+     @Override
+     public int hashCode() {
+-        return 31 * this.namespace.hashCode() + this.path.hashCode();
++        return this.hash;
+     }
+ 
+     @Override
+diff --git a/net/minecraft/nbt/NbtIo.java b/net/minecraft/nbt/NbtIo.java
+--- a/net/minecraft/nbt/NbtIo.java
++++ b/net/minecraft/nbt/NbtIo.java
+@@ -163,15 +163,17 @@
+     }
+ 
+     public static void writeAnyTag(Tag tag, DataOutput output) throws IOException {
+-        output.writeByte(tag.getId());
+-        if (tag.getId() != 0) {
++        byte id = tag.getId();
++        output.writeByte(id);
++        if (id != 0) {
+             tag.write(output);
+         }
+     }
+ 
+     public static void writeUnnamedTag(Tag tag, DataOutput output) throws IOException {
+-        output.writeByte(tag.getId());
+-        if (tag.getId() != 0) {
++        byte id = tag.getId();
++        output.writeByte(id);
++        if (id != 0) {
+             output.writeUTF("");
+             tag.write(output);
+         }
+diff --git a/net/minecraft/nbt/CompoundTag.java b/net/minecraft/nbt/CompoundTag.java
+--- a/net/minecraft/nbt/CompoundTag.java
++++ b/net/minecraft/nbt/CompoundTag.java
+@@ -176,12 +176,20 @@
+ 
+     @Override
+     public void write(DataOutput output) throws IOException {
+-        for (String string : this.tags.keySet()) {
+-            Tag tag = this.tags.get(string);
++        java.util.Iterator<? extends Map.Entry<String, Tag>> iterator = this.entryIterator();
++        while (iterator.hasNext()) {
++            Map.Entry<String, Tag> entry = iterator.next();
++            String string = entry.getKey();
++            Tag tag = entry.getValue();
+             writeNamedTag(string, tag, output);
+         }
+ 
+         output.writeByte(0);
++    }
++
++    private java.util.Iterator<? extends Map.Entry<String, Tag>> entryIterator() {
++        return this.tags instanceof it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap<String, Tag> map
++            ? map.object2ObjectEntrySet().fastIterator() : this.tags.entrySet().iterator();
+     }
+ 
+     @Override
+@@ -428,8 +436,9 @@
+     }
+ 
+     private static void writeNamedTag(String name, Tag tag, DataOutput output) throws IOException {
+-        output.writeByte(tag.getId());
+-        if (tag.getId() != 0) {
++        byte id = tag.getId();
++        output.writeByte(id);
++        if (id != 0) {
+             output.writeUTF(name);
+             tag.write(output);
+         }
+@@ -448,8 +457,11 @@
+     }
+ 
+     public CompoundTag merge(CompoundTag other) {
+-        for (String string : other.tags.keySet()) {
+-            Tag tag = other.tags.get(string);
++        java.util.Iterator<? extends Map.Entry<String, Tag>> iterator = other.entryIterator();
++        while (iterator.hasNext()) {
++            Map.Entry<String, Tag> entry = iterator.next();
++            String string = entry.getKey();
++            Tag tag = entry.getValue();
+             if (tag instanceof CompoundTag compoundTag && this.tags.get(string) instanceof CompoundTag compoundTag1) {
+                 compoundTag1.merge(compoundTag);
+             } else {
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -291,7 +291,9 @@
+     }
+     // Paper end - per player mob count backoff
+     public int getMobCountNear(final ServerPlayer player, final net.minecraft.world.entity.MobCategory mobCategory) {
+-        return player.mobCounts[mobCategory.ordinal()] + player.mobBackoffCounts[mobCategory.ordinal()]; // Paper - per player mob count backoff
++        final int[] counts = player.mobCounts;
++        final int index = mobCategory.ordinal();
++        return counts[index] + player.mobBackoffCounts[index]; // Paper - per player mob count backoff
+     }
+     // Paper end - Optional per player mob spawns
+ 
+diff --git a/net/minecraft/world/level/levelgen/synth/PerlinNoise.java b/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
+--- a/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/PerlinNoise.java
+@@ -279,7 +279,7 @@
+     }
+ 
+     public static double wrap(double value) {
+-        return value - Mth.lfloor(value / 3.3554432E7 + 0.5) * 3.3554432E7;
++        return value - Mth.lfloor(value * 0x1.0p-25 + 0.5) * 3.3554432E7;
+     }
+ 
+     protected int firstOctave() {
+diff --git a/net/minecraft/world/level/levelgen/synth/BlendedNoise.java b/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
+--- a/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
+@@ -120,7 +120,9 @@
+         for (int i = 0; i < 8; i++) {
+             ImprovedNoise octaveNoise = this.mainNoise.getOctaveNoise(i);
+             if (octaveNoise != null) {
+-                d10 += octaveNoise.noise(PerlinNoise.wrap(d3 * d11), PerlinNoise.wrap(d4 * d11), PerlinNoise.wrap(d5 * d11), d7 * d11, d4 * d11) / d11;
++                double wrappedX = PerlinNoise.wrap(d3 * d11);
++                double scaledY = d4 * d11;
++                d10 += octaveNoise.noise(wrappedX, PerlinNoise.wrap(scaledY), PerlinNoise.wrap(d5 * d11), d7 * d11, scaledY) / d11;
+             }
+ 
+             d11 /= 2.0;
+@@ -133,20 +135,21 @@
+ 
+         for (int i1 = 0; i1 < 16; i1++) {
+             double d13 = PerlinNoise.wrap(d * d11);
+-            double d14 = PerlinNoise.wrap(d1 * d11);
++            double scaledY = d1 * d11;
++            double d14 = PerlinNoise.wrap(scaledY);
+             double d15 = PerlinNoise.wrap(d2 * d11);
+             double d16 = d6 * d11;
+             if (!flag1) {
+                 ImprovedNoise octaveNoise1 = this.minLimitNoise.getOctaveNoise(i1);
+                 if (octaveNoise1 != null) {
+-                    d8 += octaveNoise1.noise(d13, d14, d15, d16, d1 * d11) / d11;
++                    d8 += octaveNoise1.noise(d13, d14, d15, d16, scaledY) / d11;
+                 }
+             }
+ 
+             if (!flag2) {
+                 ImprovedNoise octaveNoise1 = this.maxLimitNoise.getOctaveNoise(i1);
+                 if (octaveNoise1 != null) {
+-                    d9 += octaveNoise1.noise(d13, d14, d15, d16, d1 * d11) / d11;
++                    d9 += octaveNoise1.noise(d13, d14, d15, d16, scaledY) / d11;
+                 }
+             }
+ 
+diff --git a/ca/spottedleaf/moonrise/patches/blockstate_propertyaccess/util/ZeroCollidingReferenceStateTable.java b/ca/spottedleaf/moonrise/patches/blockstate_propertyaccess/util/ZeroCollidingReferenceStateTable.java
+--- a/ca/spottedleaf/moonrise/patches/blockstate_propertyaccess/util/ZeroCollidingReferenceStateTable.java
++++ b/ca/spottedleaf/moonrise/patches/blockstate_propertyaccess/util/ZeroCollidingReferenceStateTable.java
+@@ -21,12 +21,13 @@
+ 
+ public final class ZeroCollidingReferenceStateTable<O, S> {
+ 
+-    private final Int2ObjectOpenHashMap<Indexer> propertyToIndexer;
++    private final Indexer[] propertyToIndexer;
++    private final Int2ObjectOpenHashMap<Indexer> sparsePropertyToIndexer;
++    private final int firstPropertyId;
+     private S[] lookup;
+     private final Collection<Property<?>> properties;
+ 
+     public ZeroCollidingReferenceStateTable(final Collection<Property<?>> properties) {
+-        this.propertyToIndexer = new Int2ObjectOpenHashMap<>(properties.size());
+         this.properties = new ReferenceArrayList<>(properties);
+ 
+         final List<Property<?>> sortedProperties = new ArrayList<>(properties);
+@@ -40,26 +41,45 @@
+             );
+         });
+ 
++        this.firstPropertyId = sortedProperties.isEmpty() ? 0 : ((PropertyAccess<?>)sortedProperties.getFirst()).moonrise$getId();
++        int lastPropertyId = sortedProperties.isEmpty() ? -1 : ((PropertyAccess<?>)sortedProperties.getLast()).moonrise$getId();
++        final long span = (long)lastPropertyId - this.firstPropertyId + 1L;
++        // Property ids are global: unrelated properties must not multiply each state's allocation.
++        final boolean dense = span <= 4096L && span <= Math.max(16L, 4L * sortedProperties.size());
++        this.propertyToIndexer = dense ? new Indexer[(int)span] : null;
++        this.sparsePropertyToIndexer = dense ? null : new Int2ObjectOpenHashMap<>(properties.size());
++
+         int currentMultiple = 1;
+         for (final Property<?> property : sortedProperties) {
+             final int totalValues = property.getPossibleValues().size();
+ 
+-            this.propertyToIndexer.put(
+-                ((PropertyAccess<?>)property).moonrise$getId(),
+-                new Indexer(
++            final Indexer indexer = new Indexer(
+                     totalValues,
+                     currentMultiple,
+                     IntegerUtil.getUnsignedDivisorMagic((long)currentMultiple, 32),
+                     IntegerUtil.getUnsignedDivisorMagic((long)totalValues, 32)
+-                )
+             );
+ 
++            final int propertyId = ((PropertyAccess<?>)property).moonrise$getId();
++            if (this.sparsePropertyToIndexer == null) {
++                this.propertyToIndexer[propertyId - this.firstPropertyId] = indexer;
++            } else {
++                this.sparsePropertyToIndexer.put(propertyId, indexer);
++            }
+             currentMultiple *= totalValues;
+         }
+     }
+ 
+     public <T extends Comparable<T>> boolean hasProperty(final Property<T> property) {
+-        return this.propertyToIndexer.containsKey(((PropertyAccess<T>)property).moonrise$getId());
++        return this.indexer(((PropertyAccess<T>)property).moonrise$getId()) != null;
++    }
++
++    private Indexer indexer(final int propertyId) {
++        if (this.sparsePropertyToIndexer != null) {
++            return this.sparsePropertyToIndexer.get(propertyId);
++        }
++        final int offset = propertyId - this.firstPropertyId;
++        return offset >= 0 && offset < this.propertyToIndexer.length ? this.propertyToIndexer[offset] : null;
+     }
+ 
+     public long getIndex(final StateHolder<O, S> stateHolder) {
+@@ -69,7 +89,7 @@
+             final Property<?> property = entry.getKey();
+             final Comparable<?> value = entry.getValue();
+ 
+-            final Indexer indexer = this.propertyToIndexer.get(((PropertyAccess<?>)property).moonrise$getId());
++            final Indexer indexer = this.indexer(((PropertyAccess<?>)property).moonrise$getId());
+ 
+             ret += (((PropertyAccess)property).moonrise$getIdFor(value)) * indexer.multiple;
+         }
+@@ -104,7 +124,7 @@
+     }
+ 
+     public <T extends Comparable<T>> T get(final long index, final Property<T> property) {
+-        final Indexer indexer = this.propertyToIndexer.get(((PropertyAccess<T>)property).moonrise$getId());
++        final Indexer indexer = this.indexer(((PropertyAccess<T>)property).moonrise$getId());
+         if (indexer == null) {
+             return null;
+         }
+@@ -123,7 +143,7 @@
+             return null;
+         }
+ 
+-        final Indexer indexer = this.propertyToIndexer.get(((PropertyAccess<T>)property).moonrise$getId());
++        final Indexer indexer = this.indexer(((PropertyAccess<T>)property).moonrise$getId());
+         if (indexer == null) {
+             return null;
+         }
+@@ -140,7 +160,7 @@
+     }
+ 
+     public <T extends Comparable<T>> S trySet(final long index, final Property<T> property, final T with, final S dfl) {
+-        final Indexer indexer = this.propertyToIndexer.get(((PropertyAccess<T>)property).moonrise$getId());
++        final Indexer indexer = this.indexer(((PropertyAccess<T>)property).moonrise$getId());
+         if (indexer == null) {
+             return dfl;
+         }
+diff --git a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+--- a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+@@ -356,6 +356,9 @@
+ 
+     @Override
+     public PathType getPathTypeOfMob(PathfindingContext context, int x, int y, int z, Mob mob) {
++        if (this.getClass() == WalkNodeEvaluator.class) {
++            return this.selectPathType(context, x, y, z, mob, this.collectPathTypeMask(context, x, y, z));
++        }
+         Set<PathType> pathTypeWithinMobBb = this.getPathTypeWithinMobBB(context, x, y, z);
+         if (pathTypeWithinMobBb.contains(PathType.FENCE)) {
+             return PathType.FENCE;
+@@ -383,8 +386,35 @@
+         }
+     }
+ 
++    private static final PathType[] MASK_PATH_TYPES = PathType.values();
++
+     public Set<PathType> getPathTypeWithinMobBB(PathfindingContext context, int x, int y, int z) {
++        long mask = this.collectPathTypeMask(context, x, y, z);
+         EnumSet<PathType> set = EnumSet.noneOf(PathType.class);
++        while (mask != 0L) {
++            set.add(MASK_PATH_TYPES[Long.numberOfTrailingZeros(mask)]);
++            mask &= mask - 1;
++        }
++        return set;
++    }
++
++    private PathType selectPathType(PathfindingContext context, int x, int y, int z, Mob mob, long mask) {
++        if ((mask & (1L << PathType.FENCE.ordinal())) != 0L) return PathType.FENCE;
++        if ((mask & (1L << PathType.UNPASSABLE_RAIL.ordinal())) != 0L) return PathType.UNPASSABLE_RAIL;
++        PathType pathType = PathType.BLOCKED;
++        while (mask != 0L) {
++            PathType candidate = MASK_PATH_TYPES[Long.numberOfTrailingZeros(mask)];
++            mask &= mask - 1;
++            if (mob.getPathfindingMalus(candidate) < 0.0F) return candidate;
++            if (mob.getPathfindingMalus(candidate) >= mob.getPathfindingMalus(pathType)) pathType = candidate;
++        }
++        return this.entityWidth <= 1 && pathType != PathType.OPEN
++            && mob.getPathfindingMalus(pathType) == 0.0F && this.getPathType(context, x, y, z) == PathType.OPEN
++            ? PathType.OPEN : pathType;
++    }
++
++    private long collectPathTypeMask(PathfindingContext context, int x, int y, int z) {
++        long mask = 0L;
+ 
+         for (int i = 0; i < this.entityWidth; i++) {
+             for (int i1 = 0; i1 < this.entityHeight; i1++) {
+@@ -409,12 +439,12 @@
+                         pathType = PathType.UNPASSABLE_RAIL;
+                     }
+ 
+-                    set.add(pathType);
+-                }
+-            }
+-        }
+-
+-        return set;
++                    mask |= 1L << pathType.ordinal();
++                }
++            }
++        }
++
++        return mask;
+     }
+ 
+     @Override
+@@ -447,32 +477,36 @@
+         }
+     }
+ 
++    private static final byte[] NEIGHBOUR_OFFSETS = {
++        -1, -1, -1, -1, -1, 0, -1, -1, 1,
++        -1, 0, -1, -1, 0, 0, -1, 0, 1,
++        -1, 1, -1, -1, 1, 0, -1, 1, 1,
++        0, -1, -1, 0, -1, 1, 0, 0, -1,
++        0, 0, 1, 0, 1, -1, 0, 1, 1,
++        1, -1, -1, 1, -1, 0, 1, -1, 1,
++        1, 0, -1, 1, 0, 0, 1, 0, 1,
++        1, 1, -1, 1, 1, 0, 1, 1, 1,
++    };
++
+     public static PathType checkNeighbourBlocks(PathfindingContext context, int x, int y, int z, PathType pathType) {
+-        for (int i = -1; i <= 1; i++) {
+-            for (int i1 = -1; i1 <= 1; i1++) {
+-                for (int i2 = -1; i2 <= 1; i2++) {
+-                    if (i != 0 || i2 != 0) {
+-                        PathType pathTypeFromState = context.getPathTypeFromState(x + i, y + i1, z + i2);
+-                        if (pathTypeFromState == PathType.DAMAGE_OTHER) {
+-                            return PathType.DANGER_OTHER;
+-                        }
+-
+-                        if (pathTypeFromState == PathType.DAMAGE_FIRE || pathTypeFromState == PathType.LAVA) {
+-                            return PathType.DANGER_FIRE;
+-                        }
+-
+-                        if (pathTypeFromState == PathType.WATER) {
+-                            return PathType.WATER_BORDER;
+-                        }
+-
+-                        if (pathTypeFromState == PathType.DAMAGE_CAUTIOUS) {
+-                            return PathType.DAMAGE_CAUTIOUS;
+-                        }
+-                    }
+-                }
+-            }
+-        }
+-
++        for (int offset = 0; offset < NEIGHBOUR_OFFSETS.length; offset += 3) {
++            PathType pathTypeFromState = context.getPathTypeFromState(x + NEIGHBOUR_OFFSETS[offset], y + NEIGHBOUR_OFFSETS[offset + 1], z + NEIGHBOUR_OFFSETS[offset + 2]);
++            if (pathTypeFromState == PathType.DAMAGE_OTHER) {
++                return PathType.DANGER_OTHER;
++            }
++
++            if (pathTypeFromState == PathType.DAMAGE_FIRE || pathTypeFromState == PathType.LAVA) {
++                return PathType.DANGER_FIRE;
++            }
++
++            if (pathTypeFromState == PathType.WATER) {
++                return PathType.WATER_BORDER;
++            }
++
++            if (pathTypeFromState == PathType.DAMAGE_CAUTIOUS) {
++                return PathType.DAMAGE_CAUTIOUS;
++            }
++        }
+         return pathType;
+     }
+ 
+diff --git a/net/minecraft/world/level/levelgen/Heightmap.java b/net/minecraft/world/level/levelgen/Heightmap.java
+--- a/net/minecraft/world/level/levelgen/Heightmap.java
++++ b/net/minecraft/world/level/levelgen/Heightmap.java
+@@ -140,15 +140,16 @@
+         int z,
+         BlockState state
+     ) {
++        int index = getIndex(x, z);
+         int firstAvailable = first.getFirstAvailable(x, z);
+         int secondAvailable = second.getFirstAvailable(x, z);
+         int thirdAvailable = third.getFirstAvailable(x, z);
+         int fourthAvailable = fourth.getFirstAvailable(x, z);
+ 
+-        boolean firstScan = updateWithoutScan(first, firstAvailable, x, y, z, state);
+-        boolean secondScan = updateWithoutScan(second, secondAvailable, x, y, z, state);
+-        boolean thirdScan = updateWithoutScan(third, thirdAvailable, x, y, z, state);
+-        boolean fourthScan = updateWithoutScan(fourth, fourthAvailable, x, y, z, state);
++        boolean firstScan = updateWithoutScan(first, firstAvailable, index, y, state);
++        boolean secondScan = updateWithoutScan(second, secondAvailable, index, y, state);
++        boolean thirdScan = updateWithoutScan(third, thirdAvailable, index, y, state);
++        boolean fourthScan = updateWithoutScan(fourth, fourthAvailable, index, y, state);
+         if (!firstScan && !secondScan && !thirdScan && !fourthScan) {
+             return;
+         }
+@@ -163,34 +164,34 @@
+             mutableBlockPos.set(x, scanY, z);
+             BlockState candidate = first.chunk.getBlockState(mutableBlockPos);
+             if (!firstDone && first.isOpaque.test(candidate)) {
+-                first.setHeight(x, z, scanY + 1);
++                first.setHeight(index, scanY + 1);
+                 firstDone = true;
+             }
+             if (!secondDone && second.isOpaque.test(candidate)) {
+-                second.setHeight(x, z, scanY + 1);
++                second.setHeight(index, scanY + 1);
+                 secondDone = true;
+             }
+             if (!thirdDone && third.isOpaque.test(candidate)) {
+-                third.setHeight(x, z, scanY + 1);
++                third.setHeight(index, scanY + 1);
+                 thirdDone = true;
+             }
+             if (!fourthDone && fourth.isOpaque.test(candidate)) {
+-                fourth.setHeight(x, z, scanY + 1);
++                fourth.setHeight(index, scanY + 1);
+                 fourthDone = true;
+             }
+         }
+ 
+         if (!firstDone) {
+-            first.setHeight(x, z, first.chunk.getMinY());
++            first.setHeight(index, first.chunk.getMinY());
+         }
+         if (!secondDone) {
+-            second.setHeight(x, z, second.chunk.getMinY());
++            second.setHeight(index, second.chunk.getMinY());
+         }
+         if (!thirdDone) {
+-            third.setHeight(x, z, third.chunk.getMinY());
++            third.setHeight(index, third.chunk.getMinY());
+         }
+         if (!fourthDone) {
+-            fourth.setHeight(x, z, fourth.chunk.getMinY());
++            fourth.setHeight(index, fourth.chunk.getMinY());
+         }
+     }
+ 
+@@ -198,9 +199,8 @@
+     private static boolean updateWithoutScan(
+         Heightmap heightmap,
+         int firstAvailable,
+-        int x,
++        int index,
+         int y,
+-        int z,
+         BlockState state
+     ) {
+         if (y <= firstAvailable - 2) {
+@@ -208,7 +208,7 @@
+         }
+         if (heightmap.isOpaque.test(state)) {
+             if (y >= firstAvailable) {
+-                heightmap.setHeight(x, z, y + 1);
++                heightmap.setHeight(index, y + 1);
+             }
+             return false;
+         }
+@@ -231,7 +231,11 @@
+     }
+ 
+     private void setHeight(int x, int z, int value) {
+-        this.data.set(getIndex(x, z), value - this.chunk.getMinY());
++        this.setHeight(getIndex(x, z), value);
++    }
++
++    private void setHeight(int index, int value) {
++        this.data.set(index, value - this.chunk.getMinY());
+     }
+ 
+     public void setRawData(ChunkAccess chunk, Heightmap.Types type, long[] data) {
+@@ -259,7 +263,7 @@
+     }
+ 
+     private static int getIndex(int x, int z) {
+-        return x + z * 16;
++        return x + (z << 4);
+     }
+ 
+     public static enum Types implements StringRepresentable {
+diff --git a/net/minecraft/world/level/levelgen/NoiseChunk.java b/net/minecraft/world/level/levelgen/NoiseChunk.java
+--- a/net/minecraft/world/level/levelgen/NoiseChunk.java
++++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
+@@ -34,6 +34,8 @@
+     );
+     final int cellCountXZ;
+     final int cellCountY;
++    private final int cellValueCount;
++    private final int columnValueCount;
+     final int cellNoiseMinY;
+     private final int firstCellX;
+     private final int firstCellZ;
+@@ -147,6 +149,8 @@
+         this.cellHeight = noiseSettings.getCellHeight();
+         this.cellCountXZ = cellCountXZ;
+         this.cellCountY = Mth.floorDiv(noiseSettings.height(), this.cellHeight);
++        this.cellValueCount = this.cellWidth * this.cellHeight * this.cellWidth;
++        this.columnValueCount = this.cellCountXZ * this.cellCountY * this.cellValueCount;
+         this.cellNoiseMinY = Mth.floorDiv(noiseSettings.minY(), this.cellHeight);
+         this.firstCellX = Math.floorDiv(firstNoiseX, this.cellWidth);
+         this.firstCellZ = Math.floorDiv(firstNoiseZ, this.cellWidth);
+@@ -499,8 +503,8 @@
+         int cellZ = Math.floorDiv(startZ, this.cellWidth);
+         int localCellY = Math.floorDiv(this.cellStartBlockY, this.cellHeight) - this.cellNoiseMinY;
+         int localCellZ = cellZ - this.firstCellZ;
+-        int cellValueCount = this.cellWidth * this.cellHeight * this.cellWidth;
+-        int columnValueCount = this.cellCountXZ * this.cellCountY * cellValueCount;
++        int cellValueCount = this.cellValueCount;
++        int columnValueCount = this.columnValueCount;
+         boolean parityCheck = NativeDensityFunction.shouldCheckParity();
+         if (NativeDensityFunction.shouldTryFillCellColumnDirect()) {
+             DirectCellColumnCache column = this.directCellColumns.get(function);
+@@ -587,8 +591,8 @@
+             this.arrayInterpolationCounter++;
+ 
+             int cellX = Math.floorDiv(this.cellStartBlockX, this.cellWidth);
+-            int cellValueCount = this.cellWidth * this.cellHeight * this.cellWidth;
+-            int columnValueCount = this.cellCountXZ * this.cellCountY * cellValueCount;
++            int cellValueCount = this.cellValueCount;
++            int columnValueCount = this.columnValueCount;
+             int cellOffset = (z * this.cellCountY + y) * cellValueCount;
+             long cacheStart = WorldgenProfiler.hotLoopStart();
+             if (this.preparedCacheColumnCellX == cellX) {
+@@ -1524,6 +1528,24 @@
+             }
+         }
+ 
++        private static final double[][] CELL_FRACTIONS = createCellFractions();
++
++        private static double[][] createCellFractions() {
++            double[][] fractions = new double[5][];
++            for (int size = 4; size <= 16; size += 4) {
++                double[] values = new double[size];
++                for (int i = 0; i < size; i++) {
++                    values[i] = (double)i / size;
++                }
++                fractions[size / 4] = values;
++            }
++            return fractions;
++        }
++
++        private static double[] cellFractions(int size) {
++            return size >= 4 && size <= 16 && (size & 3) == 0 ? CELL_FRACTIONS[size / 4] : null;
++        }
++
+         static void lattice$fillCellArray(
+             double[] array,
+             int cellWidth,
+@@ -1544,11 +1566,13 @@
+                 return;
+             }
+ 
++            double[] xzFractions = cellFractions(cellWidth);
++            double[] yFractions = cellFractions(cellHeight);
+             int arrayIndex = 0;
+             for (int y = cellHeight - 1; y >= 0; y--) {
+-                double yFraction = (double)y / cellHeight;
++                double yFraction = yFractions == null ? (double)y / cellHeight : yFractions[y];
+                 for (int x = 0; x < cellWidth; x++) {
+-                    double xFraction = (double)x / cellWidth;
++                    double xFraction = xzFractions == null ? (double)x / cellWidth : xzFractions[x];
+                     double valueZ0 = Mth.lerp(
+                         yFraction, Mth.lerp(xFraction, noise000, noise100), Mth.lerp(xFraction, noise010, noise110)
+                     );
+@@ -1557,7 +1581,7 @@
+                     );
+ 
+                     for (int z = 0; z < cellWidth; z++) {
+-                        array[arrayIndex++] = Mth.lerp((double)z / cellWidth, valueZ0, valueZ1);
++                        array[arrayIndex++] = Mth.lerp(xzFractions == null ? (double)z / cellWidth : xzFractions[z], valueZ0, valueZ1);
+                     }
+                 }
+             }
+@@ -1575,9 +1599,10 @@
+             double noise011,
+             double noise111
+         ) {
++            double[] yFractions = cellFractions(cellHeight);
+             int arrayIndex = 0;
+             for (int y = cellHeight - 1; y >= 0; y--) {
+-                double yFraction = (double)y / cellHeight;
++                double yFraction = yFractions == null ? (double)y / cellHeight : yFractions[y];
+                 for (int x = 0; x < 4; x++) {
+                     double xFraction = x * 0.25;
+                     double valueZ0 = Mth.lerp(
+diff --git a/net/minecraft/world/entity/Mob.java b/net/minecraft/world/entity/Mob.java
+--- a/net/minecraft/world/entity/Mob.java
++++ b/net/minecraft/world/entity/Mob.java
+@@ -142,7 +142,17 @@
+     private DropChances dropChances = DropChances.DEFAULT;
+     private boolean canPickUpLoot = false;
+     private boolean persistenceRequired = false;
+-    private final Map<PathType, Float> pathfindingMalus = Maps.newEnumMap(PathType.class);
++    private static final float[] DEFAULT_PATHFINDING_MALUS = createDefaultPathfindingMalus();
++    private final float[] pathfindingMalus = DEFAULT_PATHFINDING_MALUS.clone();
++
++    private static float[] createDefaultPathfindingMalus() {
++        PathType[] types = PathType.values();
++        float[] values = new float[types.length];
++        for (PathType type : types) {
++            values[type.ordinal()] = type.getMalus();
++        }
++        return values;
++    }
+     public Optional<ResourceKey<LootTable>> lootTable = Optional.empty();
+     public long lootTableSeed;
+     private Leashable.@Nullable LeashData leashData;
+@@ -196,12 +206,11 @@
+             mob1 = this;
+         }
+ 
+-        Float _float = mob1.pathfindingMalus.get(pathType);
+-        return _float == null ? pathType.getMalus() : _float;
++        return mob1.pathfindingMalus[pathType.ordinal()];
+     }
+ 
+     public void setPathfindingMalus(PathType pathType, float malus) {
+-        this.pathfindingMalus.put(pathType, malus);
++        this.pathfindingMalus[pathType.ordinal()] = malus;
+     }
+ 
+     public void onPathfindingStart() {

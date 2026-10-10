@@ -27,6 +27,7 @@ public final class ActivityArrayMap<V> extends AbstractMap<Activity, V> {
     private Object[] values = new Object[0];
     private int size;
     private int bits;
+    private byte @Nullable [] slots;
     private @Nullable Set<Entry<Activity, V>> entries;
     private @Nullable Set<Activity> keyView;
     private @Nullable Collection<V> valueView;
@@ -53,8 +54,12 @@ public final class ActivityArrayMap<V> extends AbstractMap<Activity, V> {
             return previous;
         }
         this.ensureCapacity();
+        if (this.slots == null) {
+            this.slots = new byte[32];
+        }
         this.keys[this.size] = activity.id;
         this.values[this.size] = value;
+        this.slots[activity.id] = (byte)(this.size + 1);
         this.bits |= 1 << activity.id;
         this.size++;
         return null;
@@ -87,6 +92,9 @@ public final class ActivityArrayMap<V> extends AbstractMap<Activity, V> {
     @Override
     public void clear() {
         Arrays.fill(this.values, 0, this.size, null);
+        if (this.slots != null) {
+            Arrays.fill(this.slots, (byte)0);
+        }
         this.size = 0;
         this.bits = 0;
     }
@@ -133,15 +141,7 @@ public final class ActivityArrayMap<V> extends AbstractMap<Activity, V> {
     }
 
     private int find(int activityId) {
-        if ((this.bits & 1 << activityId) == 0) {
-            return -1;
-        }
-        for (int index = 0; index < this.size; index++) {
-            if (this.keys[index] == activityId) {
-                return index;
-            }
-        }
-        return -1;
+        return activityId < 0 || activityId >= 32 || this.slots == null ? -1 : this.slots[activityId] - 1;
     }
 
     private void ensureCapacity() {
@@ -155,12 +155,16 @@ public final class ActivityArrayMap<V> extends AbstractMap<Activity, V> {
 
     private void removeAt(int index) {
         this.bits &= ~(1 << this.keys[index]);
+        this.slots[this.keys[index]] = 0;
         int tail = this.size - index - 1;
         if (tail > 0) {
             System.arraycopy(this.keys, index + 1, this.keys, index, tail);
             System.arraycopy(this.values, index + 1, this.values, index, tail);
         }
         this.values[--this.size] = null;
+        for (int moved = index; moved < this.size; moved++) {
+            this.slots[this.keys[moved]] = (byte)(moved + 1);
+        }
     }
 
     private final class EntrySet extends AbstractSet<Entry<Activity, V>> {

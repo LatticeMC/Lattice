@@ -84,15 +84,18 @@ public final class NativeBrainEligibility {
         long[] requiredRegistered = new long[behaviorCount * words];
         long[] requiredPresent = new long[behaviorCount * words];
         long[] requiredAbsent = new long[behaviorCount * words];
+        int[] requirementOffsets = batch.requirementOffsets();
+        int[] requirementMemoryIds = batch.requirementMemoryIds();
+        byte[] requirementStatuses = batch.requirementStatuses();
         for (int behavior = 0; behavior < behaviorCount; ++behavior) {
             int maskBase = behavior * words;
-            for (int requirement = batch.requirementOffsets()[behavior];
-                 requirement < batch.requirementOffsets()[behavior + 1];
+            for (int requirement = requirementOffsets[behavior];
+                 requirement < requirementOffsets[behavior + 1];
                  ++requirement) {
-                int memoryId = batch.requirementMemoryIds()[requirement];
+                int memoryId = requirementMemoryIds[requirement];
                 int word = memoryId >>> 6;
                 long bit = 1L << (memoryId & 63);
-                switch (batch.requirementStatuses()[requirement]) {
+                switch (requirementStatuses[requirement]) {
                     case VALUE_PRESENT -> {
                         requiredRegistered[maskBase + word] |= bit;
                         requiredPresent[maskBase + word] |= bit;
@@ -225,19 +228,25 @@ public final class NativeBrainEligibility {
     private static boolean[] javaEvaluateUnchecked(Batch batch) {
         boolean[] output = new boolean[batch.behaviorCount()];
         int wordsPerEntity = batch.memoryWordCount();
+        int[] behaviorEntityIndices = batch.behaviorEntityIndices();
+        int[] requirementOffsets = batch.requirementOffsets();
+        int[] requirementMemoryIds = batch.requirementMemoryIds();
+        byte[] requirementStatuses = batch.requirementStatuses();
+        long[] registeredMemoryBits = batch.registeredMemoryBits();
+        long[] presentMemoryBits = batch.presentMemoryBits();
         for (int behavior = 0; behavior < batch.behaviorCount(); ++behavior) {
-            int entity = batch.behaviorEntityIndices()[behavior];
+            int entity = behaviorEntityIndices[behavior];
             int wordBase = entity * wordsPerEntity;
             boolean eligible = true;
-            for (int requirement = batch.requirementOffsets()[behavior];
-                 requirement < batch.requirementOffsets()[behavior + 1];
+            for (int requirement = requirementOffsets[behavior];
+                 requirement < requirementOffsets[behavior + 1];
                  ++requirement) {
-                int memoryId = batch.requirementMemoryIds()[requirement];
+                int memoryId = requirementMemoryIds[requirement];
                 long bit = 1L << (memoryId & 63);
                 int word = wordBase + (memoryId >>> 6);
-                boolean registered = (batch.registeredMemoryBits()[word] & bit) != 0L;
-                boolean present = (batch.presentMemoryBits()[word] & bit) != 0L;
-                if (!matches(batch.requirementStatuses()[requirement], registered, present)) {
+                boolean registered = (registeredMemoryBits[word] & bit) != 0L;
+                boolean present = (presentMemoryBits[word] & bit) != 0L;
+                if (!matches(requirementStatuses[requirement], registered, present)) {
                     eligible = false;
                     break;
                 }
@@ -250,16 +259,22 @@ public final class NativeBrainEligibility {
     private static boolean[] javaEvaluatePackedUnchecked(PackedBatch batch) {
         boolean[] output = new boolean[batch.behaviorCount()];
         int words = batch.memoryWordCount();
+        int[] behaviorEntityIndices = batch.behaviorEntityIndices();
+        long[] registeredMemoryBits = batch.registeredMemoryBits();
+        long[] presentMemoryBits = batch.presentMemoryBits();
+        long[] requiredRegisteredBits = batch.requiredRegisteredBits();
+        long[] requiredPresentBits = batch.requiredPresentBits();
+        long[] requiredAbsentBits = batch.requiredAbsentBits();
         for (int behavior = 0; behavior < batch.behaviorCount(); ++behavior) {
-            int entityBase = batch.behaviorEntityIndices()[behavior] * words;
+            int entityBase = behaviorEntityIndices[behavior] * words;
             int maskBase = behavior * words;
             boolean eligible = true;
             for (int word = 0; word < words; ++word) {
-                long registered = batch.registeredMemoryBits()[entityBase + word];
-                long present = batch.presentMemoryBits()[entityBase + word];
-                long requiredRegistered = batch.requiredRegisteredBits()[maskBase + word];
-                long requiredPresent = batch.requiredPresentBits()[maskBase + word];
-                long requiredAbsent = batch.requiredAbsentBits()[maskBase + word];
+                long registered = registeredMemoryBits[entityBase + word];
+                long present = presentMemoryBits[entityBase + word];
+                long requiredRegistered = requiredRegisteredBits[maskBase + word];
+                long requiredPresent = requiredPresentBits[maskBase + word];
+                long requiredAbsent = requiredAbsentBits[maskBase + word];
                 if ((registered & requiredRegistered) != requiredRegistered
                         || (present & requiredPresent) != requiredPresent
                         || (registered & requiredAbsent) != requiredAbsent
@@ -277,16 +292,22 @@ public final class NativeBrainEligibility {
         int outputWords = wordsForBehaviors(batch.behaviorCount());
         java.util.Arrays.fill(outputEligibleBits, 0, outputWords, 0L);
         int words = batch.memoryWordCount();
+        int[] behaviorEntityIndices = batch.behaviorEntityIndices();
+        long[] registeredMemoryBits = batch.registeredMemoryBits();
+        long[] presentMemoryBits = batch.presentMemoryBits();
+        long[] requiredRegisteredBits = batch.requiredRegisteredBits();
+        long[] requiredPresentBits = batch.requiredPresentBits();
+        long[] requiredAbsentBits = batch.requiredAbsentBits();
         for (int behavior = 0; behavior < batch.behaviorCount(); ++behavior) {
-            int entityBase = batch.behaviorEntityIndices()[behavior] * words;
+            int entityBase = behaviorEntityIndices[behavior] * words;
             int maskBase = behavior * words;
             boolean eligible = true;
             for (int word = 0; word < words; ++word) {
-                long registered = batch.registeredMemoryBits()[entityBase + word];
-                long present = batch.presentMemoryBits()[entityBase + word];
-                long requiredRegistered = batch.requiredRegisteredBits()[maskBase + word];
-                long requiredPresent = batch.requiredPresentBits()[maskBase + word];
-                long requiredAbsent = batch.requiredAbsentBits()[maskBase + word];
+                long registered = registeredMemoryBits[entityBase + word];
+                long present = presentMemoryBits[entityBase + word];
+                long requiredRegistered = requiredRegisteredBits[maskBase + word];
+                long requiredPresent = requiredPresentBits[maskBase + word];
+                long requiredAbsent = requiredAbsentBits[maskBase + word];
                 if ((registered & requiredRegistered) != requiredRegistered
                         || (present & requiredPresent) != requiredPresent
                         || (registered & requiredAbsent) != requiredAbsent
