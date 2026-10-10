@@ -15,6 +15,31 @@ import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
 
 public class FluidSectionTestSuite {
+    @Test void scanKeepsXyzOrderAndRereadsSectionAfterFluidCallback() {
+        try (var f = new FluidSectionTestSupport()) {
+            var first = mock(net.minecraft.world.level.chunk.PalettedContainer.class);
+            var next = mock(net.minecraft.world.level.chunk.PalettedContainer.class);
+            var block = mock(net.minecraft.world.level.block.state.BlockState.class);
+            var fluid = mock(FluidState.class);
+            when(block.getFluidState()).thenReturn(fluid);
+            when(fluid.is(FluidTags.LAVA)).thenReturn(true);
+            List<Integer> visits = new ArrayList<>();
+            when(first.get(anyInt())).thenAnswer(call -> { visits.add(-(int)call.getArgument(0)); return block; });
+            when(next.get(anyInt())).thenAnswer(call -> { visits.add(call.getArgument(0)); return block; });
+            var sections = f.sections(8, 8);
+            sections[1] = new net.minecraft.world.level.chunk.LevelChunkSection(first, null);
+            when(fluid.getHeight(eq(f.world), any(BlockPos.class))).thenAnswer(call -> {
+                sections[1] = new net.minecraft.world.level.chunk.LevelChunkSection(next, null);
+                return .75F;
+            });
+            var entity = f.entity(new AABB(8, 0, 8, 10, 2, 10), false);
+            assertTrue(entity.updateFluidHeightAndDoFluidPushing(FluidTags.LAVA, .014));
+            assertEquals(List.of(-136, 152, 392, 408, 137, 153, 393, 409), visits);
+            assertEquals(new BlockPos(9, 1, 9), entity.lastLavaContact);
+            verify(first, times(1)).get(anyInt());
+            verify(next, times(7)).get(anyInt());
+        }
+    }
     @Test void everyBuiltinStateMatchesOriginalHeight() {
         try(var f=new FluidSectionTestSupport()) {
             int compared=0;

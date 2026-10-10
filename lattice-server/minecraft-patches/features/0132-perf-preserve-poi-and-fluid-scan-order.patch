@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 11 Oct 2026 16:00:00 +0800
+Subject: [PATCH] perf: reuse integer indexes and ordered POI neighbours
+
+Preserve callbacks, mutable coordinates, scan order and section rebinding.
+
+diff --git a/net/minecraft/world/entity/Entity.java b/net/minecraft/world/entity/Entity.java
+--- a/net/minecraft/world/entity/Entity.java
++++ b/net/minecraft/world/entity/Entity.java
+@@ -5050,13 +5050,17 @@
+         }
+ 
+         for (int currX = minBlockX; currX <= maxBlockX; ++currX) {
++            final int sectionX = currX >> 4;
++            final int localX = currX & 15;
+             for (int currY = minBlockY; currY <= maxBlockY; ++currY) {
++                final int sectionIndex = (currY >> 4) - minSection;
++                final int localXY = localX | ((currY & 15) << 8);
+                 for (int currZ = minBlockZ; currZ <= maxBlockZ; ++currZ) {
+                     final net.minecraft.world.level.chunk.LevelChunkSection[] currentSections = singleSections != null
+                         ? singleSections
+-                        : sections[(currX >> 4) + chunkLenX*(currZ >> 4) + chunkOffset];
+-                    final FluidState fluidState = currentSections[(currY >> 4) - minSection]
+-                        .states.get((currX & 15) | ((currZ & 15) << 4) | ((currY & 15) << 8)).getFluidState();
++                        : sections[sectionX + chunkLenX*(currZ >> 4) + chunkOffset];
++                    final FluidState fluidState = currentSections[sectionIndex]
++                        .states.get(localXY | ((currZ & 15) << 4)).getFluidState();
+ 
+                     if (fluidState.isEmpty() || !fluidState.is(fluid)) {
+                         continue;
+diff --git a/io/papermc/paper/util/PoiAccess.java b/io/papermc/paper/util/PoiAccess.java
+--- a/io/papermc/paper/util/PoiAccess.java
++++ b/io/papermc/paper/util/PoiAccess.java
+@@ -28,6 +28,10 @@
+  * Provides optimised access to POI data. All returned values will be identical to vanilla.
+  */
+ public final class PoiAccess {
++    // 原 dz -> dx -> dy 扫描中六个轴向邻居的顺序。
++    private static final byte[] CARDINAL_NEIGHBOURS = {
++        0, 0, -1, -1, 0, 0, 0, -1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1
++    };
+ 
+     protected static double clamp(final double val, final double min, final double max) {
+         return (val < min ? min : (val > max ? max : val));
+@@ -257,24 +261,13 @@
+                 }
+ 
+                 // queue all neighbours
+-                for (int dz = -1; dz <= 1; ++dz) {
+-                    for (int dx = -1; dx <= 1; ++dx) {
+-                        for (int dy = -1; dy <= 1; ++dy) {
+-                            // -1 and 1 have the 1st bit set. so just add up the first bits, and it will tell us how many
+-                            // values are set. we only care about cardinal neighbours, so, we only care if one value is set
+-                            if ((dx & 1) + (dy & 1) + (dz & 1) != 1) {
+-                                continue;
+-                            }
+-
+-                            final int neighbourX = sectionX + dx;
+-                            final int neighbourY = sectionY + dy;
+-                            final int neighbourZ = sectionZ + dz;
+-
+-                            final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
+-                            if (scratch == null ? seen.add(neighbourKey) : scratch.seen.add(neighbourKey)) {
+-                                queue.enqueue(neighbourKey);
+-                            }
+-                        }
++                for (int offset = 0; offset < CARDINAL_NEIGHBOURS.length; offset += 3) {
++                    final int neighbourX = sectionX + CARDINAL_NEIGHBOURS[offset];
++                    final int neighbourY = sectionY + CARDINAL_NEIGHBOURS[offset + 1];
++                    final int neighbourZ = sectionZ + CARDINAL_NEIGHBOURS[offset + 2];
++                    final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
++                    if (scratch == null ? seen.add(neighbourKey) : scratch.seen.add(neighbourKey)) {
++                        queue.enqueue(neighbourKey);
+                     }
+                 }
+ 
+@@ -507,24 +500,13 @@
+                 }
+ 
+                 // queue all neighbours
+-                for (int dz = -1; dz <= 1; ++dz) {
+-                    for (int dx = -1; dx <= 1; ++dx) {
+-                        for (int dy = -1; dy <= 1; ++dy) {
+-                            // -1 and 1 have the 1st bit set. so just add up the first bits, and it will tell us how many
+-                            // values are set. we only care about cardinal neighbours, so, we only care if one value is set
+-                            if ((dx & 1) + (dy & 1) + (dz & 1) != 1) {
+-                                continue;
+-                            }
+-
+-                            final int neighbourX = sectionX + dx;
+-                            final int neighbourY = sectionY + dy;
+-                            final int neighbourZ = sectionZ + dz;
+-
+-                            final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
+-                            if (scratch == null ? seen.add(neighbourKey) : scratch.seen.add(neighbourKey)) {
+-                                queue.enqueue(neighbourKey);
+-                            }
+-                        }
++                for (int offset = 0; offset < CARDINAL_NEIGHBOURS.length; offset += 3) {
++                    final int neighbourX = sectionX + CARDINAL_NEIGHBOURS[offset];
++                    final int neighbourY = sectionY + CARDINAL_NEIGHBOURS[offset + 1];
++                    final int neighbourZ = sectionZ + CARDINAL_NEIGHBOURS[offset + 2];
++                    final long neighbourKey = CoordinateUtils.getChunkSectionKey(neighbourX, neighbourY, neighbourZ);
++                    if (scratch == null ? seen.add(neighbourKey) : scratch.seen.add(neighbourKey)) {
++                        queue.enqueue(neighbourKey);
+                     }
+                 }
+ 

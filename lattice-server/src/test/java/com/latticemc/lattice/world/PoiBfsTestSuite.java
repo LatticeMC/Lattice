@@ -7,6 +7,29 @@ import net.minecraft.world.entity.ai.village.poi.*;
 import org.junit.jupiter.api.Test;
 
 public class PoiBfsTestSuite {
+    @Test void typeCallbackCanMoveSourceBeforeRecordDistanceCheck() {
+        for (boolean nearest : new boolean[]{false, true}) {
+            var manager = PoiBfsTestSupport.manager();
+            PoiBfsTestSupport.add(manager, 0, 0, 0, PoiBfsTestSupport.TYPE, 2);
+            PoiBfsTestSupport.add(manager, 16, 0, 0, PoiBfsTestSupport.TYPE, 2);
+            var source = new BlockPos.MutableBlockPos(0, 0, 0);
+            var records = PoiBfsTestSupport.query(manager, nearest, source, 32, 1,
+                PoiManager.Occupancy.ANY, false, 1,
+                type -> { source.set(16, 0, 0); return true; }, null, new ArrayList<>());
+            assertEquals(List.of(new BlockPos(16, 0, 0)), records.stream().map(PoiRecord::getPos).toList());
+        }
+    }
+    @Test void duplicateAtGrowthThresholdDoesNotAllocateNewTable() throws Exception {
+        var seen = new PoiBfsScratch.SeenSet();
+        for (int i = 0; i < 24; i++) assertTrue(seen.add(i));
+        var field = PoiBfsScratch.SeenSet.class.getDeclaredField("keys");
+        field.setAccessible(true);
+        Object original = field.get(seen);
+        assertFalse(seen.add(0));
+        assertSame(original, field.get(seen));
+        assertTrue(seen.add(24));
+        assertNotSame(original, field.get(seen));
+    }
     @Test void generationSetMatchesHashSetAcrossGrowthCollisionsAndWrap() {
         var actual=new PoiBfsScratch.SeenSet();
         var expected=new HashSet<Long>();

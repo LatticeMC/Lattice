@@ -8,6 +8,8 @@ import com.destroystokyo.paper.event.server.ServerTickStartEvent;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.logging.Logger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.junit.jupiter.api.Test;
@@ -17,10 +19,15 @@ class SchedulingBenchmarkCommandTest {
     @TempDir Path directory;
 
     private SchedulingBenchmarkCommand command(Path output) {
+        return command(output, new AtomicLong(100)::getAndIncrement);
+    }
+
+    private SchedulingBenchmarkCommand command(Path output, LongSupplier cpu) {
         JavaPlugin plugin = mock(JavaPlugin.class);
         when(plugin.getDataFolder()).thenReturn(output.toFile());
         when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
-        return new SchedulingBenchmarkCommand(plugin);
+        AtomicLong nanos = new AtomicLong(1000);
+        return new SchedulingBenchmarkCommand(plugin, cpu, () -> nanos.addAndGet(10), () -> 1234);
     }
 
     private static void record(SchedulingBenchmarkCommand command, CommandSender sender) {
@@ -46,8 +53,8 @@ class SchedulingBenchmarkCommandTest {
             for (Path output : outputs) {
                 var rows = Files.readAllLines(output);
                 assertEquals(21, rows.size());
-                assertEquals("101,1.0", rows.get(1));
-                assertEquals("139,20.0", rows.get(20));
+                assertEquals("101,1.0,measurement,1010,1020,1234,1010", rows.get(1));
+                assertEquals("139,20.0,measurement,1390,1400,1234,1010", rows.get(20));
             }
         }
     }
@@ -85,5 +92,68 @@ class SchedulingBenchmarkCommandTest {
         record(command, sender);
         command.execute(sender, "schedulingbench", new String[]{"status"});
         verify(sender).sendMessage(startsWith("failed java.nio.file.FileAlreadyExistsException"));
+    }
+
+    @Test void fixedSettlingRetainsRawTicksAndAlignsCpuWithMeasurement() throws Exception {
+        LongSupplier cpu = mock(LongSupplier.class);
+        when(cpu.getAsLong()).thenReturn(100L, 450L);
+        SchedulingBenchmarkCommand command = command(directory, cpu);
+        CommandSender sender = mock(CommandSender.class);
+        assertTrue(command.execute(sender, "schedulingbench", new String[]{"start", "20", "2"}));
+        command.onTick(new ServerTickEndEvent(100, 999, 0));
+        for (int i = 0; i < 22; i++) {
+            command.onTickStart(new ServerTickStartEvent(101 + i));
+            if (i < 2) verifyNoInteractions(cpu);
+            command.onTick(new ServerTickEndEvent(101 + i, i < 2 ? 100 : i - 1, 0));
+            // A duplicate end event must not advance the measurement.
+            command.onTick(new ServerTickEndEvent(101 + i, 999, 0));
+        }
+        verify(cpu, times(2)).getAsLong();
+        command.execute(sender, "schedulingbench", new String[]{"status"});
+        verify(sender).sendMessage(contains("complete ticks=20 first=103 last=122 mean=10.500000 median=10.500000 p95=19.000000 p99=20.000000"));
+        verify(sender).sendMessage(contains("settleTicks=2 allTicks=22 allFirst=101 allmean=18.636364"));
+        verify(sender).sendMessage(contains("processCpuNs=350 elapsedNs=390"));
+        try (var files = Files.list(directory)) {
+            var rows = Files.readAllLines(files.findFirst().orElseThrow());
+            assertEquals(23, rows.size());
+            assertEquals("101,100.0,settling,1010,1020,1234,1010", rows.get(1));
+            assertEquals("103,1.0,measurement,1050,1060,1234,1010", rows.get(3));
+            assertEquals("122,20.0,measurement,1430,1440,1234,1010", rows.get(22));
+        }
+    }
+
+    @Test void rejectsInvalidSettlingAndReportsUnavailableCpu() {
+        CommandSender sender = mock(CommandSender.class);
+        SchedulingBenchmarkCommand command = command(directory, () -> -1);
+        for (String settle : new String[]{"-1", "72001", "invalid"}) {
+            assertFalse(command.execute(sender, "schedulingbench", new String[]{"start", "20", settle}));
+        }
+        record(command, sender);
+        command.execute(sender, "schedulingbench", new String[]{"status"});
+        verify(sender).sendMessage(contains("processCpuNs=NA"));
+    }
+
+    @Test void thresholdCountsAreStrictAndDoNotReplacePercentiles() {
+        SchedulingBenchmarkCommand command = command(directory);
+        CommandSender sender = mock(CommandSender.class);
+        assertTrue(command.execute(sender, "schedulingbench", new String[]{"start", "20"}));
+        double[] values = {15, 25, 50, 100, 101};
+        for (int i = 0; i < 20; i++) {
+            command.onTickStart(new ServerTickStartEvent(i));
+            command.onTick(new ServerTickEndEvent(i, values[i % 5], 0));
+        }
+        command.execute(sender, "schedulingbench", new String[]{"status"});
+        verify(sender).sendMessage(contains("p99=101.000000 gt15=16 gt25=12 gt50=8 gt100=4"));
+    }
+
+    @Test void backwardsCpuClockIsNotReportedAsNegativeCpuUsage() {
+        LongSupplier cpu = mock(LongSupplier.class);
+        when(cpu.getAsLong()).thenReturn(500L, 100L);
+        CommandSender sender = mock(CommandSender.class);
+        SchedulingBenchmarkCommand command = command(directory, cpu);
+        record(command, sender);
+        command.execute(sender, "schedulingbench", new String[]{"status"});
+        verify(sender).sendMessage(contains("processCpuNs=NA"));
+        verify(cpu, times(2)).getAsLong();
     }
 }
