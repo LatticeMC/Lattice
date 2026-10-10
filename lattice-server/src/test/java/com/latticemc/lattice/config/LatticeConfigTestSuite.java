@@ -42,6 +42,8 @@ class LatticeConfigTestSuite {
         assertEquals("false", System.getProperty("lattice.optimizeRandomTick"));
         assertEquals("true", System.getProperty("lattice.poiBfsScratch"));
         assertTrue(contents.contains("poi-bfs-scratch"));
+        assertEquals("false", System.getProperty("lattice.brainMemoryIndex"));
+        assertEquals("false", System.getProperty("lattice.brainExpiryIndex"));
         assertFalse(contents.contains("chunk-map-cache"));
         assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("1024", System.getProperty("lattice.nativeDensityFunctionParityInterval"));
@@ -76,6 +78,8 @@ class LatticeConfigTestSuite {
                     batch-max-scratch-bytes: 2097152
                 brain:
                   minimum-behaviors: 300
+                  memory-index: true
+                  expiry-index: true
                 performance:
                   chunk-map-cache: true
                   optimize-random-tick: true
@@ -91,6 +95,8 @@ class LatticeConfigTestSuite {
         assertEquals("avx2", System.getProperty("lattice.nativeCpu"));
         assertEquals("true", System.getProperty("lattice.nativeEntityVisibilityPrefilter"));
         assertEquals("300", System.getProperty("lattice.nativeBrainEligibility.minBehaviors"));
+        assertEquals("true", System.getProperty("lattice.brainMemoryIndex"));
+        assertEquals("true", System.getProperty("lattice.brainExpiryIndex"));
         assertEquals("0", System.getProperty("lattice.nativeEntityVisibilityMinPlayers"));
         assertEquals("true", System.getProperty("lattice.nativeEntityVisibilityBatchEnabled"));
         assertEquals("2048", System.getProperty("lattice.nativeEntityVisibilityBatchMinEntities"));

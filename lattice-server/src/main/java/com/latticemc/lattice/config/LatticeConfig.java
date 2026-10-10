@@ -33,6 +33,10 @@ public final class LatticeConfig {
                     "Use exact per-section random-tick sampling with a maintained non-empty section mask. Disabled by default pending server-level validation."),
             bool("performance.poi-bfs-scratch", "lattice.poiBfsScratch", true,
                     "复用每线程 POI BFS 容器，不缓存查询结果；修改后需要重启。"),
+            bool("brain.memory-index", "lattice.brainMemoryIndex", false,
+                    "按记忆类型直索引 Brain 原有存储；调试 Map 暴露后使用原路径。修改后重启。"),
+            bool("brain.expiry-index", "lattice.brainExpiryIndex", false,
+                    "按原顺序仅扫描可过期记忆；修改后重启。"),
 
             string("native.library-path", "lattice.native.path", "", "Optional absolute path to a native library; leave empty to use the bundled library."),
             string("native.cache-directory", "lattice.native.cacheDir", "", "Optional native-library extraction cache directory; leave empty for the platform default."),

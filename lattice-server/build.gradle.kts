@@ -324,6 +324,31 @@ tasks.test {
     jvmArgumentProviders.add(provider)
 }
 
+// 静态启动开关需要独立 JVM；常规 test 同时覆盖默认关闭和三种开启组合。
+for ((taskName, switches) in mapOf(
+    "testBrainMemoryIndex" to (true to false),
+    "testBrainExpiryIndex" to (false to true),
+    "testBrainMemoryBoth" to (true to true),
+)) {
+    val memoryTest = tasks.register<Test>(taskName) {
+        group = "verification"
+        description = "验证 Brain 记忆索引组合 ${switches.first}/${switches.second} 的行为等价性"
+        testClassesDirs = sourceSets.test.get().output.classesDirs
+        classpath = sourceSets.test.get().runtimeClasspath
+        include("**/BrainMemoryIndexTestSuite.class")
+        if (switches.first && switches.second) include("**/BrainOptimizedCollectionTestSuite.class")
+        workingDir = temporaryDir
+        useJUnitPlatform()
+        forkEvery = 1
+        systemProperty("lattice.brainMemoryIndex", switches.first)
+        systemProperty("lattice.brainExpiryIndex", switches.second)
+        val provider = objects.newInstance<MockitoAgentProvider>()
+        provider.fileCollection.from(mockitoAgent)
+        jvmArgumentProviders.add(provider)
+    }
+    tasks.test { dependsOn(memoryTest) }
+}
+
 val pathfinderCacheAllocationBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "测量寻路section缓存的冷热查询、饱和扫描和分配"
