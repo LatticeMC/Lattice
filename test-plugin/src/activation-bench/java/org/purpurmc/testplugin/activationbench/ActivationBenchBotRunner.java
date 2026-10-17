@@ -60,6 +60,8 @@ public final class ActivationBenchBotRunner {
     private static final long POLL_MILLIS = 100L;
     private static final int MAX_CONFIGURATION_PACKET_RUNS = 256;
     private static final int MAX_BOTS = 100;
+    // A bot lost to an environment kick (e.g. the vanilla flying check) must not void a long window.
+    private static final long DEFAULT_MAX_BOT_FAILURES = 1L;
 
     private ActivationBenchBotRunner() {
     }
@@ -98,7 +100,7 @@ public final class ActivationBenchBotRunner {
 
         for (int index = 1; index <= config.bots; index++) {
             String name = config.prefix + index;
-            BotState state = new BotState(name, loginLatch);
+            BotState state = new BotState(name, loginLatch, config);
             ClientNetworkSession session = ClientNetworkSessionFactory.factory()
                 .setAddress(config.host, config.port)
                 .setProtocol(new MinecraftProtocol(name))
@@ -123,7 +125,7 @@ public final class ActivationBenchBotRunner {
         boolean allLoggedIn = loginLatch.await(LOGIN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         boolean allConnectedAfterSettle = false;
         boolean gameReady = allLoggedIn && awaitGameState(states, config.gameReadyTimeoutSeconds);
-        boolean initialPositionReady = gameReady && awaitInitialPositions(states, config.positionReadyTimeoutSeconds);
+        boolean initialPositionReady = gameReady && awaitInitialPositions(states, config.positionReadyTimeoutSeconds, config.maxBotFailures);
         if (initialPositionReady) {
             // The server-assigned initial position may arrive after GAME. Do not
             // emit movement until that position has been acknowledged and stored.
@@ -133,13 +135,13 @@ public final class ActivationBenchBotRunner {
             long settleDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SETTLE_WINDOW_MILLIS);
             long nextMoveAt = System.nanoTime();
             while (System.nanoTime() < settleDeadline) {
-                if (!allHealthyAndPositioned(states)) {
+                if (countUnhealthy(states) > config.maxBotFailures) {
                     break;
                 }
-                nextMoveAt = sendPeriodicMoves(states, nextMoveAt);
+                nextMoveAt = sendPeriodicMoves(states, nextMoveAt, config);
                 Thread.sleep(POLL_MILLIS);
             }
-            allConnectedAfterSettle = allHealthyAndPositioned(states);
+            allConnectedAfterSettle = countUnhealthy(states) <= config.maxBotFailures;
         }
 
         boolean held = allConnectedAfterSettle;
@@ -147,14 +149,14 @@ public final class ActivationBenchBotRunner {
             long holdDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(config.holdSeconds);
             long nextMoveAt = System.nanoTime();
             while (System.nanoTime() < holdDeadline) {
-                if (!allHealthyAndPositioned(states)) {
+                if (countUnhealthy(states) > config.maxBotFailures) {
                     held = false;
                     break;
                 }
-                nextMoveAt = sendPeriodicMoves(states, nextMoveAt);
+                nextMoveAt = sendPeriodicMoves(states, nextMoveAt, config);
                 Thread.sleep(POLL_MILLIS);
             }
-            held = held && allHealthyAndPositioned(states);
+            held = held && countUnhealthy(states) <= config.maxBotFailures;
         }
 
         boolean success = allLoggedIn && gameReady && initialPositionReady && allConnectedAfterSettle && held;
@@ -170,25 +172,32 @@ public final class ActivationBenchBotRunner {
             allLoggedIn, gameReady, initialPositionReady, allConnectedAfterSettle, held);
     }
 
-    private static boolean allHealthyAndPositioned(List<BotState> states) {
+    /** Number of bots that can no longer be counted on; compared against the configured tolerance. */
+    private static int countUnhealthy(List<BotState> states) {
+        int unhealthy = 0;
         for (BotState state : states) {
             state.recordProtocolStateIfChanged();
             if (!state.session.isConnected() || !state.loginComplete || !state.hasPosition() || state.hasErrors()) {
-                return false;
+                unhealthy++;
             }
         }
-        return true;
+        return unhealthy;
     }
 
-    private static long sendPeriodicMoves(List<BotState> states, long nextMoveAt) {
+    private static long sendPeriodicMoves(List<BotState> states, long nextMoveAt, Config config) {
         long now = System.nanoTime();
         if (now < nextMoveAt) {
             return nextMoveAt;
         }
+        final long interval = config.movePattern == MovePattern.NONE
+            ? MOVE_INTERVAL_MILLIS : config.moveIntervalMillis;
         for (BotState state : states) {
+            if (config.movePattern != MovePattern.NONE) {
+                state.advanceMovement(interval);
+            }
             state.sendMoveAtLatest();
         }
-        return now + TimeUnit.MILLISECONDS.toNanos(MOVE_INTERVAL_MILLIS);
+        return now + TimeUnit.MILLISECONDS.toNanos(interval);
     }
 
     private static boolean awaitGameState(List<BotState> states, long timeoutSeconds) throws InterruptedException {
@@ -211,14 +220,18 @@ public final class ActivationBenchBotRunner {
         return false;
     }
 
-    private static boolean awaitInitialPositions(List<BotState> states, long timeoutSeconds) throws InterruptedException {
+    private static boolean awaitInitialPositions(List<BotState> states, long timeoutSeconds, long maxBotFailures) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
         while (System.nanoTime() < deadline) {
             boolean ready = true;
+            int unhealthy = 0;
             for (BotState state : states) {
                 state.recordProtocolStateIfChanged();
                 if (!state.session.isConnected() || state.hasErrors()) {
-                    return false;
+                    if (++unhealthy > maxBotFailures) {
+                        return false;
+                    }
+                    continue;
                 }
                 if (!state.hasPosition()) {
                     ready = false;
@@ -270,6 +283,11 @@ public final class ActivationBenchBotRunner {
         return "[" + number(coordinates.x) + "," + number(coordinates.y) + "," + number(coordinates.z) + "]";
     }
 
+    private enum MovePattern {
+        NONE,
+        BOUNCE
+    }
+
     private static final class Config {
         private final String host;
         private final int port;
@@ -279,9 +297,15 @@ public final class ActivationBenchBotRunner {
         private final long gameReadyTimeoutSeconds;
         private final long positionReadyTimeoutSeconds;
         private final Path output;
+        private final MovePattern movePattern;
+        private final double moveRange;
+        private final double moveSpeed;
+        private final long moveIntervalMillis;
+        private final long maxBotFailures;
 
         private Config(String host, int port, int bots, String prefix, long holdSeconds, long gameReadyTimeoutSeconds,
-                       long positionReadyTimeoutSeconds, Path output) {
+                       long positionReadyTimeoutSeconds, Path output, MovePattern movePattern, double moveRange,
+                       double moveSpeed, long moveIntervalMillis, long maxBotFailures) {
             this.host = host;
             this.port = port;
             this.bots = bots;
@@ -290,6 +314,11 @@ public final class ActivationBenchBotRunner {
             this.gameReadyTimeoutSeconds = gameReadyTimeoutSeconds;
             this.positionReadyTimeoutSeconds = positionReadyTimeoutSeconds;
             this.output = output;
+            this.movePattern = movePattern;
+            this.moveRange = moveRange;
+            this.moveSpeed = moveSpeed;
+            this.moveIntervalMillis = moveIntervalMillis;
+            this.maxBotFailures = maxBotFailures;
         }
 
         private static Config parse(String[] args) {
@@ -301,6 +330,11 @@ public final class ActivationBenchBotRunner {
             long gameReadyTimeoutSeconds = DEFAULT_GAME_READY_TIMEOUT_SECONDS;
             long positionReadyTimeoutSeconds = DEFAULT_POSITION_READY_TIMEOUT_SECONDS;
             Path output = null;
+            MovePattern movePattern = MovePattern.NONE;
+            double moveRange = 48.0;
+            double moveSpeed = 4.5;
+            long moveIntervalMillis = 50L;
+            long maxBotFailures = DEFAULT_MAX_BOT_FAILURES;
 
             for (int index = 0; index < args.length; index++) {
                 String option = args[index];
@@ -322,6 +356,11 @@ public final class ActivationBenchBotRunner {
                     case "--position-ready-timeout-seconds" -> positionReadyTimeoutSeconds = parseLong(value, option,
                         MIN_POSITION_READY_TIMEOUT_SECONDS, MAX_POSITION_READY_TIMEOUT_SECONDS);
                     case "--output" -> output = Path.of(value);
+                    case "--move-pattern" -> movePattern = parseMovePattern(value);
+                    case "--move-range" -> moveRange = parseDouble(value, option, 1.0, 10000.0);
+                    case "--move-speed" -> moveSpeed = parseDouble(value, option, 0.1, 100.0);
+                    case "--move-interval-ms" -> moveIntervalMillis = parseLong(value, option, 10L, 60000L);
+                    case "--max-bot-failures" -> maxBotFailures = parseLong(value, option, 0L, MAX_BOTS);
                     default -> throw new IllegalArgumentException("unknown option: " + option);
                 }
             }
@@ -339,7 +378,8 @@ public final class ActivationBenchBotRunner {
                 throw new IllegalArgumentException("bot names must be at most 16 characters");
             }
             return new Config(host, port, bots, prefix, holdSeconds, gameReadyTimeoutSeconds,
-                positionReadyTimeoutSeconds, output);
+                positionReadyTimeoutSeconds, output, movePattern, moveRange, moveSpeed, moveIntervalMillis,
+                maxBotFailures);
         }
 
         private static boolean isSupportedBotCount(int value) {
@@ -387,6 +427,26 @@ public final class ActivationBenchBotRunner {
                 throw new IllegalArgumentException(option + " must be an integer");
             }
         }
+
+        private static MovePattern parseMovePattern(String value) {
+            try {
+                return MovePattern.valueOf(value.toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException | NullPointerException exception) {
+                throw new IllegalArgumentException("--move-pattern must be one of: none, bounce");
+            }
+        }
+
+        private static double parseDouble(String value, String option, double minimum, double maximum) {
+            try {
+                double parsed = Double.parseDouble(value);
+                if (parsed < minimum || parsed > maximum) {
+                    throw new IllegalArgumentException(option + " must be between " + minimum + " and " + maximum);
+                }
+                return parsed;
+            } catch (NumberFormatException exception) {
+                throw new IllegalArgumentException(option + " must be a number");
+            }
+        }
     }
 
     private static final class BotState {
@@ -407,9 +467,24 @@ public final class ActivationBenchBotRunner {
         private volatile int configurationPacketsDropped;
         private volatile Coordinates latestCoordinates;
 
-        private BotState(String name, CountDownLatch loginLatch) {
+        private final MovePattern movePattern;
+        private final double moveRange;
+        private final double moveSpeed;
+        private final java.util.Random moveRandom;
+        private Coordinates movePos;
+        private double moveOriginX;
+        private double moveOriginZ;
+        private double moveVX;
+        private double moveVZ;
+        private boolean moveInitialized;
+
+        private BotState(String name, CountDownLatch loginLatch, Config config) {
             this.name = name;
             this.loginLatch = loginLatch;
+            this.movePattern = config.movePattern;
+            this.moveRange = config.moveRange;
+            this.moveSpeed = config.moveSpeed;
+            this.moveRandom = new java.util.Random(name.hashCode());
         }
 
         private SessionAdapter listener() {
@@ -570,6 +645,17 @@ public final class ActivationBenchBotRunner {
             Coordinates serverCoordinates = new Coordinates(x, y, z);
             send(new ServerboundAcceptTeleportationPacket(packet.getId()));
             latestCoordinates = serverCoordinates;
+            if (this.movePattern != MovePattern.NONE) {
+                if (!this.moveInitialized) {
+                    this.moveOriginX = serverCoordinates.x;
+                    this.moveOriginZ = serverCoordinates.z;
+                    final double angle = this.moveRandom.nextDouble() * Math.PI * 2.0D;
+                    this.moveVX = Math.cos(angle) * this.moveSpeed;
+                    this.moveVZ = Math.sin(angle) * this.moveSpeed;
+                    this.moveInitialized = true;
+                }
+                this.movePos = serverCoordinates;
+            }
             sendMoveAtLatest();
             teleports.add(new TeleportEvent(Instant.now().toString(), packet.getId(), serverCoordinates,
                 serverCoordinates, latestCoordinates));
@@ -584,6 +670,35 @@ public final class ActivationBenchBotRunner {
             if (target != null) {
                 send(new ServerboundMovePlayerPosPacket(true, false, target.x, target.y, target.z));
             }
+        }
+
+        private void advanceMovement(long dtMillis) {
+            if (!this.moveInitialized || this.movePos == null) {
+                return;
+            }
+            final double dt = dtMillis / 1000.0D;
+            double x = this.movePos.x + this.moveVX * dt;
+            double z = this.movePos.z + this.moveVZ * dt;
+            final double minX = this.moveOriginX - this.moveRange;
+            final double maxX = this.moveOriginX + this.moveRange;
+            final double minZ = this.moveOriginZ - this.moveRange;
+            final double maxZ = this.moveOriginZ + this.moveRange;
+            if (x < minX) {
+                x = minX;
+                this.moveVX = Math.abs(this.moveVX);
+            } else if (x > maxX) {
+                x = maxX;
+                this.moveVX = -Math.abs(this.moveVX);
+            }
+            if (z < minZ) {
+                z = minZ;
+                this.moveVZ = Math.abs(this.moveVZ);
+            } else if (z > maxZ) {
+                z = maxZ;
+                this.moveVZ = -Math.abs(this.moveVZ);
+            }
+            this.movePos = new Coordinates(x, this.movePos.y, z);
+            this.latestCoordinates = this.movePos;
         }
 
         private void send(Packet packet) {
@@ -682,6 +797,7 @@ public final class ActivationBenchBotRunner {
             field(json, "port", Integer.toString(config.port)).append(',');
             field(json, "requestedBots", Integer.toString(config.bots)).append(',');
             field(json, "prefix", json(config.prefix)).append(',');
+            field(json, "movePattern", json(config.movePattern.name())).append(',');
             field(json, "holdSeconds", Long.toString(config.holdSeconds)).append(',');
             field(json, "gameReadyTimeoutSeconds", Long.toString(config.gameReadyTimeoutSeconds)).append(',');
             field(json, "positionReadyTimeoutSeconds", Long.toString(config.positionReadyTimeoutSeconds)).append(',');

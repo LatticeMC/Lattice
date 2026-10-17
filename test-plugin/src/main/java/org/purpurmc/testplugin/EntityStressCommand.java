@@ -24,15 +24,16 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
 /**
- * Fixed-shape entity workload: a large zombie population plus a handful of
- * invulnerable villagers that teleport at a fixed interval, spread over a
- * square of plugin-ticketed (force-loaded) chunks.
+ * Fixed-shape entity workload over a square of plugin-ticketed (force-loaded)
+ * chunks: a villager population (default 1000) that ticks AI every tick, plus an
+ * optional zombie population, plus bot players driven over the network.
  *
- * <p>Defaults match the standard scenario: 2000 zombies, 5 villagers, a 48x48
- * chunk square, one teleport per second, and an automatic cleanup once the hold
- * window elapses. Natural mob spawning and the daylight cycle are pinned for
- * the duration of the run so the entity count stays controlled and zombies do
- * not burn away mid-measurement; both game rules are restored on cleanup.</p>
+ * <p>Defaults match the villager-movement scenario: 1000 villagers, 0 zombies, a
+ * 24x24 chunk square, villagers held static (teleportTicks=0), and automatic
+ * cleanup once the hold window elapses. Pass teleportTicks&gt;0 to make villagers
+ * teleport around the square, or zombies&gt;0 to add a pathing population. Natural
+ * mob spawning and the daylight cycle are pinned so the entity count stays
+ * controlled; both game rules are restored on cleanup.</p>
  *
  * <p>This command only creates Bukkit entities. Test clients ("bots") must
  * connect through the normal network protocol, e.g.
@@ -41,10 +42,10 @@ import org.bukkit.scheduler.BukkitTask;
  */
 final class EntityStressCommand extends Command {
     private static final int DEFAULT_ZOMBIES = 2000;
-    private static final int DEFAULT_VILLAGERS = 5;
+    private static final int DEFAULT_VILLAGERS = 1000;
     private static final int DEFAULT_CHUNK_SIDE = 48;
     private static final int DEFAULT_HOLD_SECONDS = 300;
-    private static final int DEFAULT_TELEPORT_TICKS = 20;
+    private static final int DEFAULT_TELEPORT_TICKS = 0;
 
     private static final int MAX_ENTITIES = 100_000;
     private static final int MAX_CHUNK_SIDE = 128;
@@ -94,7 +95,7 @@ final class EntityStressCommand extends Command {
             "entitystress",
             "Runs a fixed-shape entity workload and cleans up automatically",
             "/entitystress <start|status|stop> "
-                + "[zombies=2000] [villagers=5] [chunkSide=48] [holdSeconds=300] [teleportTicks=20]",
+                + "[zombies=2000] [villagers=1000] [chunkSide=24] [holdSeconds=300] [teleportTicks=0]",
             Collections.emptyList()
         );
         this.plugin = plugin;
@@ -127,11 +128,11 @@ final class EntityStressCommand extends Command {
             sender.sendMessage(this.getUsage());
             return false;
         }
-        final int zombies = args.length >= 2 ? positiveInt(args[1], "zombies") : DEFAULT_ZOMBIES;
+        final int zombies = args.length >= 2 ? nonNegativeInt(args[1], "zombies") : DEFAULT_ZOMBIES;
         final int requestedVillagers = args.length >= 3 ? positiveInt(args[2], "villagers") : DEFAULT_VILLAGERS;
         final int side = args.length >= 4 ? positiveInt(args[3], "chunkSide") : DEFAULT_CHUNK_SIDE;
         final long hold = args.length >= 5 ? positiveLong(args[4], "holdSeconds") : DEFAULT_HOLD_SECONDS;
-        final int teleport = args.length >= 6 ? positiveInt(args[5], "teleportTicks") : DEFAULT_TELEPORT_TICKS;
+        final int teleport = args.length >= 6 ? nonNegativeInt(args[5], "teleportTicks") : DEFAULT_TELEPORT_TICKS;
 
         if (zombies > MAX_ENTITIES || requestedVillagers > MAX_ENTITIES) {
             throw new IllegalArgumentException("entity counts must be <= " + MAX_ENTITIES);
@@ -227,8 +228,10 @@ final class EntityStressCommand extends Command {
         this.startedAtNanos = System.nanoTime();
 
         final long holdTicks = this.holdSeconds * TICKS_PER_SECOND;
-        this.teleportTask = this.plugin.getServer().getScheduler()
-            .runTaskTimer(this.plugin, this::teleportVillagers, this.teleportTicks, this.teleportTicks);
+        if (this.teleportTicks > 0) {
+            this.teleportTask = this.plugin.getServer().getScheduler()
+                .runTaskTimer(this.plugin, this::teleportVillagers, this.teleportTicks, this.teleportTicks);
+        }
         this.finishTask = this.plugin.getServer().getScheduler()
             .runTaskLater(this.plugin, this::finish, holdTicks);
 
@@ -494,6 +497,14 @@ final class EntityStressCommand extends Command {
         final int parsed = parseInt(value, name);
         if (parsed <= 0) {
             throw new IllegalArgumentException(name + " must be > 0");
+        }
+        return parsed;
+    }
+
+    private static int nonNegativeInt(final String value, final String name) {
+        final int parsed = parseInt(value, name);
+        if (parsed < 0) {
+            throw new IllegalArgumentException(name + " must be >= 0");
         }
         return parsed;
     }

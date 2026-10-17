@@ -11,6 +11,7 @@ public class TestPlugin extends JavaPlugin implements Listener {
     private ItemBenchmarkCommand itemBenchmark;
     private EntityActivationBenchmarkCommand entityActivationBenchmark;
     private EntityStressCommand entityStress;
+    private BrainPoiBenchmarkCommand brainPoiBenchmark;
 
     @Override
     public void onEnable() {
@@ -40,6 +41,11 @@ public class TestPlugin extends JavaPlugin implements Listener {
             this.getServer().getCommandMap().register(this.getName().toLowerCase(Locale.ROOT), benchmark);
             this.getServer().getPluginManager().registerEvents(benchmark, this);
         }
+        if (Boolean.getBoolean("lattice.brainPoiBenchmark")) {
+            this.brainPoiBenchmark = new BrainPoiBenchmarkCommand(this);
+            this.getServer().getCommandMap().register(this.getName().toLowerCase(Locale.ROOT), this.brainPoiBenchmark);
+            this.getServer().getPluginManager().registerEvents(this.brainPoiBenchmark, this);
+        }
     }
 
     @EventHandler
@@ -51,6 +57,7 @@ public class TestPlugin extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
+        if (this.brainPoiBenchmark != null) this.brainPoiBenchmark.shutdown();
         if (this.pathfinderBenchmark != null) {
             this.pathfinderBenchmark.shutdown();
         }

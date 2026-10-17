@@ -422,6 +422,37 @@ val entityVisibilityEndToEndBenchmark by tasks.registering(JavaExec::class) {
     )
 }
 
+val aabbQueryBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Benchmark native vs Java AABB intersect scan (AoS/SoA) across entity/query counts"
+    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.nativelib.AabbQueryBenchmark")
+    workingDir = rootProject.layout.projectDirectory.asFile
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    systemProperty("lattice.aabbWarmup", providers.gradleProperty("aabbQueryBenchmarkWarmup").getOrElse("8"))
+    systemProperty("lattice.aabbSamples", providers.gradleProperty("aabbQueryBenchmarkSamples").getOrElse("11"))
+    systemProperty("lattice.aabbEntities", providers.gradleProperty("aabbQueryBenchmarkEntities").getOrElse("256,2048,8192"))
+    systemProperty("lattice.aabbQueries", providers.gradleProperty("aabbQueryBenchmarkQueries").getOrElse("8,64"))
+    systemProperty("lattice.aabbReverse", providers.gradleProperty("aabbQueryBenchmarkReverse").getOrElse("false"))
+}
+
+val pathfinderSearchBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Benchmark vanilla PathFinder (Java A*) vs NativePathfinder.findPath (native A*) on a synthetic grid"
+    dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.nativelib.PathfinderSearchBenchmark")
+    workingDir = rootProject.layout.projectDirectory.asFile
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    systemProperty("lattice.pathWarmup", providers.gradleProperty("pathfinderSearchBenchmarkWarmup").getOrElse("6"))
+    systemProperty("lattice.pathSamples", providers.gradleProperty("pathfinderSearchBenchmarkSamples").getOrElse("11"))
+    systemProperty("lattice.pathSizeX", providers.gradleProperty("pathfinderSearchBenchmarkSizeX").getOrElse("64"))
+    systemProperty("lattice.pathSizeZ", providers.gradleProperty("pathfinderSearchBenchmarkSizeZ").getOrElse("64"))
+    systemProperty("lattice.pathIterations", providers.gradleProperty("pathfinderSearchBenchmarkIterations").getOrElse("128"))
+    systemProperty("lattice.pathReverse", providers.gradleProperty("pathfinderSearchBenchmarkReverse").getOrElse("false"))
+}
+
 val worldgenProfilerPushBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "Benchmark eager versus lazy world-generation profiler scope names"

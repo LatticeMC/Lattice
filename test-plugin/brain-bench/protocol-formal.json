@@ -1,0 +1,7 @@
+{
+  "acquire_ticks": 2000,
+  "measurement_ticks": 1000,
+  "settle_ticks": 1000,
+  "phase_timeout_seconds": 240,
+  "bot_hold_seconds": 480
+}
