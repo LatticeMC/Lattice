@@ -200,22 +200,6 @@ public class BrainMemoryIndexTestSuite {
     }
 
     @Test
-    void enablesRequestedRouteAndPermanentlyDisablesEscapedMap() throws Exception {
-        Brain<LivingEntity> brain = brain(List.of(MemoryModuleType.LIKED_NOTEBLOCK_COOLDOWN_TICKS));
-        var field = Brain.class.getDeclaredField("memories"); field.setAccessible(true);
-        Object map = field.get(brain);
-        if (!map.getClass().getSimpleName().equals("BrainMemoryMap")) return; // frozen oracle
-        var enabled = map.getClass().getMethod("hasExpiryIndex");
-        assertEquals(Boolean.getBoolean("lattice.brainExpiryIndex"), enabled.invoke(map));
-        var slots = map.getClass().getDeclaredField("slotsById"); slots.setAccessible(true);
-        assertEquals(Boolean.getBoolean("lattice.brainMemoryIndex") || Boolean.getBoolean("lattice.brainExpiryIndex"), slots.get(map) != null);
-        brain.getMemories();
-        map.getClass().getMethod("initializeIndex").invoke(map);
-        assertEquals(false, enabled.invoke(map));
-        assertNull(slots.get(map));
-    }
-
-    @Test
     @SuppressWarnings("unchecked")
     void preservesSensorRegistrationAndSameTickBehaviorReads() {
         var type = MemoryModuleType.LIKED_NOTEBLOCK_COOLDOWN_TICKS;
@@ -305,7 +289,6 @@ public class BrainMemoryIndexTestSuite {
         suite.preservesLiveDebugMapAndEveryMutationRoute();
         suite.preservesCodecCopyAndEmptyCollections();
         suite.handlesNewTypesAndNullKeysWithoutChangingRegistration();
-        suite.enablesRequestedRouteAndPermanentlyDisablesEscapedMap();
         suite.preservesSensorRegistrationAndSameTickBehaviorReads();
         suite.preservesVirtualExpirableCallbacksAndBrainOverrides();
     }

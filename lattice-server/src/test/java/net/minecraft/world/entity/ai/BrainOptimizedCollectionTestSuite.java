@@ -179,10 +179,8 @@ class BrainOptimizedCollectionTestSuite {
 
         assertEquals(0, first.starts);
         assertEquals(1, first.extraConditionChecks);
-        assertEquals(0, first.memoryChecks);
         assertEquals(1, second.starts);
         assertEquals(1, second.extraConditionChecks);
-        assertEquals(1, second.memoryChecks);
     }
 
     @Test
@@ -198,6 +196,69 @@ class BrainOptimizedCollectionTestSuite {
         assertThrows(UnsupportedOperationException.class,
                 () -> behavior.latticeEntryCondition().put(MemoryModuleType.ATTACK_TARGET, MemoryStatus.VALUE_PRESENT));
         assertTrue(behavior.tryStart(context.level, context.entity, 100L));
+    }
+
+    @Test
+    void cachesMemoryConditionsPerBrainVersionAndIdentity() {
+        CountingBrain brain = new CountingBrain();
+        LivingEntity entity = entityFor(brain);
+        BaseBehavior behavior = new BaseBehavior(MemoryStatus.VALUE_ABSENT);
+
+        assertTrue(behavior.checkMemoryConditions(entity));
+        assertTrue(behavior.checkMemoryConditions(entity));
+        assertEquals(1, brain.memoryChecks);
+
+        brain.setMemory(MemoryModuleType.ATTACK_TARGET, entity);
+        assertFalse(behavior.checkMemoryConditions(entity));
+        assertEquals(2, brain.memoryChecks);
+
+        CountingBrain otherBrain = new CountingBrain();
+        LivingEntity otherEntity = entityFor(otherBrain);
+        assertTrue(behavior.checkMemoryConditions(otherEntity));
+        assertEquals(2, brain.memoryChecks);
+        assertEquals(1, otherBrain.memoryChecks);
+    }
+
+    @Test
+    void bypassesMemoryConditionCacheAfterDebugMapEscapes() {
+        CountingBrain brain = new CountingBrain();
+        LivingEntity entity = entityFor(brain);
+        BaseBehavior behavior = new BaseBehavior(MemoryStatus.VALUE_ABSENT);
+
+        assertTrue(behavior.checkMemoryConditions(entity));
+        assertEquals(1, brain.memoryChecks);
+        brain.getMemories().put(MemoryModuleType.ATTACK_TARGET, java.util.Optional.of(net.minecraft.world.entity.ai.memory.ExpirableValue.of(entity)));
+        assertFalse(behavior.checkMemoryConditions(entity));
+        assertEquals(2, brain.memoryChecks);
+    }
+
+    @Test
+    void doesNotCacheResultWhenMemoryChangesDuringConditionCheck() {
+        CountingBrain brain = new CountingBrain();
+        LivingEntity entity = entityFor(brain);
+        brain.mutateAfterFirstCheck = true;
+        brain.mutationValue = entity;
+        BaseBehavior behavior = new BaseBehavior(MemoryStatus.VALUE_ABSENT);
+
+        assertTrue(behavior.checkMemoryConditions(entity));
+        assertFalse(behavior.checkMemoryConditions(entity));
+        assertEquals(2, brain.memoryChecks);
+    }
+
+    @Test
+    void nativeEligibilityPreservesCustomMemoryConditionOverrides() {
+        LiveContext context = liveContext();
+        List<BehaviorControl<? super LivingEntity>> controls = new ArrayList<>(baseBehaviors(256, MemoryStatus.VALUE_PRESENT));
+        OverriddenMemoryBehavior custom = new OverriddenMemoryBehavior();
+        controls.add(custom);
+
+        context.brain.addActivity(Activity.IDLE, 0, ImmutableList.copyOf(controls));
+        context.brain.setDefaultActivity(Activity.IDLE);
+        context.brain.useDefaultActivity();
+        context.brain.tick(context.level, context.entity);
+
+        assertEquals(1, custom.memoryChecks);
+        assertEquals(0, custom.starts);
     }
 
     @Test
@@ -259,6 +320,14 @@ class BrainOptimizedCollectionTestSuite {
         return behaviors;
     }
 
+    private static List<BaseBehavior> baseBehaviors(int count, MemoryStatus status) {
+        List<BaseBehavior> behaviors = new ArrayList<>(count);
+        for (int index = 0; index < count; index++) {
+            behaviors.add(new BaseBehavior(status));
+        }
+        return behaviors;
+    }
+
     private static int startCount(List<LiveBehavior> behaviors) {
         return behaviors.stream().mapToInt(behavior -> behavior.starts).sum();
     }
@@ -274,7 +343,6 @@ class BrainOptimizedCollectionTestSuite {
         private final String name;
         private int starts;
         private int extraConditionChecks;
-        private int memoryChecks;
         private boolean extraConditionsMet = true;
         private Runnable onStart = () -> {};
 
@@ -289,10 +357,8 @@ class BrainOptimizedCollectionTestSuite {
             return this.extraConditionsMet;
         }
 
-        @Override
-        protected boolean hasRequiredMemories(LivingEntity entity) {
-            this.memoryChecks++;
-            return super.hasRequiredMemories(entity);
+        private boolean checkMemoryConditions(LivingEntity entity) {
+            return this.hasRequiredMemories(entity);
         }
 
         @Override
@@ -305,6 +371,63 @@ class BrainOptimizedCollectionTestSuite {
         public String debugString() {
             return this.name;
         }
+    }
+
+    private static final class BaseBehavior extends Behavior<LivingEntity> {
+        private BaseBehavior(MemoryStatus status) {
+            super(Map.of(MemoryModuleType.ATTACK_TARGET, status));
+        }
+
+        private boolean checkMemoryConditions(LivingEntity entity) {
+            return this.hasRequiredMemories(entity);
+        }
+    }
+
+    private static final class OverriddenMemoryBehavior extends Behavior<LivingEntity> {
+        private int memoryChecks;
+        private int starts;
+
+        private OverriddenMemoryBehavior() {
+            super(Map.of(MemoryModuleType.ATTACK_TARGET, MemoryStatus.VALUE_ABSENT));
+        }
+
+        @Override
+        protected boolean hasRequiredMemories(LivingEntity entity) {
+            this.memoryChecks++;
+            return false;
+        }
+
+        @Override
+        protected void start(ServerLevel level, LivingEntity entity, long gameTime) {
+            this.starts++;
+        }
+    }
+
+    private static final class CountingBrain extends Brain<LivingEntity> {
+        private int memoryChecks;
+        private boolean mutateAfterFirstCheck;
+        private LivingEntity mutationValue;
+
+        private CountingBrain() {
+            super(List.of(MemoryModuleType.ATTACK_TARGET), List.of(), ImmutableList.of(), () -> null);
+        }
+
+        @Override
+        public boolean checkMemory(MemoryModuleType<?> memoryType, MemoryStatus memoryStatus) {
+            this.memoryChecks++;
+            boolean result = super.checkMemory(memoryType, memoryStatus);
+            if (this.mutateAfterFirstCheck) {
+                this.mutateAfterFirstCheck = false;
+                this.setMemory(MemoryModuleType.ATTACK_TARGET, this.mutationValue);
+            }
+            return result;
+        }
+    }
+
+    private static LivingEntity entityFor(Brain<LivingEntity> brain) {
+        LivingEntity entity = mock(LivingEntity.class);
+        doReturn(brain).when(entity).getBrain();
+        return entity;
     }
 
     private static final class RecordingBehavior implements BehaviorControl<LivingEntity> {

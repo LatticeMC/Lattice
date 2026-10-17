@@ -1,0 +1,333 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sat, 17 Oct 2026 12:00:00 +0800
+Subject: [PATCH] perf: cache Brain memory conditions and reuse sensing sets
+
+Keep Brain memory-condition results valid only while the owning brain and
+memory version remain unchanged. Escape through the debug map disables the
+cache and native eligibility snapshot. Skip non-expiring vanilla memory
+values while retaining callbacks for custom ExpirableValue subclasses.
+
+Use generation stamps for Sensing's seen/unseen sets so per-tick clears
+avoid filling the backing arrays.
+---
+diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
+index 23c6c8a..589515b 100644
+--- a/net/minecraft/world/entity/ai/Brain.java
++++ b/net/minecraft/world/entity/ai/Brain.java
+@@ -58,9 +58,10 @@ public class Brain<E extends LivingEntity> {
+     // Lattice start - Leaf: replace Brain maps with optimized collections
+     private static final Map<?, ?>[] EMPTY_PRIORITY_GROUPS = new Map[0];
+     private static final BehaviorControlArraySet<?>[] EMPTY_BEHAVIOR_GROUPS = new BehaviorControlArraySet[0];
+-    private final Map<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> memories = new Reference2ReferenceOpenHashMap<>();
++    private final Reference2ReferenceOpenHashMap<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> memories = new Reference2ReferenceOpenHashMap<>();
+     // Lattice - Native brain eligibility: invalidate a snapshot after any memory write.
+     private long latticeMemoryVersion;
++    private boolean latticeMemoryMapEscaped;
+     private NativeEligibilityPlan latticeNativeEligibilityPlan;
+     private final Map<SensorType<? extends Sensor<? super E>>, Sensor<? super E>> sensors = new Reference2ReferenceArrayMap<>();
+     private final Map<Integer, Map<Activity, Set<BehaviorControl<? super E>>>> availableBehaviorsByPriority = new Object2ObjectRBTreeMap<>();
+@@ -166,7 +167,7 @@ public class Brain<E extends LivingEntity> {
+             memoryValue.setMemoryInternal(this);
+         }
+ 
+-        ((Reference2ReferenceOpenHashMap<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>>)this.memories).trim(); // Lattice - Leaf: optimized Brain collections
++        this.memories.trim(); // Lattice - Leaf: optimized Brain collections
+     }
+ 
+     public <T> DataResult<T> serializeStart(DynamicOps<T> ops) {
+@@ -216,6 +217,16 @@ public class Brain<E extends LivingEntity> {
+         }
+     }
+ 
++    /** Lattice - version used by per-behavior memory-condition caches. */
++    public final long latticeMemoryVersion() {
++        return this.latticeMemoryVersion;
++    }
++
++    /** Lattice - live debug-map mutations cannot be observed by the version counter. */
++    public final boolean latticeMemoryConditionCacheable() {
++        return !this.latticeMemoryMapEscaped;
++    }
++
+     public <U> Optional<U> getMemory(MemoryModuleType<U> type) {
+         Optional<? extends ExpirableValue<?>> optional = this.memories.get(type);
+         if (optional == null) {
+@@ -238,6 +249,8 @@ public class Brain<E extends LivingEntity> {
+     @Deprecated
+     @VisibleForDebug
+     public Map<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> getMemories() {
++        this.latticeMemoryMapEscaped = true;
++        this.latticeNativeEligibilityPlan = null;
+         return this.memories;
+     }
+ 
+@@ -475,11 +488,15 @@ public class Brain<E extends LivingEntity> {
+         for (Entry<MemoryModuleType<?>, Optional<? extends ExpirableValue<?>>> entry : this.memories.entrySet()) {
+             if (entry.getValue().isPresent()) {
+                 ExpirableValue<?> expirableValue = (ExpirableValue<?>)entry.getValue().get();
+-                if (expirableValue.hasExpired()) {
+-                    this.eraseMemory(entry.getKey());
+-                }
++                // Custom ExpirableValue subclasses may override callbacks even when they report
++                // no TTL; preserve those callbacks while skipping the standard no-expiry value.
++                if (expirableValue.getClass() != ExpirableValue.class || expirableValue.canExpire()) {
++                    if (expirableValue.hasExpired()) {
++                        this.eraseMemory(entry.getKey());
++                    }
+ 
+-                expirableValue.tick();
++                    expirableValue.tick();
++                }
+             }
+         }
+     }
+@@ -538,7 +555,9 @@ public class Brain<E extends LivingEntity> {
+                     } else {
+                         started = behavior.tryStart(level, entity, gameTime);
+                     }
+-                    snapshotValid = false;
++                    if (started || this.latticeMemoryVersion != snapshotVersion || !this.latticeMemoryConditionCacheable()) {
++                        snapshotValid = false;
++                    }
+                     if (started) {
+                         behaviors.incrementRunning();
+                     }
+@@ -622,6 +641,9 @@ public class Brain<E extends LivingEntity> {
+     }
+ 
+     private NativeEligibilityPlan latticeNativeEligibilityPlan() {
++        if (this.latticeMemoryMapEscaped) {
++            return NativeEligibilityPlan.DISABLED;
++        }
+         if (this.latticeNativeEligibilityPlan == null) {
+             this.latticeNativeEligibilityPlan = NativeEligibilityPlan.build(this.activeBehaviorGroups(), this.memories);
+         }
+@@ -668,7 +690,7 @@ public class Brain<E extends LivingEntity> {
+                 if (id >= 0) {
+                     long bit = 1L << (id & 63);
+                     registered[id >>> 6] |= bit;
+-                    if (entry.getValue().isPresent()) {
++                    if (entry.getValue() != null && entry.getValue().isPresent()) {
+                         present[id >>> 6] |= bit;
+                     }
+                 }
+@@ -685,7 +707,7 @@ public class Brain<E extends LivingEntity> {
+                 BehaviorControl<? super T>[] raw = group.raw();
+                 flattenedCount += group.size();
+                 for (int i = 0; i < group.size(); i++) {
+-                    if (raw[i] instanceof Behavior<?> behavior) {
++                    if (raw[i] instanceof Behavior<?> behavior && behavior.latticeUsesDefaultMemoryConditions()) {
+                         nativeCount++;
+                         requirementCount += behavior.latticeEntryCondition().size();
+                     }
+@@ -717,7 +739,7 @@ public class Brain<E extends LivingEntity> {
+             for (BehaviorControlArraySet<? super T> group : groups) {
+                 BehaviorControl<? super T>[] raw = group.raw();
+                 for (int i = 0; i < group.size(); i++, flat++) {
+-                    if (raw[i] instanceof Behavior<?> behavior) {
++                    if (raw[i] instanceof Behavior<?> behavior && behavior.latticeUsesDefaultMemoryConditions()) {
+                         nativeIndexByFlat[flat] = nativeIndex;
+                         offsets[nativeIndex] = requirement;
+                         for (Entry<MemoryModuleType<?>, MemoryStatus> condition : behavior.latticeEntryCondition().entrySet()) {
+diff --git a/net/minecraft/world/entity/ai/behavior/Behavior.java b/net/minecraft/world/entity/ai/behavior/Behavior.java
+index 9ada478..11cd7e4 100644
+--- a/net/minecraft/world/entity/ai/behavior/Behavior.java
++++ b/net/minecraft/world/entity/ai/behavior/Behavior.java
+@@ -4,17 +4,28 @@ import java.util.Map;
+ import java.util.Map.Entry;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.entity.ai.Brain;
+ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+ import net.minecraft.world.entity.ai.memory.MemoryStatus;
+ 
+ public abstract class Behavior<E extends LivingEntity> implements BehaviorControl<E> {
+     public static final int DEFAULT_DURATION = 60;
++    private static final ClassValue<Boolean> LATTICE_DEFAULT_MEMORY_CONDITIONS = new ClassValue<>() {
++        @Override
++        protected Boolean computeValue(Class<?> behaviorClass) {
++            return usesDefaultMemoryConditions(behaviorClass);
++        }
++    };
+     protected final Map<MemoryModuleType<?>, MemoryStatus> entryCondition;
+     private Behavior.Status status = Behavior.Status.STOPPED;
+     private long endTimestamp;
+     private final int minDuration;
+     private final int maxDuration;
+     private final String configKey; // Paper - configurable behavior tick rate and timings
++    private final boolean latticeUsesDefaultMemoryConditions;
++    private Brain<?> latticeMemoryCacheBrain;
++    private long latticeMemoryCacheVersion = Long.MIN_VALUE;
++    private boolean latticeMemoryCacheResult;
+ 
+     public Behavior(Map<MemoryModuleType<?>, MemoryStatus> entryCondition) {
+         this(entryCondition, 60);
+@@ -35,6 +46,7 @@ public abstract class Behavior<E extends LivingEntity> implements BehaviorContro
+             key = key.substring(lastSeparator + 1);
+         }
+         this.configKey = key.toLowerCase(java.util.Locale.ROOT);
++        this.latticeUsesDefaultMemoryConditions = LATTICE_DEFAULT_MEMORY_CONDITIONS.get(this.getClass());
+         // Paper end - configurable behavior tick rate and timings
+     }
+ 
+@@ -68,6 +80,9 @@ public abstract class Behavior<E extends LivingEntity> implements BehaviorContro
+      * The caller must invalidate the result when an earlier behavior changes memory.
+      */
+     public final boolean tryStartWithMemoryEligibility(ServerLevel level, E owner, long gameTime) {
++        if (!this.latticeUsesDefaultMemoryConditions) {
++            return this.tryStart(level, owner, gameTime);
++        }
+         int tickRate = java.util.Objects.requireNonNullElse(level.paperConfig().tickRates.behavior.get(owner.getType(), this.configKey), -1);
+         if (tickRate > -1 && gameTime < this.endTimestamp + tickRate) {
+             return false;
+@@ -86,6 +101,11 @@ public abstract class Behavior<E extends LivingEntity> implements BehaviorContro
+     public final Map<MemoryModuleType<?>, MemoryStatus> latticeEntryCondition() {
+         return this.entryCondition;
+     }
++
++    /** Lattice - Native brain eligibility: do not bypass custom memory-condition overrides. */
++    public final boolean latticeUsesDefaultMemoryConditions() {
++        return this.latticeUsesDefaultMemoryConditions;
++    }
+     protected void start(ServerLevel level, E entity, long gameTime) {
+     }
+ 
+@@ -128,14 +148,40 @@ public abstract class Behavior<E extends LivingEntity> implements BehaviorContro
+     }
+ 
+     protected boolean hasRequiredMemories(E owner) {
++        Brain<?> brain = owner.getBrain();
++        boolean cacheable = brain.latticeMemoryConditionCacheable();
++        long version = brain.latticeMemoryVersion();
++        if (this.latticeUsesDefaultMemoryConditions && cacheable && this.latticeMemoryCacheBrain == brain && this.latticeMemoryCacheVersion == version) {
++            return this.latticeMemoryCacheResult;
++        }
++
++        boolean result = true;
+         for (Entry<MemoryModuleType<?>, MemoryStatus> entry : this.entryCondition.entrySet()) {
+             MemoryModuleType<?> memoryModuleType = entry.getKey();
+             MemoryStatus memoryStatus = entry.getValue();
+-            if (!owner.getBrain().checkMemory(memoryModuleType, memoryStatus)) {
+-                return false;
++            if (!brain.checkMemory(memoryModuleType, memoryStatus)) {
++                result = false;
++                break;
+             }
+         }
+ 
++        if (this.latticeUsesDefaultMemoryConditions && cacheable && brain.latticeMemoryConditionCacheable() && brain.latticeMemoryVersion() == version) {
++            this.latticeMemoryCacheBrain = brain;
++            this.latticeMemoryCacheVersion = version;
++            this.latticeMemoryCacheResult = result;
++        }
++        return result;
++    }
++
++    private static boolean usesDefaultMemoryConditions(Class<?> behaviorClass) {
++        for (Class<?> type = behaviorClass; type != null && type != Behavior.class; type = type.getSuperclass()) {
++            try {
++                type.getDeclaredMethod("hasRequiredMemories", LivingEntity.class);
++                return false;
++            } catch (NoSuchMethodException ignored) {
++                // Continue through inherited behavior classes until the base implementation.
++            }
++        }
+         return true;
+     }
+ 
+diff --git a/net/minecraft/world/entity/ai/sensing/Sensing.java b/net/minecraft/world/entity/ai/sensing/Sensing.java
+index ac59950..317719a 100644
+--- a/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -2,8 +2,10 @@ package net.minecraft.world.entity.ai.sensing;
+ 
+ import com.latticemc.lattice.nativelib.LatticeNative;
+ import com.latticemc.lattice.nativelib.NativeLineOfSight;
++import it.unimi.dsi.fastutil.HashCommon;
+ import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+ import it.unimi.dsi.fastutil.ints.IntSet;
++import java.util.Arrays;
+ import java.util.ArrayList;
+ import java.util.List;
+ import net.minecraft.util.profiling.Profiler;
+@@ -13,8 +15,8 @@ import net.minecraft.world.entity.Mob;
+ 
+ public class Sensing {
+     private final Mob mob;
+-    private final IntSet seen = new IntOpenHashSet();
+-    private final IntSet unseen = new IntOpenHashSet();
++    private final GenerationSet seen = new GenerationSet();
++    private final GenerationSet unseen = new GenerationSet();
+ 
+     public Sensing(Mob mob) {
+         this.mob = mob;
+@@ -169,4 +171,68 @@ public class Sensing {
+         }
+         return results;
+     }
++
++    /** A reusable open-addressed set whose clear operation advances a generation. */
++    private static final class GenerationSet {
++        private int[] keys = new int[32];
++        private int[] stamps = new int[32];
++        private int generation = 1;
++        private int size;
++
++        boolean contains(int key) {
++            int mask = this.keys.length - 1;
++            int slot = HashCommon.mix(key) & mask;
++            while (this.stamps[slot] == this.generation) {
++                if (this.keys[slot] == key) return true;
++                slot = (slot + 1) & mask;
++            }
++            return false;
++        }
++
++        boolean add(int key) {
++            int mask = this.keys.length - 1;
++            int slot = HashCommon.mix(key) & mask;
++            while (this.stamps[slot] == this.generation) {
++                if (this.keys[slot] == key) return false;
++                slot = (slot + 1) & mask;
++            }
++            if (this.size >= this.keys.length - (this.keys.length >>> 2)) {
++                this.grow();
++                mask = this.keys.length - 1;
++                slot = HashCommon.mix(key) & mask;
++                while (this.stamps[slot] == this.generation) slot = (slot + 1) & mask;
++            }
++            this.keys[slot] = key;
++            this.stamps[slot] = this.generation;
++            ++this.size;
++            return true;
++        }
++
++        void clear() {
++            this.size = 0;
++            if (this.generation == Integer.MAX_VALUE) {
++                Arrays.fill(this.stamps, 0);
++                this.generation = 1;
++            } else {
++                ++this.generation;
++            }
++        }
++
++        private void grow() {
++            int[] oldKeys = this.keys;
++            int[] oldStamps = this.stamps;
++            int capacity = Math.multiplyExact(oldKeys.length, 2);
++            this.keys = new int[capacity];
++            this.stamps = new int[capacity];
++            int mask = capacity - 1;
++            for (int i = 0; i < oldKeys.length; ++i) {
++                if (oldStamps[i] != this.generation) continue;
++                int key = oldKeys[i];
++                int slot = HashCommon.mix(key) & mask;
++                while (this.stamps[slot] == this.generation) slot = (slot + 1) & mask;
++                this.keys[slot] = key;
++                this.stamps[slot] = this.generation;
++            }
++        }
++    }
+ }
