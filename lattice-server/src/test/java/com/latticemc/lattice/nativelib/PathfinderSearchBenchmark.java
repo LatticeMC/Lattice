@@ -3,10 +3,13 @@ package com.latticemc.lattice.nativelib;
 import com.sun.management.ThreadMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.StringJoiner;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.Mob;
@@ -20,8 +23,8 @@ import net.minecraft.world.level.pathfinder.Target;
 
 /**
  * 独立 JVM 的寻路 Java-native 对比基准：在同一合成 serpentine 网格上分别跑
- * vanilla {@link PathFinder}（纯 Java A*）、关闭 cardinal 快路径的 native A*，以及开启
- * cardinal 快路径的 native A*，对照每次搜索的耗时与分配；三实现节点数必须一致。
+ * vanilla {@link PathFinder}（纯 Java A*）、关闭快路径的 native A*，以及开启 cardinal/diagonal
+ * 快路径的 native A*，对照每次搜索的耗时与分配；三实现节点数必须一致。
  * 不是服务端 MSPT 基准。
  */
 public final class PathfinderSearchBenchmark {
@@ -110,9 +113,14 @@ public final class PathfinderSearchBenchmark {
                 bytes[idx][i] = (double) m.bytes / iterations;
             }
         }
-        hitRates[Impl.NATIVE_FASTPATH.ordinal()] = measureFastPathHitRate(
+        final FastPathDiagnostics diagnostics = measureFastPathHitRate(
                 ni, sizeX, sizeZ, startX, startZ, targetX, targetZ, maxNodes, maxRange, iterations);
+        hitRates[Impl.NATIVE_FASTPATH.ordinal()] = diagnostics.hitRate;
         System.out.printf("PATHFIND_PARITY size=%dx%d nodes=%d%n", sizeX, sizeZ, vanillaNodes);
+        System.out.printf("PATHFIND_FASTPATH size=%dx%d cardinal-candidates=%d cardinal-hits=%d out-of-region=%d cardinal-hit-rate=%.2f%% diagonal-candidates=%d diagonal-hits=%d diagonal-hit-rate=%.2f%% top-misses=%s%n",
+                sizeX, sizeZ, diagnostics.candidates, diagnostics.hits, diagnostics.outOfRegion,
+                diagnostics.hitRate * 100.0, diagnostics.diagonalCandidates, diagnostics.diagonalHits,
+                diagnostics.diagonalHitRate * 100.0, diagnostics.topMisses);
         for (final Impl impl : impls) {
             Arrays.sort(nanos[impl.ordinal()]);
             Arrays.sort(bytes[impl.ordinal()]);
@@ -147,11 +155,11 @@ public final class PathfinderSearchBenchmark {
         return r.reachedTarget() ? r.length() : -1;
     }
 
-    private static double measureFastPathHitRate(final NativeInputs ni, final int sx, final int sz,
-                                                  final int startX, final int startZ,
-                                                  final int targetX, final int targetZ,
-                                                  final int maxNodes, final float maxRange,
-                                                  final int iterations) {
+    private static FastPathDiagnostics measureFastPathHitRate(final NativeInputs ni, final int sx, final int sz,
+                                                               final int startX, final int startZ,
+                                                               final int targetX, final int targetZ,
+                                                               final int maxNodes, final float maxRange,
+                                                               final int iterations) {
         NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
         NativePathfinder.resetCardinalFastPathStatsForBenchmark();
         NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(true);
@@ -166,10 +174,39 @@ public final class PathfinderSearchBenchmark {
                 acc += r.length();
             }
             sink = acc;
-            return NativePathfinder.cardinalFastPathStatsForBenchmark().hitRate();
+            final long[] buckets = NativePathfinder.cardinalFastPathDiagnosticsForBenchmark();
+            final long hits = buckets[0];
+            final long candidates = buckets[1];
+            final long diagonalHits = buckets[3];
+            final long diagonalCandidates = buckets[4];
+            return new FastPathDiagnostics(candidates == 0L ? 0.0 : (double) hits / candidates,
+                    hits, candidates, buckets[2], diagonalHits, diagonalCandidates,
+                    diagonalCandidates == 0L ? 0.0 : (double) diagonalHits / diagonalCandidates,
+                    topMisses(buckets));
         } finally {
             NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(false);
         }
+    }
+
+    private static String topMisses(final long[] diagnostics) {
+        final PathType[] types = PathType.values();
+        final List<TypeBucket> buckets = new ArrayList<>();
+        for (int origin = 0; origin < types.length; origin++) {
+            for (int neighbor = 0; neighbor < types.length; neighbor++) {
+                final int offset = 5 + (origin * types.length + neighbor) * 2;
+                final long candidates = diagnostics[offset];
+                final long hits = diagnostics[offset + 1];
+                final long misses = candidates - hits;
+                if (misses > 0L) buckets.add(new TypeBucket(types[origin].name(), types[neighbor].name(), misses));
+            }
+        }
+        buckets.sort(Comparator.comparingLong(TypeBucket::misses).reversed());
+        final StringJoiner result = new StringJoiner(",");
+        for (int i = 0; i < Math.min(12, buckets.size()); i++) {
+            final TypeBucket bucket = buckets.get(i);
+            result.add(bucket.origin + "->" + bucket.neighbor + ":" + bucket.misses);
+        }
+        return result.length() == 0 ? "none" : result.toString();
     }
 
     private static Measurement measure(final Impl impl, final boolean[] passable, final NativeInputs ni,
@@ -309,4 +346,10 @@ public final class PathfinderSearchBenchmark {
     }
 
     private record Measurement(long nanos, long bytes) { }
+
+    private record FastPathDiagnostics(double hitRate, long hits, long candidates,
+                                       long outOfRegion, long diagonalHits, long diagonalCandidates,
+                                       double diagonalHitRate, String topMisses) { }
+
+    private record TypeBucket(String origin, String neighbor, long misses) { }
 }
