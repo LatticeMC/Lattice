@@ -714,7 +714,12 @@ namespace {
         const std::int8_t origin_type = path_type_at(in, current.x, current.y, current.z);
         const bool flat_origin = origin_type == kWalkable;
         const float origin_floor_level = flat_origin
-            ? floor_level_at(in, current.x, current.y, current.z) : 0.0F;
+            ? (in.lazy_context
+                ? floor_level_at(in, current.x, current.y, current.z)
+                : (in.floor_levels
+                    ? in.floor_levels[grid_index(in, current.x, current.y, current.z)]
+                    : static_cast<float>(current.y)))
+            : 0.0F;
         for (int d = 0; d < 4; ++d) {
             if (collect_fastpath_stats) ++cardinal_fastpath_candidates;
             int ny = current.y;
@@ -724,18 +729,29 @@ namespace {
             const int nx = current.x + dir_x[d];
             const int nz = current.z + dir_z[d];
             bool fast_resolved = false;
+            // Flat WALKABLE -> WALKABLE cardinal steps do not need the jump,
+            // fall, or partial-collision chain. Eager snapshots use the one
+            // computed grid index for both masks and floor comparison; lazy
+            // snapshots keep their accessor path and the same strict guards.
             if (fastpath_enabled && flat_origin && in_region(in, nx, current.y, nz)) {
-                type = path_type_at(in, nx, current.y, nz);
+                const int neighbor_grid = grid_index(in, nx, current.y, nz);
+                type = in.lazy_context
+                    ? path_type_at(in, nx, current.y, nz)
+                    : in.path_types[neighbor_grid];
                 if (type == kWalkable) {
                     malus = malus_for(in, type);
                     bool is_standing = malus >= 0.0F;
                     if (!in.lazy_context) {
-                        const std::size_t grid = static_cast<std::size_t>(grid_index(in, nx, current.y, nz));
+                        const std::size_t grid = static_cast<std::size_t>(neighbor_grid);
                         is_standing = is_standing
                             && ((scratch.standing[grid >> 6] >> (grid & 63)) & 1ULL) != 0ULL;
                     }
                     if (is_standing
-                            && floor_level_at(in, nx, current.y, nz) == origin_floor_level) {
+                            && (in.lazy_context
+                                ? floor_level_at(in, nx, current.y, nz)
+                                : (in.floor_levels
+                                    ? in.floor_levels[neighbor_grid]
+                                    : static_cast<float>(current.y))) == origin_floor_level) {
                         fast_resolved = true;
                         if (collect_fastpath_stats) ++cardinal_fastpath_hits;
                     }
