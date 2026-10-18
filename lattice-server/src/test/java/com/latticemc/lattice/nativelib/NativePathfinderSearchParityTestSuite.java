@@ -2,6 +2,7 @@ package com.latticemc.lattice.nativelib;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Method;
 import java.util.List;
@@ -24,15 +25,28 @@ class NativePathfinderSearchParityTestSuite {
 
     @Test
     void matchesVanillaSearchOrderAroundSymmetricObstacle() throws Exception {
+        assertTrue(NativePathfinder.isAvailable(), "native pathfinder must be available for parity");
         boolean[] passable = new boolean[SIZE_X * SIZE_Z];
         java.util.Arrays.fill(passable, true);
         for (int z = 1; z < 4; ++z) passable[index(3, z)] = false;
 
         Path vanilla = vanillaPath(passable);
-        NativePathfinder.PathResult nativeResult = nativePath(passable);
+        NativePathfinder.resetCardinalFastPathStatsForBenchmark();
+        NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(true);
+        final NativePathfinder.PathResult nativeResult;
+        final long[] fastPathStats;
+        try {
+            NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
+            nativeResult = nativePath(passable);
+            fastPathStats = NativePathfinder.cardinalFastPathDiagnosticsForBenchmark();
+        } finally {
+            NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(false);
+            NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
+        }
 
         assertNotNull(vanilla);
         assertNotNull(nativeResult);
+        assertTrue(fastPathStats[3] > 0L, "flat diagonal fast path must be exercised");
         assertEquals(vanilla.canReach(), nativeResult.reachedTarget());
         assertEquals(vanilla.getNodeCount(), nativeResult.length());
         for (int i = 0; i < vanilla.getNodeCount(); ++i) {
@@ -45,6 +59,7 @@ class NativePathfinderSearchParityTestSuite {
 
     @Test
     void cardinalFastPathMatchesNativeBaseline() {
+        assertTrue(NativePathfinder.isAvailable(), "native pathfinder must be available for parity");
         boolean[] passable = new boolean[SIZE_X * SIZE_Z];
         java.util.Arrays.fill(passable, true);
         for (int z = 1; z < 4; ++z) passable[index(3, z)] = false;

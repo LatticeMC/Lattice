@@ -175,12 +175,20 @@ struct PathfinderMasks {
 struct PathfinderCardinalFastPathStats {
     std::uint64_t hits = 0;
     std::uint64_t candidates = 0;
+    std::uint64_t out_of_region_candidates = 0;
+    std::uint64_t diagonal_hits = 0;
+    std::uint64_t diagonal_candidates = 0;
 };
+
+inline constexpr std::size_t kPathfinderCardinalFastPathBucketCount = 26 * 26;
 
 void set_pathfinder_cardinal_fastpath_enabled(bool enabled) noexcept;
 void set_pathfinder_cardinal_fastpath_stats_enabled(bool enabled) noexcept;
 void reset_pathfinder_cardinal_fastpath_stats() noexcept;
 [[nodiscard]] PathfinderCardinalFastPathStats pathfinder_cardinal_fastpath_stats() noexcept;
+void copy_pathfinder_cardinal_fastpath_buckets(std::uint64_t* candidates,
+                                                std::uint64_t* hits,
+                                                std::size_t count) noexcept;
 
 void build_pathfinder_masks_scalar(const std::int8_t* path_types,
                                    std::size_t count,

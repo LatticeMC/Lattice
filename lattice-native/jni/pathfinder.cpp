@@ -1,5 +1,6 @@
 #include <jni.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -172,6 +173,31 @@ JNIEXPORT jlong JNICALL
 Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeCardinalFastPathCandidates(
         JNIEnv* /*env*/, jclass /*cls*/) {
     return static_cast<jlong>(pf::pathfinder_cardinal_fastpath_stats().candidates);
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeCardinalFastPathDiagnostics(
+        JNIEnv* env, jclass /*cls*/) {
+    constexpr std::size_t bucket_count = pf::kPathfinderCardinalFastPathBucketCount;
+    constexpr jsize result_size = static_cast<jsize>(5 + bucket_count * 2);
+    std::array<std::uint64_t, bucket_count> candidates{};
+    std::array<std::uint64_t, bucket_count> hits{};
+    pf::copy_pathfinder_cardinal_fastpath_buckets(candidates.data(), hits.data(), bucket_count);
+    const pf::PathfinderCardinalFastPathStats totals = pf::pathfinder_cardinal_fastpath_stats();
+    std::array<jlong, result_size> values{};
+    values[0] = static_cast<jlong>(totals.hits);
+    values[1] = static_cast<jlong>(totals.candidates);
+    values[2] = static_cast<jlong>(totals.out_of_region_candidates);
+    values[3] = static_cast<jlong>(totals.diagonal_hits);
+    values[4] = static_cast<jlong>(totals.diagonal_candidates);
+    for (std::size_t i = 0; i < bucket_count; ++i) {
+        values[5 + i * 2] = static_cast<jlong>(candidates[i]);
+        values[6 + i * 2] = static_cast<jlong>(hits[i]);
+    }
+    jlongArray result = env->NewLongArray(result_size);
+    if (!result) return nullptr;
+    env->SetLongArrayRegion(result, 0, result_size, values.data());
+    return result;
 }
 
 JNIEXPORT jlong JNICALL

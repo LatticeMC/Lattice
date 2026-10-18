@@ -523,6 +523,11 @@ std::atomic<bool> g_cardinal_fastpath_enabled{true};
 std::atomic<bool> g_cardinal_fastpath_stats_enabled{false};
 std::atomic<std::uint64_t> g_cardinal_fastpath_hits{0};
 std::atomic<std::uint64_t> g_cardinal_fastpath_candidates{0};
+std::atomic<std::uint64_t> g_cardinal_fastpath_out_of_region_candidates{0};
+std::atomic<std::uint64_t> g_diagonal_fastpath_hits{0};
+std::atomic<std::uint64_t> g_diagonal_fastpath_candidates{0};
+std::array<std::atomic<std::uint64_t>, kPathfinderCardinalFastPathBucketCount> g_cardinal_fastpath_bucket_hits{};
+std::array<std::atomic<std::uint64_t>, kPathfinderCardinalFastPathBucketCount> g_cardinal_fastpath_bucket_candidates{};
 
 } // namespace
 
@@ -537,12 +542,30 @@ void set_pathfinder_cardinal_fastpath_stats_enabled(bool enabled) noexcept {
 void reset_pathfinder_cardinal_fastpath_stats() noexcept {
     g_cardinal_fastpath_hits.store(0, std::memory_order_relaxed);
     g_cardinal_fastpath_candidates.store(0, std::memory_order_relaxed);
+    g_cardinal_fastpath_out_of_region_candidates.store(0, std::memory_order_relaxed);
+    g_diagonal_fastpath_hits.store(0, std::memory_order_relaxed);
+    g_diagonal_fastpath_candidates.store(0, std::memory_order_relaxed);
+    for (auto& value : g_cardinal_fastpath_bucket_hits) value.store(0, std::memory_order_relaxed);
+    for (auto& value : g_cardinal_fastpath_bucket_candidates) value.store(0, std::memory_order_relaxed);
 }
 
 PathfinderCardinalFastPathStats pathfinder_cardinal_fastpath_stats() noexcept {
     return PathfinderCardinalFastPathStats{
         g_cardinal_fastpath_hits.load(std::memory_order_relaxed),
-        g_cardinal_fastpath_candidates.load(std::memory_order_relaxed)};
+        g_cardinal_fastpath_candidates.load(std::memory_order_relaxed),
+        g_cardinal_fastpath_out_of_region_candidates.load(std::memory_order_relaxed),
+        g_diagonal_fastpath_hits.load(std::memory_order_relaxed),
+        g_diagonal_fastpath_candidates.load(std::memory_order_relaxed)};
+}
+
+void copy_pathfinder_cardinal_fastpath_buckets(std::uint64_t* candidates,
+                                                std::uint64_t* hits,
+                                                std::size_t count) noexcept {
+    if (!candidates || !hits || count < kPathfinderCardinalFastPathBucketCount) return;
+    for (std::size_t i = 0; i < kPathfinderCardinalFastPathBucketCount; ++i) {
+        candidates[i] = g_cardinal_fastpath_bucket_candidates[i].load(std::memory_order_relaxed);
+        hits[i] = g_cardinal_fastpath_bucket_hits[i].load(std::memory_order_relaxed);
+    }
 }
 
 void init_pathfinder_dispatch() noexcept {
@@ -587,10 +610,26 @@ namespace {
     const bool collect_fastpath_stats = g_cardinal_fastpath_stats_enabled.load(std::memory_order_acquire);
     std::uint64_t cardinal_fastpath_hits = 0;
     std::uint64_t cardinal_fastpath_candidates = 0;
+    std::uint64_t cardinal_fastpath_out_of_region_candidates = 0;
+    std::uint64_t diagonal_fastpath_hits = 0;
+    std::uint64_t diagonal_fastpath_candidates = 0;
+    std::array<std::uint64_t, kPathfinderCardinalFastPathBucketCount> cardinal_fastpath_bucket_hits{};
+    std::array<std::uint64_t, kPathfinderCardinalFastPathBucketCount> cardinal_fastpath_bucket_candidates{};
     auto finish = [&](SearchResult result) noexcept {
         if (collect_fastpath_stats) {
             g_cardinal_fastpath_hits.fetch_add(cardinal_fastpath_hits, std::memory_order_relaxed);
             g_cardinal_fastpath_candidates.fetch_add(cardinal_fastpath_candidates, std::memory_order_relaxed);
+            g_cardinal_fastpath_out_of_region_candidates.fetch_add(
+                cardinal_fastpath_out_of_region_candidates, std::memory_order_relaxed);
+            g_diagonal_fastpath_hits.fetch_add(diagonal_fastpath_hits, std::memory_order_relaxed);
+            g_diagonal_fastpath_candidates.fetch_add(diagonal_fastpath_candidates, std::memory_order_relaxed);
+            for (std::size_t i = 0; i < kPathfinderCardinalFastPathBucketCount; ++i) {
+                if (cardinal_fastpath_bucket_candidates[i] == 0) continue;
+                g_cardinal_fastpath_bucket_candidates[i].fetch_add(
+                    cardinal_fastpath_bucket_candidates[i], std::memory_order_relaxed);
+                g_cardinal_fastpath_bucket_hits[i].fetch_add(
+                    cardinal_fastpath_bucket_hits[i], std::memory_order_relaxed);
+            }
         }
         return result;
     };
@@ -711,7 +750,9 @@ namespace {
         // steps first (kept in `cardinal` even when rejected as a move, since
         // the diagonal gate inspects them), then the four diagonals.
         int cardinal[4] = {-1, -1, -1, -1};
+        bool cardinal_fastpath_resolved[4] = {};
         const std::int8_t origin_type = path_type_at(in, current.x, current.y, current.z);
+        const int origin_type_index = static_cast<int>(origin_type);
         const bool flat_origin = origin_type == kWalkable;
         const float origin_floor_level = flat_origin
             ? (in.lazy_context
@@ -729,15 +770,36 @@ namespace {
             const int nx = current.x + dir_x[d];
             const int nz = current.z + dir_z[d];
             bool fast_resolved = false;
+            const bool neighbor_in_region = in_region(in, nx, current.y, nz);
+            int neighbor_grid = -1;
+            const bool inspect_neighbor_type = neighbor_in_region
+                && ((fastpath_enabled && flat_origin) || collect_fastpath_stats);
+            if (inspect_neighbor_type) {
+                neighbor_grid = grid_index(in, nx, current.y, nz);
+                type = in.lazy_context
+                    ? path_type_at(in, nx, current.y, nz)
+                    : in.path_types[neighbor_grid];
+                if (collect_fastpath_stats) {
+                    const int neighbor_type_index = static_cast<int>(type);
+                    if (origin_type_index >= 0 && origin_type_index < 26
+                            && neighbor_type_index >= 0 && neighbor_type_index < 26) {
+                        ++cardinal_fastpath_bucket_candidates[static_cast<std::size_t>(
+                            origin_type_index * 26 + neighbor_type_index)];
+                    }
+                }
+            } else if (collect_fastpath_stats) {
+                ++cardinal_fastpath_out_of_region_candidates;
+            }
             // Flat WALKABLE -> WALKABLE cardinal steps do not need the jump,
             // fall, or partial-collision chain. Eager snapshots use the one
             // computed grid index for both masks and floor comparison; lazy
             // snapshots keep their accessor path and the same strict guards.
-            if (fastpath_enabled && flat_origin && in_region(in, nx, current.y, nz)) {
-                const int neighbor_grid = grid_index(in, nx, current.y, nz);
-                type = in.lazy_context
-                    ? path_type_at(in, nx, current.y, nz)
-                    : in.path_types[neighbor_grid];
+            if (fastpath_enabled && flat_origin && neighbor_in_region) {
+                const int neighbor_type_index = static_cast<int>(type);
+                const std::size_t bucket = (origin_type_index >= 0 && origin_type_index < 26
+                        && neighbor_type_index >= 0 && neighbor_type_index < 26)
+                    ? static_cast<std::size_t>(origin_type_index * 26 + neighbor_type_index)
+                    : kPathfinderCardinalFastPathBucketCount;
                 if (type == kWalkable) {
                     malus = malus_for(in, type);
                     bool is_standing = malus >= 0.0F;
@@ -753,7 +815,12 @@ namespace {
                                     ? in.floor_levels[neighbor_grid]
                                     : static_cast<float>(current.y))) == origin_floor_level) {
                         fast_resolved = true;
-                        if (collect_fastpath_stats) ++cardinal_fastpath_hits;
+                        if (collect_fastpath_stats) {
+                            ++cardinal_fastpath_hits;
+                            if (bucket < kPathfinderCardinalFastPathBucketCount) {
+                                ++cardinal_fastpath_bucket_hits[bucket];
+                            }
+                        }
                     }
                 }
             }
@@ -766,6 +833,7 @@ namespace {
             if (ni < 0) continue;
             if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
             cardinal[d] = ni;
+            cardinal_fastpath_resolved[d] = fast_resolved;
         }
 
         int neighbors[10];
@@ -799,16 +867,46 @@ namespace {
 
             const int dx = dir_x[d] + dir_x[(d + 1) & 3];
             const int dz = dir_z[d] + dir_z[(d + 1) & 3];
+            const int nx = current.x + dx;
+            const int nz = current.z + dz;
             int ny = current.y;
             std::int8_t type = kBlocked;
             float malus = -1.0F;
             bool closed = false;
-            if (!resolve_step_node(in, current.x, current.y, current.z,
-                                   current.x + dx, current.z + dz,
-                                   scratch.standing, ny, type, malus, closed)) {
+            if (collect_fastpath_stats) ++diagonal_fastpath_candidates;
+            bool fast_resolved = false;
+            if (fastpath_enabled && cardinal_fastpath_resolved[d]
+                    && cardinal_fastpath_resolved[(d + 1) & 3]
+                    && in_region(in, nx, current.y, nz)) {
+                const int diagonal_grid = grid_index(in, nx, current.y, nz);
+                type = in.lazy_context
+                    ? path_type_at(in, nx, current.y, nz)
+                    : in.path_types[diagonal_grid];
+                if (type == kWalkable) {
+                    malus = malus_for(in, type);
+                    bool is_standing = malus >= 0.0F;
+                    if (!in.lazy_context) {
+                        const std::size_t grid = static_cast<std::size_t>(diagonal_grid);
+                        is_standing = is_standing
+                            && ((scratch.standing[grid >> 6] >> (grid & 63)) & 1ULL) != 0ULL;
+                    }
+                    if (is_standing
+                            && (in.lazy_context
+                                ? floor_level_at(in, nx, current.y, nz)
+                                : (in.floor_levels
+                                    ? in.floor_levels[diagonal_grid]
+                                    : static_cast<float>(current.y))) == origin_floor_level) {
+                        fast_resolved = true;
+                        if (collect_fastpath_stats) ++diagonal_fastpath_hits;
+                    }
+                }
+            }
+            if (!fast_resolved
+                    && !resolve_step_node(in, current.x, current.y, current.z,
+                                          nx, nz, scratch.standing, ny, type, malus, closed)) {
                 continue;
             }
-            const int ni = get_node(current.x + dx, ny, current.z + dz, type, malus);
+            const int ni = get_node(nx, ny, nz, type, malus);
             if (ni < 0) continue;
             if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
             // isDiagonalValid(node): not closed, not a walkable door, malus >= 0.

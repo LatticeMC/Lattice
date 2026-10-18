@@ -88,6 +88,10 @@ public final class NativePathfinder {
         return new CardinalFastPathStats(nativeCardinalFastPathHits(), nativeCardinalFastPathCandidates());
     }
 
+    static long[] cardinalFastPathDiagnosticsForBenchmark() {
+        return nativeCardinalFastPathDiagnostics();
+    }
+
     record CardinalFastPathStats(long hits, long candidates) {
         double hitRate() {
             return candidates == 0L ? 0.0 : (double) hits / candidates;
@@ -663,6 +667,8 @@ public final class NativePathfinder {
     private static native long nativeCardinalFastPathHits();
 
     private static native long nativeCardinalFastPathCandidates();
+
+    private static native long[] nativeCardinalFastPathDiagnostics();
 
     private static native long nativeFindPath(
             byte[] pathTypes,
