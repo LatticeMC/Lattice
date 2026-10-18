@@ -445,6 +445,7 @@ val pathfinderSearchBenchmark by tasks.registering(JavaExec::class) {
     mainClass.set("com.latticemc.lattice.nativelib.PathfinderSearchBenchmark")
     workingDir = rootProject.layout.projectDirectory.asFile
     jvmArgs("--enable-native-access=ALL-UNNAMED")
+    systemProperty("lattice.verify", providers.systemProperty("lattice.verify").getOrElse("false"))
     systemProperty("lattice.pathWarmup", providers.gradleProperty("pathfinderSearchBenchmarkWarmup").getOrElse("6"))
     systemProperty("lattice.pathSamples", providers.gradleProperty("pathfinderSearchBenchmarkSamples").getOrElse("11"))
     systemProperty("lattice.pathSizeX", providers.gradleProperty("pathfinderSearchBenchmarkSizeX").getOrElse("64"))

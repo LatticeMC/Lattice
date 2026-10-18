@@ -20,8 +20,9 @@ import net.minecraft.world.level.pathfinder.Target;
 
 /**
  * 独立 JVM 的寻路 Java-native 对比基准：在同一合成 serpentine 网格上分别跑
- * vanilla {@link PathFinder}（纯 Java A*）与 {@link NativePathfinder#findPath}（native A*），
- * 对照每次搜索的耗时与分配；两实现节点数必须一致。不是服务端 MSPT 基准。
+ * vanilla {@link PathFinder}（纯 Java A*）、关闭 cardinal 快路径的 native A*，以及开启
+ * cardinal 快路径的 native A*，对照每次搜索的耗时与分配；三实现节点数必须一致。
+ * 不是服务端 MSPT 基准。
  */
 public final class PathfinderSearchBenchmark {
     private static final ThreadMXBean ALLOC = (ThreadMXBean) ManagementFactory.getThreadMXBean();
@@ -33,7 +34,7 @@ public final class PathfinderSearchBenchmark {
     private static Method vanillaFindPath;
 
     private enum Impl {
-        VANILLA("vanilla"), NATIVE("native");
+        VANILLA("vanilla"), NATIVE("native"), NATIVE_FASTPATH("native-fastpath");
         final String label;
         Impl(final String label) { this.label = label; }
     }
@@ -47,6 +48,8 @@ public final class PathfinderSearchBenchmark {
         if (!NativePathfinder.isAvailable()) {
             throw new IllegalStateException("native pathfinder unavailable");
         }
+        NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(false);
+        NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
 
         vanillaFindPath = PathFinder.class.getDeclaredMethod(
                 "findPath", Node.class, List.class, float.class, int.class, float.class);
@@ -55,14 +58,18 @@ public final class PathfinderSearchBenchmark {
         final int warmup = Integer.getInteger("lattice.pathWarmup", 6);
         final int samples = Integer.getInteger("lattice.pathSamples", 11);
         final boolean reverse = Boolean.getBoolean("lattice.pathReverse");
-        final int sizeX = Integer.getInteger("lattice.pathSizeX", 64);
-        final int sizeZ = Integer.getInteger("lattice.pathSizeZ", 64);
-        final int iterations = Integer.getInteger("lattice.pathIterations", 128);
-
-        System.out.printf("PATHFIND_BENCH java=%s warmup=%d samples=%d reverse=%s size=%dx%d iterations=%d%n",
-                System.getProperty("java.version"), warmup, samples, reverse, sizeX, sizeZ, iterations);
-
-        runConfig(sizeX, sizeZ, warmup, samples, reverse, iterations);
+        System.out.printf("PATHFIND_SCALING java=%s warmup=%d samples=%d reverse=%s%n",
+                System.getProperty("java.version"), warmup, samples, reverse);
+        // 扩展曲线：固定 ~1M 节点访问预算，region 越大迭代越少；ns/节点 随大小的趋势揭示 cache-bound vs compute-bound。
+        try {
+            for (final int size : new int[]{32, 64, 128, 256}) {
+                final int iterations = Math.max(2, 1_000_000 / (size * size));
+                runConfig(size, size, warmup, samples, reverse, iterations);
+            }
+        } finally {
+            NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(false);
+            NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
+        }
         if (sink == Long.MIN_VALUE) throw new AssertionError("no samples ran");
     }
 
@@ -77,14 +84,19 @@ public final class PathfinderSearchBenchmark {
 
         // 正确性：两实现节点数必须一致（在计时区外核对一次）。
         final int vanillaNodes = vanillaNodeCount(passable, sizeX, sizeZ, startX, startZ, targetX, targetZ, maxNodes, maxRange);
-        final int nativeLen = nativeLength(ni, sizeX, sizeZ, startX, startZ, targetX, targetZ, maxNodes, maxRange);
-        if (vanillaNodes <= 0 || vanillaNodes != nativeLen) {
-            throw new AssertionError("path parity failed: vanilla=" + vanillaNodes + " native=" + nativeLen);
+        final int nativeBaselineNodes = nativeLength(ni, sizeX, sizeZ, startX, startZ, targetX, targetZ,
+                maxNodes, maxRange, false);
+        final int nativeFastPathNodes = nativeLength(ni, sizeX, sizeZ, startX, startZ, targetX, targetZ,
+                maxNodes, maxRange, true);
+        if (vanillaNodes <= 0 || vanillaNodes != nativeBaselineNodes || vanillaNodes != nativeFastPathNodes) {
+            throw new AssertionError("path parity failed: vanilla=" + vanillaNodes
+                    + " native=" + nativeBaselineNodes + " native-fastpath=" + nativeFastPathNodes);
         }
 
         final Impl[] impls = Impl.values();
         final double[][] nanos = new double[impls.length][samples];
         final double[][] bytes = new double[impls.length][samples];
+        final double[] hitRates = new double[impls.length];
         for (int i = 0; i < warmup; i++) {
             for (final Impl impl : impls) {
                 measure(impl, passable, ni, sizeX, sizeZ, startX, startZ, targetX, targetZ, maxNodes, maxRange, iterations);
@@ -98,13 +110,16 @@ public final class PathfinderSearchBenchmark {
                 bytes[idx][i] = (double) m.bytes / iterations;
             }
         }
+        hitRates[Impl.NATIVE_FASTPATH.ordinal()] = measureFastPathHitRate(
+                ni, sizeX, sizeZ, startX, startZ, targetX, targetZ, maxNodes, maxRange, iterations);
         System.out.printf("PATHFIND_PARITY size=%dx%d nodes=%d%n", sizeX, sizeZ, vanillaNodes);
         for (final Impl impl : impls) {
             Arrays.sort(nanos[impl.ordinal()]);
             Arrays.sort(bytes[impl.ordinal()]);
-            System.out.printf("PATHFIND_RESULT size=%dx%d impl=%s iterations=%d ns-per-search=%.1f bytes-per-search=%.2f%n",
-                    sizeX, sizeZ, impl.label, iterations,
-                    nanos[impl.ordinal()][samples / 2], bytes[impl.ordinal()][samples / 2]);
+            final double nsPerSearch = nanos[impl.ordinal()][samples / 2];
+            System.out.printf("PATHFIND_RESULT size=%dx%d impl=%s pathNodes=%d ns-per-search=%.1f ns-per-node=%.3f bytes-per-search=%.1f fastpath-hit-rate=%.2f%%%n",
+                    sizeX, sizeZ, impl.label, vanillaNodes, nsPerSearch, nsPerSearch / vanillaNodes,
+                    bytes[impl.ordinal()][samples / 2], hitRates[impl.ordinal()] * 100.0);
         }
     }
 
@@ -122,7 +137,8 @@ public final class PathfinderSearchBenchmark {
 
     private static int nativeLength(final NativeInputs ni, final int sx, final int sz,
                                     final int startX, final int startZ, final int targetX, final int targetZ,
-                                    final int maxNodes, final float maxRange) {
+                                    final int maxNodes, final float maxRange, final boolean fastPath) {
+        NativePathfinder.setCardinalFastPathEnabledForBenchmark(fastPath);
         final NativePathfinder.PathResult r = NativePathfinder.findPath(
                 ni.pathTypes, ni.floorLevels, 0, 0, 0, sx, 1, sz,
                 startX, 0, startZ, new int[]{targetX}, new int[]{0}, new int[]{targetZ}, 1,
@@ -131,10 +147,40 @@ public final class PathfinderSearchBenchmark {
         return r.reachedTarget() ? r.length() : -1;
     }
 
+    private static double measureFastPathHitRate(final NativeInputs ni, final int sx, final int sz,
+                                                  final int startX, final int startZ,
+                                                  final int targetX, final int targetZ,
+                                                  final int maxNodes, final float maxRange,
+                                                  final int iterations) {
+        NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
+        NativePathfinder.resetCardinalFastPathStatsForBenchmark();
+        NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(true);
+        try {
+            long acc = 0L;
+            for (int i = 0; i < iterations; i++) {
+                final NativePathfinder.PathResult r = NativePathfinder.findPath(
+                        ni.pathTypes, ni.floorLevels, 0, 0, 0, sx, 1, sz,
+                        startX, 0, startZ, new int[]{targetX}, new int[]{0}, new int[]{targetZ}, 1,
+                        maxRange, maxNodes, 0, 1, 1, 1.0F, 3, ni.malus, 1.125F, 0.6F,
+                        false, false, false, false, 0, ni.out);
+                acc += r.length();
+            }
+            sink = acc;
+            return NativePathfinder.cardinalFastPathStatsForBenchmark().hitRate();
+        } finally {
+            NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(false);
+        }
+    }
+
     private static Measurement measure(final Impl impl, final boolean[] passable, final NativeInputs ni,
                                        final int sx, final int sz, final int startX, final int startZ,
                                        final int targetX, final int targetZ, final int maxNodes,
                                        final float maxRange, final int iterations) throws Exception {
+        if (impl == Impl.NATIVE) {
+            NativePathfinder.setCardinalFastPathEnabledForBenchmark(false);
+        } else if (impl == Impl.NATIVE_FASTPATH) {
+            NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
+        }
         publishedGrid = passable;
         publishedPathTypes = ni.pathTypes;
         publishedOut = ni.out;
