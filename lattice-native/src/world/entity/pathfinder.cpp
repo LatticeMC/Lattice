@@ -519,8 +519,31 @@ using MaskBuilderFn = void (*)(const std::int8_t*, std::size_t, const float*, in
 
 std::atomic<MaskBuilderFn> g_mask_builder{&build_pathfinder_masks_scalar};
 std::atomic<bool> g_pathfinder_initialised{false};
+std::atomic<bool> g_cardinal_fastpath_enabled{true};
+std::atomic<bool> g_cardinal_fastpath_stats_enabled{false};
+std::atomic<std::uint64_t> g_cardinal_fastpath_hits{0};
+std::atomic<std::uint64_t> g_cardinal_fastpath_candidates{0};
 
 } // namespace
+
+void set_pathfinder_cardinal_fastpath_enabled(bool enabled) noexcept {
+    g_cardinal_fastpath_enabled.store(enabled, std::memory_order_release);
+}
+
+void set_pathfinder_cardinal_fastpath_stats_enabled(bool enabled) noexcept {
+    g_cardinal_fastpath_stats_enabled.store(enabled, std::memory_order_release);
+}
+
+void reset_pathfinder_cardinal_fastpath_stats() noexcept {
+    g_cardinal_fastpath_hits.store(0, std::memory_order_relaxed);
+    g_cardinal_fastpath_candidates.store(0, std::memory_order_relaxed);
+}
+
+PathfinderCardinalFastPathStats pathfinder_cardinal_fastpath_stats() noexcept {
+    return PathfinderCardinalFastPathStats{
+        g_cardinal_fastpath_hits.load(std::memory_order_relaxed),
+        g_cardinal_fastpath_candidates.load(std::memory_order_relaxed)};
+}
 
 void init_pathfinder_dispatch() noexcept {
     if (g_pathfinder_initialised.load(std::memory_order_acquire)) return;
@@ -560,6 +583,17 @@ namespace {
     if (!valid_inputs(in)) return empty_search();
     const int grid_volume = volume(in);
     if (grid_volume <= 0) return empty_search();
+    const bool fastpath_enabled = g_cardinal_fastpath_enabled.load(std::memory_order_acquire);
+    const bool collect_fastpath_stats = g_cardinal_fastpath_stats_enabled.load(std::memory_order_acquire);
+    std::uint64_t cardinal_fastpath_hits = 0;
+    std::uint64_t cardinal_fastpath_candidates = 0;
+    auto finish = [&](SearchResult result) noexcept {
+        if (collect_fastpath_stats) {
+            g_cardinal_fastpath_hits.fetch_add(cardinal_fastpath_hits, std::memory_order_relaxed);
+            g_cardinal_fastpath_candidates.fetch_add(cardinal_fastpath_candidates, std::memory_order_relaxed);
+        }
+        return result;
+    };
 
     if (!in.lazy_context) {
         resize_mask(scratch.passable, static_cast<std::size_t>(grid_volume));
@@ -652,7 +686,7 @@ namespace {
                 result.end_index = current_index;
                 result.target_index = 0;
                 result.reached_target = true;
-                return result;
+                return finish(result);
             }
         } else {
             for (int i = 0; i < in.target_count; ++i) {
@@ -663,7 +697,7 @@ namespace {
                     result.end_index = current_index;
                     result.target_index = i;
                     result.reached_target = true;
-                    return result;
+                    return finish(result);
                 }
             }
         }
@@ -677,17 +711,42 @@ namespace {
         // steps first (kept in `cardinal` even when rejected as a move, since
         // the diagonal gate inspects them), then the four diagonals.
         int cardinal[4] = {-1, -1, -1, -1};
+        const std::int8_t origin_type = path_type_at(in, current.x, current.y, current.z);
+        const bool flat_origin = origin_type == kWalkable;
+        const float origin_floor_level = flat_origin
+            ? floor_level_at(in, current.x, current.y, current.z) : 0.0F;
         for (int d = 0; d < 4; ++d) {
+            if (collect_fastpath_stats) ++cardinal_fastpath_candidates;
             int ny = current.y;
             std::int8_t type = kBlocked;
             float malus = -1.0F;
             bool closed = false;
-            if (!resolve_step_node(in, current.x, current.y, current.z,
-                                   current.x + dir_x[d], current.z + dir_z[d],
-                                   scratch.standing, ny, type, malus, closed)) {
+            const int nx = current.x + dir_x[d];
+            const int nz = current.z + dir_z[d];
+            bool fast_resolved = false;
+            if (fastpath_enabled && flat_origin && in_region(in, nx, current.y, nz)) {
+                type = path_type_at(in, nx, current.y, nz);
+                if (type == kWalkable) {
+                    malus = malus_for(in, type);
+                    bool is_standing = malus >= 0.0F;
+                    if (!in.lazy_context) {
+                        const std::size_t grid = static_cast<std::size_t>(grid_index(in, nx, current.y, nz));
+                        is_standing = is_standing
+                            && ((scratch.standing[grid >> 6] >> (grid & 63)) & 1ULL) != 0ULL;
+                    }
+                    if (is_standing
+                            && floor_level_at(in, nx, current.y, nz) == origin_floor_level) {
+                        fast_resolved = true;
+                        if (collect_fastpath_stats) ++cardinal_fastpath_hits;
+                    }
+                }
+            }
+            if (!fast_resolved
+                    && !resolve_step_node(in, current.x, current.y, current.z, nx, nz,
+                                          scratch.standing, ny, type, malus, closed)) {
                 continue;
             }
-            const int ni = get_node(current.x + dir_x[d], ny, current.z + dir_z[d], type, malus);
+            const int ni = get_node(nx, ny, nz, type, malus);
             if (ni < 0) continue;
             if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
             cardinal[d] = ni;
@@ -816,7 +875,7 @@ namespace {
     result.end_index = best_node;
     result.target_index = best_node_target;
     result.reached_target = false;
-    return result;
+    return finish(result);
 }
 
 [[nodiscard]] bool snapshot_in_bounds(const PathfinderStateSnapshot& snapshot,

@@ -43,6 +43,33 @@ class NativePathfinderSearchParityTestSuite {
         }
     }
 
+    @Test
+    void cardinalFastPathMatchesNativeBaseline() {
+        boolean[] passable = new boolean[SIZE_X * SIZE_Z];
+        java.util.Arrays.fill(passable, true);
+        for (int z = 1; z < 4; ++z) passable[index(3, z)] = false;
+
+        final NativePathfinder.PathResult baseline;
+        final NativePathfinder.PathResult fastPath;
+        NativePathfinder.setCardinalFastPathEnabledForBenchmark(false);
+        try {
+            baseline = nativePath(passable);
+            NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
+            fastPath = nativePath(passable);
+        } finally {
+            NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
+        }
+
+        assertEquals(baseline.reachedTarget(), fastPath.reachedTarget());
+        assertEquals(baseline.targetIndex(), fastPath.targetIndex());
+        assertEquals(baseline.length(), fastPath.length());
+        for (int i = 0; i < baseline.length(); ++i) {
+            assertEquals(baseline.x(i), fastPath.x(i), "x[" + i + "]");
+            assertEquals(baseline.y(i), fastPath.y(i), "y[" + i + "]");
+            assertEquals(baseline.z(i), fastPath.z(i), "z[" + i + "]");
+        }
+    }
+
     private static Path vanillaPath(boolean[] passable) throws Exception {
         GridNodeEvaluator evaluator = new GridNodeEvaluator(passable);
         PathFinder pathFinder = new PathFinder(evaluator, SIZE_X * SIZE_Z);

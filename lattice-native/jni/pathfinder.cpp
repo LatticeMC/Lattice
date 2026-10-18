@@ -144,6 +144,36 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeAbiVersion(
     return kPathfinderAbiVersion;
 }
 
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeSetCardinalFastPathEnabled(
+        JNIEnv* /*env*/, jclass /*cls*/, jboolean enabled) {
+    pf::set_pathfinder_cardinal_fastpath_enabled(enabled != JNI_FALSE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeSetCardinalFastPathStatsEnabled(
+        JNIEnv* /*env*/, jclass /*cls*/, jboolean enabled) {
+    pf::set_pathfinder_cardinal_fastpath_stats_enabled(enabled != JNI_FALSE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeResetCardinalFastPathStats(
+        JNIEnv* /*env*/, jclass /*cls*/) {
+    pf::reset_pathfinder_cardinal_fastpath_stats();
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeCardinalFastPathHits(
+        JNIEnv* /*env*/, jclass /*cls*/) {
+    return static_cast<jlong>(pf::pathfinder_cardinal_fastpath_stats().hits);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeCardinalFastPathCandidates(
+        JNIEnv* /*env*/, jclass /*cls*/) {
+    return static_cast<jlong>(pf::pathfinder_cardinal_fastpath_stats().candidates);
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPath(
         JNIEnv* env, jclass /*cls*/,

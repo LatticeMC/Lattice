@@ -169,6 +169,19 @@ struct PathfinderMasks {
     std::uint64_t* standing = nullptr;
 };
 
+/// Benchmark-only controls for the cardinal flat-cell fast path. The default
+/// is enabled; production callers do not need to opt in. Statistics stay
+/// disabled by default so the hot loop does not pay for counter updates.
+struct PathfinderCardinalFastPathStats {
+    std::uint64_t hits = 0;
+    std::uint64_t candidates = 0;
+};
+
+void set_pathfinder_cardinal_fastpath_enabled(bool enabled) noexcept;
+void set_pathfinder_cardinal_fastpath_stats_enabled(bool enabled) noexcept;
+void reset_pathfinder_cardinal_fastpath_stats() noexcept;
+[[nodiscard]] PathfinderCardinalFastPathStats pathfinder_cardinal_fastpath_stats() noexcept;
+
 void build_pathfinder_masks_scalar(const std::int8_t* path_types,
                                    std::size_t count,
                                    const float* pathfinding_malus,

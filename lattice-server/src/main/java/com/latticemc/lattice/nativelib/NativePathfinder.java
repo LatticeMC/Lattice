@@ -70,6 +70,30 @@ public final class NativePathfinder {
         enabled = value;
     }
 
+    /** Benchmark control for comparing the native baseline with the flat-cell fast path. */
+    static void setCardinalFastPathEnabledForBenchmark(boolean value) {
+        nativeSetCardinalFastPathEnabled(value);
+    }
+
+    /** Enable counter collection only for a separate, untimed hit-rate pass. */
+    static void setCardinalFastPathStatsEnabledForBenchmark(boolean value) {
+        nativeSetCardinalFastPathStatsEnabled(value);
+    }
+
+    static void resetCardinalFastPathStatsForBenchmark() {
+        nativeResetCardinalFastPathStats();
+    }
+
+    static CardinalFastPathStats cardinalFastPathStatsForBenchmark() {
+        return new CardinalFastPathStats(nativeCardinalFastPathHits(), nativeCardinalFastPathCandidates());
+    }
+
+    record CardinalFastPathStats(long hits, long candidates) {
+        double hitRate() {
+            return candidates == 0L ? 0.0 : (double) hits / candidates;
+        }
+    }
+
     public record PathResult(int[] encodedPath,
                              int length,
                              boolean reachedTarget,
@@ -629,6 +653,16 @@ public final class NativePathfinder {
     }
 
     private static native int nativeAbiVersion();
+
+    private static native void nativeSetCardinalFastPathEnabled(boolean enabled);
+
+    private static native void nativeSetCardinalFastPathStatsEnabled(boolean enabled);
+
+    private static native void nativeResetCardinalFastPathStats();
+
+    private static native long nativeCardinalFastPathHits();
+
+    private static native long nativeCardinalFastPathCandidates();
 
     private static native long nativeFindPath(
             byte[] pathTypes,
