@@ -754,6 +754,11 @@ namespace {
         const std::int8_t origin_type = path_type_at(in, current.x, current.y, current.z);
         const int origin_type_index = static_cast<int>(origin_type);
         const bool flat_origin = origin_type == kWalkable;
+        // A WALKABLE origin can only jump when its head cell is passable. If
+        // that vanilla vertical-delta limit is zero, a BLOCKED cardinal
+        // neighbour is rejected before any other findAcceptedNode branch.
+        const bool flat_origin_no_vertical_delta = fastpath_enabled && flat_origin
+            && malus_for(in, path_type_at(in, current.x, current.y + 1, current.z)) < 0.0F;
         const float origin_floor_level = flat_origin
             ? (in.lazy_context
                 ? floor_level_at(in, current.x, current.y, current.z)
@@ -822,6 +827,11 @@ namespace {
                             }
                         }
                     }
+                } else if (flat_origin_no_vertical_delta && type == kBlocked) {
+                    // With no jump allowance, findAcceptedNode cannot accept
+                    // a BLOCKED cell: it has negative malus and all fallback
+                    // branches require another path type. Reject directly.
+                    continue;
                 }
             }
             if (!fast_resolved
