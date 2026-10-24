@@ -1440,8 +1440,10 @@ struct LazyPathGrid {
         scratch.lazy_path_types.resize(static_cast<std::size_t>(cells));
         scratch.lazy_floor_levels.resize(static_cast<std::size_t>(cells));
         if (scratch.lazy_stamp.size() < static_cast<std::size_t>(cells)) scratch.lazy_stamp.resize(static_cast<std::size_t>(cells), 0);
+        if (scratch.lazy_floor_stamp.size() < static_cast<std::size_t>(cells)) scratch.lazy_floor_stamp.resize(static_cast<std::size_t>(cells), 0);
         if (++scratch.current_lazy_stamp == 0) {
             std::fill(scratch.lazy_stamp.begin(), scratch.lazy_stamp.end(), 0);
+            std::fill(scratch.lazy_floor_stamp.begin(), scratch.lazy_floor_stamp.end(), 0);
             scratch.current_lazy_stamp = 1;
         }
         return true;
@@ -1548,21 +1550,32 @@ struct LazyPathGrid {
 
     [[nodiscard]] float lazy_floor_level_at(void* context, int x, int y, int z) noexcept {
         auto& self = *static_cast<LazyPathGrid*>(context);
+        if (!in_region(self.in, x, y, z)) return static_cast<float>(y);
+        const std::size_t index = static_cast<std::size_t>(grid_index(self.in, x, y, z));
+        if (self.scratch.lazy_floor_stamp[index] == self.scratch.current_lazy_stamp) {
+            return self.scratch.lazy_floor_levels[index];
+        }
         std::int8_t type = kBlocked;
         if (!self.raw(x, y, z, type)) {
             self.failed = true;
             return static_cast<float>(y);
         }
         if ((self.in.can_float || self.in.is_amphibious) && type == kWater) {
-            return static_cast<float>(y) + 0.5F;
+            const float floor = static_cast<float>(y) + 0.5F;
+            self.scratch.lazy_floor_levels[index] = floor;
+            self.scratch.lazy_floor_stamp[index] = self.scratch.current_lazy_stamp;
+            return floor;
         }
-        float floor = 0.0F;
-        if (!self.raw(x, y - 1, z, type, &floor)) {
-        self.failed = true;
-        return static_cast<float>(y);
+        float raw_floor = 0.0F;
+        if (!self.raw(x, y - 1, z, type, &raw_floor)) {
+            self.failed = true;
+            return static_cast<float>(y);
+        }
+        const float floor = static_cast<float>(y - 1) + raw_floor;
+        self.scratch.lazy_floor_levels[index] = floor;
+        self.scratch.lazy_floor_stamp[index] = self.scratch.current_lazy_stamp;
+        return floor;
     }
-    return static_cast<float>(y - 1) + floor;
-}
 
 } // namespace
 

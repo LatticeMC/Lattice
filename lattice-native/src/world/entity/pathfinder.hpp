@@ -146,6 +146,7 @@ struct PathfinderScratch {
     std::vector<std::int8_t> lazy_path_types{};
     std::vector<float> lazy_floor_levels{};
     std::vector<std::uint32_t> lazy_stamp{};
+    std::vector<std::uint32_t> lazy_floor_stamp{};
     std::uint32_t current_lazy_stamp = 1;
     std::vector<const PathfinderStateMirrorSection*> lazy_sections{};
 };
