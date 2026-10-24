@@ -161,6 +161,9 @@ TEST_CASE("pathfinder state mirror stores, loads, and invalidates cells") {
     PathfinderScratch scratch{};
     PathfinderStateSnapshot loaded{};
     REQUIRE(load_pathfinder_state_snapshot(mirror, 17, 32, 64, -16, 2, 1, 1, scratch, loaded));
+    REQUIRE(scratch.mirror_sections.size() == 1);
+    CHECK(scratch.mirror_sections[0] != nullptr);
+    CHECK(loaded.mirror_sections == nullptr);
     CHECK(loaded.descriptor_count == 2);
     CHECK(loaded.raw_path_types[0] == OPEN);
     CHECK(loaded.raw_path_types[1] == WALKABLE);
@@ -233,7 +236,7 @@ TEST_CASE("pathfinder state mirror coverage probe matches the load path") {
     CHECK_FALSE(state_mirror_covers(mirror, 5, 17, 0, 0, 1, 1, 1));
 }
 
-TEST_CASE("pathfinder searches from a resident state mirror") {
+TEST_CASE("pathfinder materializes a resident state mirror like a snapshot") {
     constexpr int sx = 5;
     constexpr int sy = 4;
     constexpr int sz = 5;
@@ -288,13 +291,145 @@ TEST_CASE("pathfinder searches from a resident state mirror") {
     PathfinderOutput output{output_cells, 10};
     PathfinderScratch scratch{};
     REQUIRE(find_path_from_state_mirror_into(inputs, mirror, 3, output, scratch));
+    CHECK(scratch.mirror_sections.size() > 0);
+    CHECK(scratch.mirror_cells.size() == 0);
+    CHECK(scratch.mirror_raw_path_types.size() == 0);
+    CHECK(scratch.mirror_floor_heights.size() == 0);
+    CHECK(scratch.materialized_path_types == direct_scratch.materialized_path_types);
+    CHECK(scratch.materialized_floor_levels == direct_scratch.materialized_floor_levels);
     CHECK(output.reached_target);
     CHECK(output.path_length == direct.path_length);
     CHECK(std::equal(output_cells, output_cells + output.path_length * 3, direct_cells));
+    REQUIRE(scratch.nodes.size() == direct_scratch.nodes.size());
+    for (std::size_t i = 0; i < direct_scratch.nodes.size(); ++i) {
+        const PathfinderNode& expected = direct_scratch.nodes[i];
+        const PathfinderNode& actual = scratch.nodes[i];
+        CHECK(actual.x == expected.x);
+        CHECK(actual.y == expected.y);
+        CHECK(actual.z == expected.z);
+        CHECK(actual.g == expected.g);
+        CHECK(actual.h == expected.h);
+        CHECK(actual.f == expected.f);
+        CHECK(actual.walked_distance == expected.walked_distance);
+        CHECK(actual.came_from == expected.came_from);
+        CHECK(actual.type == expected.type);
+        CHECK(actual.flags == expected.flags);
+        CHECK(actual.cost_malus == expected.cost_malus);
+    }
 
 }
 
-TEST_CASE("pathfinder lazy mirror rejects checked coordinate and section bounds") {
+TEST_CASE("pathfinder mirror materialization supports the maximum int coordinate") {
+    const std::int8_t descriptors[] = {BLOCKED, WALKABLE};
+    const float floors[] = {0.0F, 0.0F};
+    std::vector<int> cells(3 * 3 * 3, 0);
+    cells[snapshot_index(3, 3, 1, 1, 1)] = 1;
+    PathfinderStateSnapshot source{};
+    source.cells = cells.data();
+    source.raw_path_types = descriptors;
+    source.floor_heights = floors;
+    source.descriptor_count = 2;
+    source.min_x = std::numeric_limits<int>::max() - 2;
+    source.min_y = 0;
+    source.min_z = -1;
+    source.size_x = 3;
+    source.size_y = 3;
+    source.size_z = 3;
+    PathfinderStateMirror mirror{};
+    store_pathfinder_state_snapshot(mirror, 17, source);
+
+    std::vector<float> malus(26, 0.0F);
+    malus[BLOCKED] = -1.0F;
+    const int target_x = std::numeric_limits<int>::max() - 1;
+    const int target_y = 1;
+    const int target_z = 0;
+    PathfinderInputs inputs{};
+    inputs.region_min_x = target_x;
+    inputs.region_min_y = target_y;
+    inputs.region_min_z = target_z;
+    inputs.region_size_x = 1;
+    inputs.region_size_y = 1;
+    inputs.region_size_z = 1;
+    inputs.start_x = target_x;
+    inputs.start_y = target_y;
+    inputs.start_z = target_z;
+    inputs.target_x = &target_x;
+    inputs.target_y = &target_y;
+    inputs.target_z = &target_z;
+    inputs.target_count = 1;
+    inputs.config = PathfinderConfig{16.0F, 8, 0, 1.5F};
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.level_min_y = -64;
+    inputs.pathfinding_malus = malus.data();
+    inputs.pathfinding_malus_count = static_cast<int>(malus.size());
+
+    int coords[24]{};
+    PathfinderOutput output{coords, 8};
+    PathfinderScratch scratch{};
+    REQUIRE(find_path_from_state_mirror_into(inputs, mirror, 17, output, scratch));
+    CHECK(output.reached_target);
+    CHECK(output.path_length == 1);
+    CHECK(coords[0] == target_x);
+    CHECK(coords[1] == target_y);
+    CHECK(coords[2] == target_z);
+}
+
+TEST_CASE("pathfinder mirror water floor does not require an unused below cell") {
+    const std::int8_t descriptors[] = {BLOCKED, WATER};
+    const float floors[] = {0.0F, 0.0F};
+    int cells[3 * 3 * 3]{};
+    cells[snapshot_index(3, 3, 1, 2, 1)] = 1;
+    PathfinderStateSnapshot source{};
+    source.cells = cells;
+    source.raw_path_types = descriptors;
+    source.floor_heights = floors;
+    source.descriptor_count = 2;
+    source.min_x = -1;
+    source.min_y = -1;
+    source.min_z = -1;
+    source.size_x = 3;
+    source.size_y = 3;
+    source.size_z = 3;
+    PathfinderStateMirror mirror{};
+    store_pathfinder_state_snapshot(mirror, 23, source);
+    invalidate_pathfinder_state_mirror_cell(mirror, 23, 0, 0, 0);
+
+    const int target_x = 0;
+    const int target_y = 1;
+    const int target_z = 0;
+    float malus[26]{};
+    PathfinderInputs inputs{};
+    inputs.region_min_x = target_x;
+    inputs.region_min_y = target_y;
+    inputs.region_min_z = target_z;
+    inputs.region_size_x = 1;
+    inputs.region_size_y = 1;
+    inputs.region_size_z = 1;
+    inputs.start_x = target_x;
+    inputs.start_y = target_y;
+    inputs.start_z = target_z;
+    inputs.target_x = &target_x;
+    inputs.target_y = &target_y;
+    inputs.target_z = &target_z;
+    inputs.target_count = 1;
+    inputs.config = PathfinderConfig{16.0F, 8, 0, 1.5F};
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.can_float = true;
+    inputs.pathfinding_malus = malus;
+    inputs.pathfinding_malus_count = 26;
+
+    int mirror_coords[3]{};
+    PathfinderOutput mirror_output{mirror_coords, 1};
+    PathfinderScratch mirror_scratch{};
+    REQUIRE(find_path_from_state_mirror_into(inputs, mirror, 23, mirror_output, mirror_scratch));
+    CHECK(mirror_output.reached_target);
+    CHECK(mirror_scratch.materialized_path_types[0] == WATER);
+    CHECK(mirror_scratch.materialized_floor_levels[0] == doctest::Approx(1.5F));
+}
+
+TEST_CASE("pathfinder mirror materialization rejects checked coordinate and section bounds") {
     const int target_x = 0;
     const int target_y = 0;
     const int target_z = 0;
@@ -326,7 +461,6 @@ TEST_CASE("pathfinder lazy mirror rejects checked coordinate and section bounds"
     high.region_size_y = 1;
     high.region_size_z = 1;
     CHECK_FALSE(find_path_from_state_mirror_into(high, mirror, 17, output, scratch));
-    CHECK(scratch.lazy_sections.empty());
 
     PathfinderInputs low = make_inputs();
     low.region_min_x = std::numeric_limits<int>::min();
@@ -334,16 +468,14 @@ TEST_CASE("pathfinder lazy mirror rejects checked coordinate and section bounds"
     low.region_size_y = 1;
     low.region_size_z = 1;
     CHECK_FALSE(find_path_from_state_mirror_into(low, mirror, 17, output, scratch));
-    CHECK(scratch.lazy_sections.empty());
 
-    // 514 sections along both horizontal axes exceeds the 512-section lazy
-    // budget while keeping the cell volume below the normal int-sized limit.
+    // Keep the cell volume below the normal int-sized limit while exercising
+    // a region that used to exceed the lazy section budget.
     PathfinderInputs too_many_sections = make_inputs();
     too_many_sections.region_size_x = 8192;
     too_many_sections.region_size_y = 1;
     too_many_sections.region_size_z = 8192;
     CHECK_FALSE(find_path_from_state_mirror_into(too_many_sections, mirror, 17, output, scratch));
-    CHECK(scratch.lazy_sections.empty());
 }
 
 TEST_CASE("pathfinder: L shaped path around obstacle") {

@@ -40,16 +40,8 @@ constexpr std::int8_t kDamageCautious = 24;
 constexpr std::int8_t kDangerTrapdoor = 25;
 constexpr int kPathTypeCount = 26;
 constexpr std::size_t kMaskWordBits = 64;
-/// Lazy mirror materialisation is intentionally bounded.  A request touching
-/// more sections falls back to the snapshot path instead of allocating an
-/// unbounded pointer table.
-constexpr std::int64_t kMaxLazySections = 512;
-
 constexpr std::int8_t kClosedFlag = 1;
 constexpr std::int8_t kOpenFlag = 2;
-
-[[nodiscard]] std::int8_t lazy_path_type_at(void* context, int x, int y, int z) noexcept;
-[[nodiscard]] float lazy_floor_level_at(void* context, int x, int y, int z) noexcept;
 
 [[nodiscard]] bool region_endpoint_fits(int minimum, int size) noexcept {
     const std::int64_t endpoint = static_cast<std::int64_t>(minimum)
@@ -59,7 +51,7 @@ constexpr std::int8_t kOpenFlag = 2;
 }
 
 [[nodiscard]] bool valid_inputs(const PathfinderInputs& in) noexcept {
-    if ((!in.path_types && !in.lazy_context) || !in.pathfinding_malus) return false;
+    if (!in.path_types || !in.pathfinding_malus) return false;
     if (!in.target_x || !in.target_y || !in.target_z || in.target_count <= 0) return false;
     if (in.region_size_x <= 0 || in.region_size_y <= 0 || in.region_size_z <= 0) return false;
     if (!region_endpoint_fits(in.region_min_x, in.region_size_x)
@@ -168,9 +160,6 @@ constexpr std::int8_t kOpenFlag = 2;
 
 [[nodiscard]] std::int8_t path_type_at(const PathfinderInputs& in, int x, int y, int z) noexcept {
     if (!in_region(in, x, y, z)) return kBlocked;
-    if (in.lazy_context) {
-        return lazy_path_type_at(in.lazy_context, x, y, z);
-    }
     return in.path_types[grid_index(in, x, y, z)];
 }
 
@@ -184,11 +173,6 @@ constexpr std::int8_t kOpenFlag = 2;
                                  const std::vector<std::uint64_t>& standing,
                                  std::int8_t& out_type, float& out_malus) noexcept {
     if (!in_region(in, x, y, z)) return false;
-    if (in.lazy_context) {
-        out_type = path_type_at(in, x, y, z);
-        out_malus = malus_for(in, out_type);
-        return out_type != kOpen && out_malus >= 0.0F;
-    }
     const std::size_t index = static_cast<std::size_t>(grid_index(in, x, y, z));
     if (((standing[index >> 6] >> (index & 63)) & 1ULL) == 0ULL) return false;
     out_type = path_type_at(in, x, y, z);
@@ -202,12 +186,11 @@ constexpr std::int8_t kOpenFlag = 2;
 /// snapshot report their integer Y, matching an empty collision shape.
 [[nodiscard]] float floor_level_at(const PathfinderInputs& in, int x, int y, int z) noexcept {
     if (!in_region(in, x, y, z)) return static_cast<float>(y);
-    if (in.lazy_context) {
-        return lazy_floor_level_at(in.lazy_context, x, y, z);
-    }
     if (!in.floor_levels) return static_cast<float>(y);
     return in.floor_levels[grid_index(in, x, y, z)];
 }
+
+[[nodiscard]] int mirror_section_index(int x, int y, int z) noexcept;
 
 /// `WalkNodeEvaluator.doesBlockHavePartialCollision`.
 [[nodiscard]] bool partial_collision(std::int8_t type) noexcept {
@@ -954,6 +937,9 @@ namespace {
                 if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
                 const PathfinderNode& neighbor = scratch.nodes[static_cast<std::size_t>(ni)];
                 if ((neighbor.flags & kClosedFlag) != 0) continue;
+    const std::int64_t end_x = static_cast<std::int64_t>(snapshot.min_x) + snapshot.size_x;
+    const std::int64_t end_y = static_cast<std::int64_t>(snapshot.min_y) + snapshot.size_y;
+    const std::int64_t end_z = static_cast<std::int64_t>(snapshot.min_z) + snapshot.size_z;
                 if (!(neighbor.cost_malus >= 0.0F || current.cost_malus < 0.0F)) continue;
                 neighbors[neighbor_count++] = ni;
             }
@@ -972,9 +958,32 @@ namespace {
                 neighbor.came_from = current_index;
                 neighbor.walked_distance = walked;
                 neighbor.g = g;
+[[nodiscard]] const PathfinderStateMirrorSection* snapshot_mirror_section(
+        const PathfinderStateSnapshot& snapshot, int x, int y, int z) noexcept {
+    if (!snapshot.mirror_sections || snapshot.mirror_section_size_x <= 0
+            || snapshot.mirror_section_size_y <= 0 || snapshot.mirror_section_size_z <= 0) return nullptr;
+    const int sx = (x >> 4) - snapshot.mirror_section_min_x;
+    const int sy = (y >> 4) - snapshot.mirror_section_min_y;
+    const int sz = (z >> 4) - snapshot.mirror_section_min_z;
+    if (sx < 0 || sy < 0 || sz < 0 || sx >= snapshot.mirror_section_size_x
+            || sy >= snapshot.mirror_section_size_y || sz >= snapshot.mirror_section_size_z) return nullptr;
+    const std::size_t slot = (static_cast<std::size_t>(sy) * snapshot.mirror_section_size_z
+        + static_cast<std::size_t>(sz)) * snapshot.mirror_section_size_x + static_cast<std::size_t>(sx);
+    return snapshot.mirror_sections[slot];
+}
+
                 // `PathFinder.getBestH` keeps Target.bestNode in the raw
                 // distance domain, while the A* f-cost uses that value times
                 // FUDGING. Comparing a fudged neighbour h to the unfudged
+    if (snapshot.mirror_sections) {
+        if (!snapshot_in_bounds(snapshot, x, y, z)) return false;
+        const PathfinderStateMirrorSection* section = snapshot_mirror_section(snapshot, x, y, z);
+        if (!section) return false;
+        const int local = mirror_section_index(x, y, z);
+        if (section->valid[local] == 0) return false;
+        type = section->raw_path_types[local];
+        return type >= kBlocked && type < kPathTypeCount;
+    }
                 // start h made a partial search keep its start node even when
                 // it had already moved closer to the target.
                 const float heuristic = best_h(in, neighbor, &best_target);
@@ -986,6 +995,15 @@ namespace {
                     best_node_target = best_target;
                 }
                 if ((neighbor.flags & kOpenFlag) != 0) {
+    if (snapshot.mirror_sections) {
+        if (!snapshot_in_bounds(snapshot, x, y, z)) return false;
+        const PathfinderStateMirrorSection* section = snapshot_mirror_section(snapshot, x, y, z);
+        if (!section) return false;
+        const int local = mirror_section_index(x, y, z);
+        if (section->valid[local] == 0) return false;
+        height = section->floor_heights[local];
+        return std::isfinite(height) && height >= 0.0F && height <= 1.0F;
+    }
                     heap.change_cost(ni);
                 } else {
                     heap.push(ni);
@@ -1005,9 +1023,9 @@ namespace {
 [[nodiscard]] bool snapshot_in_bounds(const PathfinderStateSnapshot& snapshot,
                                       int x, int y, int z) noexcept {
     return x >= snapshot.min_x && y >= snapshot.min_y && z >= snapshot.min_z
-        && x < snapshot.min_x + snapshot.size_x
-        && y < snapshot.min_y + snapshot.size_y
-        && z < snapshot.min_z + snapshot.size_z;
+        && static_cast<std::int64_t>(x) < end_x
+        && static_cast<std::int64_t>(y) < end_y
+        && static_cast<std::int64_t>(z) < end_z;
 }
 
 [[nodiscard]] bool snapshot_index(const PathfinderStateSnapshot& snapshot,
@@ -1127,6 +1145,106 @@ namespace {
                                  const PathfinderStateSnapshot& snapshot,
                                  int x, int y, int z,
                                  std::int8_t& result) noexcept {
+[[nodiscard]] bool single_cell_path_type_from_raw(const PathfinderInputs& in,
+                                                 const PathfinderStateSnapshot& snapshot,
+                                                 int x, int y, int z, std::int8_t raw_type,
+                                                 std::int8_t& result) noexcept {
+    // OPEN and amphibious water need contextual classification; rails depend on
+    // the mob position. Keep those cases on the canonical evaluator.
+    if (raw_type == kOpen || raw_type == kRail || (in.is_amphibious && raw_type == kWater)) {
+        return mob_path_type(in, snapshot, x, y, z, result);
+    }
+    result = raw_type;
+    if (result == kDoorWoodClosed && in.can_open_doors && in.can_pass_doors) {
+        result = kWalkableDoor;
+    } else if (result == kDoorOpen && !in.can_pass_doors) {
+        result = kBlocked;
+    } else if (result == kRail) {
+        std::int8_t at_mob = kBlocked;
+        std::int8_t below_mob = kBlocked;
+        if (!static_path_type(snapshot, in, in.mob_block_x, in.mob_block_y, in.mob_block_z, at_mob)
+                || !static_path_type(snapshot, in, in.mob_block_x, in.mob_block_y - 1,
+                                      in.mob_block_z, below_mob)) return false;
+        if (at_mob != kRail && below_mob != kRail) result = kUnpassableRail;
+    }
+    if (result == kFence || result == kUnpassableRail) return true;
+    return true;
+}
+
+void build_single_cell_type_table(const PathfinderInputs& in,
+                                 std::array<std::int8_t, kPathTypeCount>& types) noexcept {
+    const float blocked_malus = malus_for(in, kBlocked);
+    for (int raw = 0; raw < kPathTypeCount; ++raw) {
+        const std::int8_t raw_type = static_cast<std::int8_t>(raw);
+        if (raw_type == kOpen || raw_type == kRail || (in.is_amphibious && raw_type == kWater)) {
+            types[static_cast<std::size_t>(raw)] = -1;
+            continue;
+        }
+        std::int8_t result = raw_type;
+        if (result == kDoorWoodClosed && in.can_open_doors && in.can_pass_doors) {
+            result = kWalkableDoor;
+        } else if (result == kDoorOpen && !in.can_pass_doors) {
+            result = kBlocked;
+        }
+        if (result != kFence && result != kUnpassableRail) {
+            const float type_malus = malus_for(in, result);
+            if (!(type_malus < 0.0F || type_malus >= blocked_malus)) result = kBlocked;
+        }
+        types[static_cast<std::size_t>(raw)] = result;
+    }
+}
+
+[[nodiscard]] bool materialize_single_cell_mirror_view(const PathfinderInputs& in,
+                                                      const PathfinderStateSnapshot& snapshot,
+                                                      int count,
+                                                      PathfinderScratch& scratch) noexcept {
+    std::array<std::int8_t, kPathTypeCount> single_cell_types{};
+    build_single_cell_type_table(in, single_cell_types);
+    const std::int64_t end_y = static_cast<std::int64_t>(in.region_min_y) + in.region_size_y;
+    const std::int64_t end_z = static_cast<std::int64_t>(in.region_min_z) + in.region_size_z;
+    const std::int64_t end_x = static_cast<std::int64_t>(in.region_min_x) + in.region_size_x;
+    int index = 0;
+    for (std::int64_t y_value = in.region_min_y; y_value < end_y; ++y_value) {
+        const int y = static_cast<int>(y_value);
+        for (std::int64_t z_value = in.region_min_z; z_value < end_z; ++z_value) {
+            const int z = static_cast<int>(z_value);
+            for (std::int64_t x_value = in.region_min_x; x_value < end_x;) {
+                const int x = static_cast<int>(x_value);
+                const PathfinderStateMirrorSection* path_section = snapshot_mirror_section(snapshot, x, y, z);
+                const PathfinderStateMirrorSection* floor_section =
+                    snapshot_mirror_section(snapshot, x, y - 1, z);
+                if (!path_section) return false;
+                const std::int64_t run = std::min<std::int64_t>(16 - (x & 15), end_x - x_value);
+                for (std::int64_t offset = 0; offset < run; ++offset, ++index) {
+                    const int cell_x = static_cast<int>(x_value + offset);
+                    const int path_local = mirror_section_index(cell_x, y, z);
+                    if (path_section->valid[path_local] == 0) return false;
+                    const std::int8_t raw_type = path_section->raw_path_types[path_local];
+                    if (raw_type < kBlocked || raw_type >= kPathTypeCount) return false;
+                    const std::int8_t mapped_type = single_cell_types[static_cast<std::size_t>(raw_type)];
+                    std::int8_t type = mapped_type;
+                    if (mapped_type < 0
+                            && !single_cell_path_type_from_raw(in, snapshot, cell_x, y, z, raw_type, type)) return false;
+                    scratch.materialized_path_types[static_cast<std::size_t>(index)] = type;
+                    if ((in.can_float || in.is_amphibious) && raw_type == kWater) {
+                        scratch.materialized_floor_levels[static_cast<std::size_t>(index)] = static_cast<float>(y) + 0.5F;
+                    } else {
+                        if (!floor_section) return false;
+                        const int floor_local = mirror_section_index(cell_x, y - 1, z);
+                        if (floor_section->valid[floor_local] == 0) return false;
+                        const float floor_height = floor_section->floor_heights[floor_local];
+                        if (!std::isfinite(floor_height) || floor_height < 0.0F || floor_height > 1.0F) return false;
+                        scratch.materialized_floor_levels[static_cast<std::size_t>(index)] =
+                            static_cast<float>(y - 1) + floor_height;
+                    }
+                }
+                x_value += run;
+            }
+        }
+    }
+    return index == count;
+}
+
     bool present[kPathTypeCount]{};
     for (int dx = 0; dx < in.entity_width; ++dx) {
         for (int dy = 0; dy < in.entity_height; ++dy) {
@@ -1146,6 +1264,7 @@ namespace {
                     }
                     if (at_mob != kRail && below_mob != kRail) type = kUnpassableRail;
                 }
+    int index = 0;
                 present[static_cast<int>(type)] = true;
             }
         }
@@ -1180,8 +1299,8 @@ namespace {
 [[nodiscard]] bool materialize_state_snapshot(const PathfinderInputs& in,
                                                const PathfinderStateSnapshot& snapshot,
                                                PathfinderScratch& scratch) noexcept {
-    if (!snapshot.cells || !snapshot.raw_path_types || !snapshot.floor_heights
-            || snapshot.descriptor_count <= 0 || snapshot.size_x <= 0
+    if ((!snapshot.mirror_sections && (!snapshot.cells || !snapshot.raw_path_types
+            || !snapshot.floor_heights || snapshot.descriptor_count <= 0)) || snapshot.size_x <= 0
             || snapshot.size_y <= 0 || snapshot.size_z <= 0) return false;
     if (!region_endpoint_fits(in.region_min_x, in.region_size_x)
             || !region_endpoint_fits(in.region_min_y, in.region_size_y)
@@ -1190,7 +1309,9 @@ namespace {
     if (count <= 0) return false;
     scratch.materialized_path_types.resize(static_cast<std::size_t>(count));
     scratch.materialized_floor_levels.resize(static_cast<std::size_t>(count));
-    int index = 0;
+    if (snapshot.mirror_sections && in.entity_width == 1 && in.entity_height == 1) {
+        return materialize_single_cell_mirror_view(in, snapshot, count, scratch);
+    }
     const std::int64_t end_y = static_cast<std::int64_t>(in.region_min_y) + in.region_size_y;
     const std::int64_t end_z = static_cast<std::int64_t>(in.region_min_z) + in.region_size_z;
     const std::int64_t end_x = static_cast<std::int64_t>(in.region_min_x) + in.region_size_x;
@@ -1202,9 +1323,9 @@ namespace {
                 const int x = static_cast<int>(x_value);
                 std::int8_t type = kBlocked;
                 float floor_height = 0.0F;
-                if (!mob_path_type(in, snapshot, x, y, z, type)) return false;
                 std::int8_t raw_type = kBlocked;
-                if (!snapshot_raw_type(snapshot, x, y, z, raw_type)) return false;
+                if (!mob_path_type(in, snapshot, x, y, z, type)
+                        || !snapshot_raw_type(snapshot, x, y, z, raw_type)) return false;
                 scratch.materialized_path_types[static_cast<std::size_t>(index)] = type;
                 if ((in.can_float || in.is_amphibious) && raw_type == kWater) {
                     scratch.materialized_floor_levels[static_cast<std::size_t>(index)] = static_cast<float>(y) + 0.5F;
@@ -1229,353 +1350,6 @@ namespace {
 [[nodiscard]] int mirror_section_index(int x, int y, int z) noexcept {
     return (x & 15) | ((z & 15) << 4) | ((y & 15) << 8);
 }
-
-#if 0 // Replaced by the contiguous materialization path below; retained temporarily for comparison.
-[[nodiscard]] bool mirror_raw_type(const PathfinderStateMirror& mirror, int world_key,
-                                   int x, int y, int z, std::int8_t& type) noexcept {
-    if (mirror.world_key != world_key) return false;
-    const auto section = mirror.sections.find(mirror_section_key(x, y, z));
-    if (section == mirror.sections.end()) return false;
-    const int index = mirror_section_index(x, y, z);
-    if (section->second.valid[index] == 0) return false;
-    type = section->second.raw_path_types[index];
-    return type >= kBlocked && type < kPathTypeCount;
-}
-
-[[nodiscard]] bool mirror_floor_height(const PathfinderStateMirror& mirror, int world_key,
-                                       int x, int y, int z, float& height) noexcept {
-    if (mirror.world_key != world_key) return false;
-    const auto section = mirror.sections.find(mirror_section_key(x, y, z));
-    if (section == mirror.sections.end()) return false;
-    const int index = mirror_section_index(x, y, z);
-    if (section->second.valid[index] == 0) return false;
-    height = section->second.floor_heights[index];
-    return std::isfinite(height) && height >= 0.0F && height <= 1.0F;
-}
-
-[[nodiscard]] bool static_path_type_from_mirror(PathfinderStateMirror& mirror, int world_key,
-                                                 int level_min_y, int x, int y, int z,
-                                                 std::int8_t& type) noexcept {
-    if (mirror.world_key != world_key) return false;
-    const auto section_it = mirror.sections.find(mirror_section_key(x, y, z));
-    if (section_it == mirror.sections.end()) return false;
-    const int index = mirror_section_index(x, y, z);
-    PathfinderStateMirrorSection& section = section_it->second;
-    if (section.valid[index] == 0) return false;
-    if (section.static_valid[index] != 0) {
-        type = section.static_path_types[index];
-        return true;
-    }
-
-    type = section.raw_path_types[index];
-    if (type < kBlocked || type >= kPathTypeCount) return false;
-    if (type != kOpen || y < level_min_y + 1) {
-        section.static_path_types[index] = type;
-        section.static_valid[index] = 1;
-        return true;
-    }
-
-    std::int8_t below = kBlocked;
-    if (!mirror_raw_type(mirror, world_key, x, y - 1, z, below)) return false;
-    switch (below) {
-        case kOpen:
-        case kWater:
-        case kLava:
-        case kWalkable:
-            break;
-        case kDamageFire: type = kDamageFire; break;
-        case kDamageOther: type = kDamageOther; break;
-        case kStickyHoney: type = kStickyHoney; break;
-        case kPowderSnow: type = kDangerPowderSnow; break;
-        case kDamageCautious: type = kDamageCautious; break;
-        case kTrapdoor: type = kDangerTrapdoor; break;
-        default:
-            type = kWalkable;
-            for (int dx = -1; dx <= 1; ++dx) {
-                for (int dy = -1; dy <= 1; ++dy) {
-                    for (int dz = -1; dz <= 1; ++dz) {
-                        if (dx == 0 && dz == 0) continue;
-                        std::int8_t neighbour = kBlocked;
-                        if (!mirror_raw_type(mirror, world_key, x + dx, y + dy, z + dz, neighbour)) return false;
-                        if (neighbour == kDamageOther) { type = kDangerOther; goto finish; }
-                        if (neighbour == kDamageFire || neighbour == kLava) { type = kDangerFire; goto finish; }
-                        if (neighbour == kWater) { type = kWaterBorder; goto finish; }
-                        if (neighbour == kDamageCautious) { type = kDamageCautious; goto finish; }
-                    }
-                }
-            }
-            break;
-    }
-finish:
-    section.static_path_types[index] = type;
-    section.static_valid[index] = 1;
-    return true;
-}
-
-[[nodiscard]] bool materialize_state_mirror(const PathfinderInputs& in,
-                                             PathfinderStateMirror& mirror, int world_key,
-                                             PathfinderScratch& scratch) noexcept {
-    // Larger entities combine every occupied cell and retain the exact generic
-    // descriptor path below. Common 1x1 walkers can reuse the static result.
-    if (in.entity_width != 1 || in.entity_height != 1) return false;
-    const int count = volume(in);
-    if (count <= 0) return false;
-    scratch.materialized_path_types.resize(static_cast<std::size_t>(count));
-    scratch.materialized_floor_levels.resize(static_cast<std::size_t>(count));
-    int index = 0;
-    for (int y = in.region_min_y; y < in.region_min_y + in.region_size_y; ++y) {
-        for (int z = in.region_min_z; z < in.region_min_z + in.region_size_z; ++z) {
-            for (int x = in.region_min_x; x < in.region_min_x + in.region_size_x; ++x, ++index) {
-                std::int8_t type = kBlocked;
-                if (!static_path_type_from_mirror(mirror, world_key, in.level_min_y, x, y, z, type)) return false;
-                if (type == kDoorWoodClosed && in.can_open_doors && in.can_pass_doors) {
-                    type = kWalkableDoor;
-                } else if (type == kDoorOpen && !in.can_pass_doors) {
-                    type = kBlocked;
-                } else if (type == kRail) {
-                    std::int8_t at_mob = kBlocked;
-                    std::int8_t below_mob = kBlocked;
-                    if (!static_path_type_from_mirror(mirror, world_key, in.level_min_y,
-                                                       in.mob_block_x, in.mob_block_y, in.mob_block_z, at_mob)
-                            || !static_path_type_from_mirror(mirror, world_key, in.level_min_y,
-                                                              in.mob_block_x, in.mob_block_y - 1, in.mob_block_z, below_mob)) {
-                        return false;
-                    }
-                    if (at_mob != kRail && below_mob != kRail) type = kUnpassableRail;
-                }
-                float floor_height = 0.0F;
-                if (!mirror_floor_height(mirror, world_key, x, y - 1, z, floor_height)) return false;
-                scratch.materialized_path_types[static_cast<std::size_t>(index)] = type;
-                scratch.materialized_floor_levels[static_cast<std::size_t>(index)] =
-                    static_cast<float>(y - 1) + floor_height;
-            }
-        }
-    }
-    return true;
-}
-
-#endif
-
-struct LazyPathGrid {
-    const PathfinderInputs& in;
-    const PathfinderStateMirror& mirror;
-    int world_key;
-    PathfinderScratch& scratch;
-    int state_min_x;
-    int state_min_y;
-    int state_min_z;
-    int state_max_x;
-    int state_max_y;
-    int state_max_z;
-    int section_min_x;
-    int section_min_y;
-    int section_min_z;
-    int section_count_x;
-    int section_count_y;
-    int section_count_z;
-    int state_count_x;
-    int state_count_y;
-    int state_count_z;
-    std::vector<const PathfinderStateMirrorSection*>& sections;
-    bool failed = false;
-
-    LazyPathGrid(const PathfinderInputs& inputs, const PathfinderStateMirror& state_mirror,
-                 int key, PathfinderScratch& state_scratch) noexcept
-        : in(inputs), mirror(state_mirror), world_key(key), scratch(state_scratch),
-          state_min_x(0), state_min_y(0), state_min_z(0),
-          state_max_x(0), state_max_y(0), state_max_z(0),
-          section_min_x(0), section_min_y(0), section_min_z(0),
-          section_count_x(0), section_count_y(0), section_count_z(0),
-          state_count_x(0), state_count_y(0), state_count_z(0),
-          sections(state_scratch.lazy_sections) {}
-
-    [[nodiscard]] std::size_t section_slot(int sx, int sy, int sz) const noexcept {
-        return (static_cast<std::size_t>(sy) * section_count_z + sz) * section_count_x + sx;
-    }
-
-
-    [[nodiscard]] bool initialise() noexcept {
-        if (mirror.world_key != world_key
-                || !checked_state_axis(in.region_min_x, in.region_size_x, in.entity_width,
-                                        state_min_x, state_max_x, state_count_x)
-                || !checked_state_axis(in.region_min_y, in.region_size_y, in.entity_height,
-                                       state_min_y, state_max_y, state_count_y)
-                || !checked_state_axis(in.region_min_z, in.region_size_z, in.entity_width,
-                                       state_min_z, state_max_z, state_count_z)) return false;
-        section_min_x = state_min_x >> 4;
-        section_min_y = state_min_y >> 4;
-        section_min_z = state_min_z >> 4;
-        const int section_max_x = state_max_x >> 4;
-        const int section_max_y = state_max_y >> 4;
-        const int section_max_z = state_max_z >> 4;
-        std::int64_t count_x = static_cast<std::int64_t>(section_max_x)
-            - section_min_x + 1;
-        std::int64_t count_y = static_cast<std::int64_t>(section_max_y)
-            - section_min_y + 1;
-        std::int64_t count_z = static_cast<std::int64_t>(section_max_z)
-            - section_min_z + 1;
-        std::int64_t count = 0;
-        if (count_x <= 0 || count_y <= 0 || count_z <= 0
-                || !checked_mul_i64(count_x, count_y, count)
-                || !checked_mul_i64(count, count_z, count)
-                || count > kMaxLazySections) return false;
-        section_count_x = static_cast<int>(count_x);
-        section_count_y = static_cast<int>(count_y);
-        section_count_z = static_cast<int>(count_z);
-        const std::size_t section_count = static_cast<std::size_t>(count);
-        sections.resize(section_count);
-        for (int sy = 0; sy < section_count_y; ++sy) for (int sz = 0; sz < section_count_z; ++sz) for (int sx = 0; sx < section_count_x; ++sx) {
-            const std::size_t slot = section_slot(sx, sy, sz);
-            const auto section_origin = [](int section) noexcept {
-                return static_cast<int>(static_cast<std::int64_t>(section) * 16);
-            };
-            const auto it = mirror.sections.find(mirror_section_key(
-                section_origin(section_min_x + sx), section_origin(section_min_y + sy),
-                section_origin(section_min_z + sz)));
-            if (it == mirror.sections.end()) return false;
-            sections[slot] = &it->second;
-        }
-        const int cells = volume(in);
-        if (cells <= 0) return false;
-        scratch.lazy_path_types.resize(static_cast<std::size_t>(cells));
-        scratch.lazy_floor_levels.resize(static_cast<std::size_t>(cells));
-        if (scratch.lazy_stamp.size() < static_cast<std::size_t>(cells)) scratch.lazy_stamp.resize(static_cast<std::size_t>(cells), 0);
-        if (scratch.lazy_floor_stamp.size() < static_cast<std::size_t>(cells)) scratch.lazy_floor_stamp.resize(static_cast<std::size_t>(cells), 0);
-        if (++scratch.current_lazy_stamp == 0) {
-            std::fill(scratch.lazy_stamp.begin(), scratch.lazy_stamp.end(), 0);
-            std::fill(scratch.lazy_floor_stamp.begin(), scratch.lazy_floor_stamp.end(), 0);
-            scratch.current_lazy_stamp = 1;
-        }
-        return true;
-    }
-
-    [[nodiscard]] bool raw(int x, int y, int z, std::int8_t& type, float* floor = nullptr) noexcept {
-        if (x < state_min_x || x > state_max_x || y < state_min_y || y > state_max_y || z < state_min_z || z > state_max_z) return false;
-        const int sx = (x >> 4) - section_min_x, sy = (y >> 4) - section_min_y, sz = (z >> 4) - section_min_z;
-        const auto* section = sections[section_slot(sx, sy, sz)];
-        const int local = mirror_section_index(x, y, z);
-        if (section->valid[local] == 0) return false;
-        type = section->raw_path_types[local];
-        if (type < kBlocked || type >= kPathTypeCount) return false;
-        if (floor) *floor = section->floor_heights[local];
-        return !floor || (std::isfinite(*floor) && *floor >= 0.0F && *floor <= 1.0F);
-    }
-
-    [[nodiscard]] bool static_type(int x, int y, int z, std::int8_t& type) noexcept {
-        if (!raw(x, y, z, type)) return false;
-        if (in.is_amphibious && type == kWater) {
-            constexpr int offsets[6][3] = {{0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}, {-1, 0, 0}, {1, 0, 0}};
-            for (const auto& offset : offsets) {
-                std::int8_t neighbour = kBlocked;
-                if (!raw(x + offset[0], y + offset[1], z + offset[2], neighbour)) return false;
-                if (neighbour == kBlocked) {
-                    type = kWaterBorder;
-                    break;
-                }
-            }
-            return true;
-        }
-        if (type != kOpen || y < in.level_min_y + 1) return true;
-        std::int8_t below = kBlocked;
-        if (!raw(x, y - 1, z, below)) return false;
-        switch (below) {
-            case kOpen: case kWater: case kLava: case kWalkable: return true;
-            case kDamageFire: type = kDamageFire; return true;
-            case kDamageOther: type = kDamageOther; return true;
-            case kStickyHoney: type = kStickyHoney; return true;
-            case kPowderSnow: type = kDangerPowderSnow; return true;
-            case kDamageCautious: type = kDamageCautious; return true;
-            case kTrapdoor: type = kDangerTrapdoor; return true;
-            default: type = kWalkable; break;
-        }
-        for (int dx = -1; dx <= 1; ++dx) for (int dy = -1; dy <= 1; ++dy) for (int dz = -1; dz <= 1; ++dz) {
-            if (dx == 0 && dz == 0) continue;
-            std::int8_t neighbour = kBlocked;
-            if (!raw(x + dx, y + dy, z + dz, neighbour)) return false;
-            if (neighbour == kDamageOther) { type = kDangerOther; return true; }
-            if (neighbour == kDamageFire || neighbour == kLava) { type = kDangerFire; return true; }
-            if (neighbour == kWater) { type = kWaterBorder; return true; }
-            if (neighbour == kDamageCautious) { type = kDamageCautious; return true; }
-        }
-        return true;
-    }
-
-    [[nodiscard]] bool final_type(int x, int y, int z, std::int8_t& result) noexcept {
-        if (!in_region(in, x, y, z)) return false;
-        const int index = grid_index(in, x, y, z);
-        if (scratch.lazy_stamp[static_cast<std::size_t>(index)] == scratch.current_lazy_stamp) {
-            result = scratch.lazy_path_types[static_cast<std::size_t>(index)]; return true;
-        }
-        bool present[kPathTypeCount]{};
-        for (int dx = 0; dx < in.entity_width; ++dx) for (int dy = 0; dy < in.entity_height; ++dy) for (int dz = 0; dz < in.entity_width; ++dz) {
-            std::int8_t type = kBlocked;
-            if (!static_type(x + dx, y + dy, z + dz, type)) return false;
-            if (type == kDoorWoodClosed && in.can_open_doors && in.can_pass_doors) type = kWalkableDoor;
-            else if (type == kDoorOpen && !in.can_pass_doors) type = kBlocked;
-            else if (type == kRail) {
-                std::int8_t at_mob = kBlocked, below_mob = kBlocked;
-                if (!static_type(in.mob_block_x, in.mob_block_y, in.mob_block_z, at_mob)
-                        || !static_type(in.mob_block_x, in.mob_block_y - 1, in.mob_block_z, below_mob)) return false;
-                if (at_mob != kRail && below_mob != kRail) type = kUnpassableRail;
-            }
-            present[static_cast<int>(type)] = true;
-        }
-        if (present[kFence]) result = kFence;
-        else if (present[kUnpassableRail]) result = kUnpassableRail;
-        else {
-        result = kBlocked;
-        for (int type = 0; type < kPathTypeCount; ++type) if (present[type]) {
-            if (malus_for(in, static_cast<std::int8_t>(type)) < 0.0F) { result = static_cast<std::int8_t>(type); break; }
-            if (malus_for(in, static_cast<std::int8_t>(type)) >= malus_for(in, result)) result = static_cast<std::int8_t>(type);
-        }
-        }
-        if (in.entity_width <= 1 && result != kOpen && malus_for(in, result) == 0.0F) {
-            std::int8_t origin = kBlocked;
-            if (!static_type(x, y, z, origin)) return false;
-            if (origin == kOpen) result = kOpen;
-        }
-        scratch.lazy_path_types[static_cast<std::size_t>(index)] = result;
-        scratch.lazy_stamp[static_cast<std::size_t>(index)] = scratch.current_lazy_stamp;
-        return true;
-    }
-
-};
-
-[[nodiscard]] std::int8_t lazy_path_type_at(void* context, int x, int y, int z) noexcept {
-    auto& self = *static_cast<LazyPathGrid*>(context);
-    std::int8_t type = kBlocked;
-    if (!self.final_type(x, y, z, type)) self.failed = true;
-    return type;
-}
-
-    [[nodiscard]] float lazy_floor_level_at(void* context, int x, int y, int z) noexcept {
-        auto& self = *static_cast<LazyPathGrid*>(context);
-        if (!in_region(self.in, x, y, z)) return static_cast<float>(y);
-        const std::size_t index = static_cast<std::size_t>(grid_index(self.in, x, y, z));
-        if (self.scratch.lazy_floor_stamp[index] == self.scratch.current_lazy_stamp) {
-            return self.scratch.lazy_floor_levels[index];
-        }
-        std::int8_t type = kBlocked;
-        if (!self.raw(x, y, z, type)) {
-            self.failed = true;
-            return static_cast<float>(y);
-        }
-        if ((self.in.can_float || self.in.is_amphibious) && type == kWater) {
-            const float floor = static_cast<float>(y) + 0.5F;
-            self.scratch.lazy_floor_levels[index] = floor;
-            self.scratch.lazy_floor_stamp[index] = self.scratch.current_lazy_stamp;
-            return floor;
-        }
-        float raw_floor = 0.0F;
-        if (!self.raw(x, y - 1, z, type, &raw_floor)) {
-            self.failed = true;
-            return static_cast<float>(y);
-        }
-        const float floor = static_cast<float>(y - 1) + raw_floor;
-        self.scratch.lazy_floor_levels[index] = floor;
-        self.scratch.lazy_floor_stamp[index] = self.scratch.current_lazy_stamp;
-        return floor;
-    }
 
 } // namespace
 
@@ -1650,9 +1424,15 @@ void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_ke
     // upload that measured ~6.0ms against ~0.11ms for the cached load path.
     std::uint64_t cached_key = 0;
     PathfinderStateMirrorSection* cached_section = nullptr;
-    for (int y = snapshot.min_y; y < snapshot.min_y + snapshot.size_y; ++y) {
-        for (int z = snapshot.min_z; z < snapshot.min_z + snapshot.size_z; ++z) {
-            for (int x = snapshot.min_x; x < snapshot.min_x + snapshot.size_x; ++x, ++index) {
+    const std::int64_t end_y = static_cast<std::int64_t>(snapshot.min_y) + snapshot.size_y;
+    const std::int64_t end_z = static_cast<std::int64_t>(snapshot.min_z) + snapshot.size_z;
+    const std::int64_t end_x = static_cast<std::int64_t>(snapshot.min_x) + snapshot.size_x;
+    for (std::int64_t y_value = snapshot.min_y; y_value < end_y; ++y_value) {
+        const int y = static_cast<int>(y_value);
+        for (std::int64_t z_value = snapshot.min_z; z_value < end_z; ++z_value) {
+            const int z = static_cast<int>(z_value);
+            for (std::int64_t x_value = snapshot.min_x; x_value < end_x; ++x_value, ++index) {
+                const int x = static_cast<int>(x_value);
                 const int descriptor = snapshot.cells[index];
                 if (descriptor < 0 || descriptor >= snapshot.descriptor_count) return;
                 const std::uint64_t key = mirror_section_key(x, y, z);
@@ -1669,6 +1449,73 @@ void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_ke
                 }
             }
         }
+namespace {
+
+[[nodiscard]] bool load_state_mirror_view(const PathfinderStateMirror& mirror, int world_key,
+                                          int min_x, int min_y, int min_z,
+                                          int size_x, int size_y, int size_z,
+                                          PathfinderScratch& scratch,
+                                          PathfinderStateSnapshot& snapshot) noexcept {
+    if (mirror.world_key != world_key || size_x <= 0 || size_y <= 0 || size_z <= 0) return false;
+    const std::int64_t section_min_x = static_cast<std::int64_t>(min_x) >> 4;
+    const std::int64_t section_min_y = static_cast<std::int64_t>(min_y) >> 4;
+    const std::int64_t section_min_z = static_cast<std::int64_t>(min_z) >> 4;
+    const std::int64_t section_max_x = (static_cast<std::int64_t>(min_x) + size_x - 1) >> 4;
+    const std::int64_t section_max_y = (static_cast<std::int64_t>(min_y) + size_y - 1) >> 4;
+    const std::int64_t section_max_z = (static_cast<std::int64_t>(min_z) + size_z - 1) >> 4;
+    const std::int64_t section_x_count = section_max_x - section_min_x + 1;
+    const std::int64_t section_y_count = section_max_y - section_min_y + 1;
+    const std::int64_t section_z_count = section_max_z - section_min_z + 1;
+    if (section_x_count <= 0 || section_x_count > std::numeric_limits<int>::max()
+            || section_y_count <= 0 || section_y_count > std::numeric_limits<int>::max()
+            || section_z_count <= 0 || section_z_count > std::numeric_limits<int>::max()) return false;
+    const int section_size_x = static_cast<int>(section_x_count);
+    const int section_size_y = static_cast<int>(section_y_count);
+    const int section_size_z = static_cast<int>(section_z_count);
+    std::int64_t section_count = 1;
+    if (!checked_mul_i64(section_count, section_size_x, section_count)
+            || !checked_mul_i64(section_count, section_size_y, section_count)
+            || !checked_mul_i64(section_count, section_size_z, section_count)
+            || section_count <= 0 || section_count > std::numeric_limits<int>::max()) return false;
+    scratch.mirror_sections.resize(static_cast<std::size_t>(section_count));
+    std::fill(scratch.mirror_sections.begin(), scratch.mirror_sections.end(), nullptr);
+    for (std::int64_t sy = section_min_y; sy <= section_max_y; ++sy) {
+        for (std::int64_t sz = section_min_z; sz <= section_max_z; ++sz) {
+            for (std::int64_t sx = section_min_x; sx <= section_max_x; ++sx) {
+                const int block_x = static_cast<int>(sx * 16);
+                const int block_y = static_cast<int>(sy * 16);
+                const int block_z = static_cast<int>(sz * 16);
+                const auto section = mirror.sections.find(mirror_section_key(block_x, block_y, block_z));
+                if (section == mirror.sections.end()) return false;
+                const std::size_t slot = (static_cast<std::size_t>(sy - section_min_y) * section_size_z
+                    + static_cast<std::size_t>(sz - section_min_z)) * section_size_x
+                    + static_cast<std::size_t>(sx - section_min_x);
+                scratch.mirror_sections[slot] = &section->second;
+            }
+        }
+    }
+    snapshot.cells = nullptr;
+    snapshot.raw_path_types = nullptr;
+    snapshot.floor_heights = nullptr;
+    snapshot.descriptor_count = 0;
+    snapshot.min_x = min_x;
+    snapshot.min_y = min_y;
+    snapshot.min_z = min_z;
+    snapshot.size_x = size_x;
+    snapshot.size_y = size_y;
+    snapshot.size_z = size_z;
+    snapshot.mirror_sections = scratch.mirror_sections.data();
+    snapshot.mirror_section_min_x = section_min_x;
+    snapshot.mirror_section_min_y = section_min_y;
+    snapshot.mirror_section_min_z = section_min_z;
+    snapshot.mirror_section_size_x = section_size_x;
+    snapshot.mirror_section_size_y = section_size_y;
+    snapshot.mirror_section_size_z = section_size_z;
+    return true;
+}
+
+} // namespace
+
     }
 }
 
@@ -1680,26 +1527,35 @@ bool state_mirror_covers(const PathfinderStateMirror& mirror, int world_key,
                          int min_x, int min_y, int min_z,
                          int size_x, int size_y, int size_z) noexcept {
     if (mirror.world_key != world_key || size_x <= 0 || size_y <= 0 || size_z <= 0) return false;
-    const int max_x = min_x + size_x - 1;
-    const int max_y = min_y + size_y - 1;
-    const int max_z = min_z + size_z - 1;
-    for (int sy = (min_y >> 4); sy <= (max_y >> 4); ++sy) {
-        for (int sz = (min_z >> 4); sz <= (max_z >> 4); ++sz) {
-            for (int sx = (min_x >> 4); sx <= (max_x >> 4); ++sx) {
-                const auto it = mirror.sections.find(mirror_section_key(sx << 4, sy << 4, sz << 4));
+    const std::int64_t max_x = static_cast<std::int64_t>(min_x) + size_x - 1;
+    const std::int64_t max_y = static_cast<std::int64_t>(min_y) + size_y - 1;
+    const std::int64_t max_z = static_cast<std::int64_t>(min_z) + size_z - 1;
+    for (std::int64_t sy_value = (min_y >> 4); sy_value <= (max_y >> 4); ++sy_value) {
+        const int sy = static_cast<int>(sy_value);
+        for (std::int64_t sz_value = (min_z >> 4); sz_value <= (max_z >> 4); ++sz_value) {
+            const int sz = static_cast<int>(sz_value);
+            for (std::int64_t sx_value = (min_x >> 4); sx_value <= (max_x >> 4); ++sx_value) {
+                const int sx = static_cast<int>(sx_value);
+                const auto it = mirror.sections.find(mirror_section_key(sx * 16, sy * 16, sz * 16));
                 if (it == mirror.sections.end()) return false;
                 const PathfinderStateMirrorSection& section = it->second;
                 if (section.valid_count == 4096) continue;
                 // Partially populated: check only the cells this query needs.
-                const int lo_x = std::max(min_x, sx << 4);
-                const int hi_x = std::min(max_x, (sx << 4) + 15);
-                const int lo_y = std::max(min_y, sy << 4);
-                const int hi_y = std::min(max_y, (sy << 4) + 15);
-                const int lo_z = std::max(min_z, sz << 4);
-                const int hi_z = std::min(max_z, (sz << 4) + 15);
-                for (int y = lo_y; y <= hi_y; ++y) {
-                    for (int z = lo_z; z <= hi_z; ++z) {
-                        for (int x = lo_x; x <= hi_x; ++x) {
+                const std::int64_t section_x = static_cast<std::int64_t>(sx) * 16;
+                const std::int64_t section_y = static_cast<std::int64_t>(sy) * 16;
+                const std::int64_t section_z = static_cast<std::int64_t>(sz) * 16;
+                const std::int64_t lo_x = std::max<std::int64_t>(min_x, section_x);
+                const std::int64_t hi_x = std::min(max_x, section_x + 15);
+                const std::int64_t lo_y = std::max<std::int64_t>(min_y, section_y);
+                const std::int64_t hi_y = std::min(max_y, section_y + 15);
+                const std::int64_t lo_z = std::max<std::int64_t>(min_z, section_z);
+                const std::int64_t hi_z = std::min(max_z, section_z + 15);
+                for (std::int64_t y_value = lo_y; y_value <= hi_y; ++y_value) {
+                    const int y = static_cast<int>(y_value);
+                    for (std::int64_t z_value = lo_z; z_value <= hi_z; ++z_value) {
+                        const int z = static_cast<int>(z_value);
+                        for (std::int64_t x_value = lo_x; x_value <= hi_x; ++x_value) {
+                            const int x = static_cast<int>(x_value);
                             if (section.valid[mirror_section_index(x, y, z)] == 0) return false;
                         }
                     }
@@ -1715,30 +1571,33 @@ bool load_pathfinder_state_snapshot(const PathfinderStateMirror& mirror, int wor
                                     int size_x, int size_y, int size_z,
                                     PathfinderScratch& scratch,
                                     PathfinderStateSnapshot& snapshot) noexcept {
-    if (mirror.world_key != world_key || size_x <= 0 || size_y <= 0 || size_z <= 0) return false;
-    const long long count = static_cast<long long>(size_x) * size_y * size_z;
-    if (count <= 0 || count > std::numeric_limits<int>::max()) return false;
+    std::int64_t count = 1;
+    if (!checked_mul_i64(count, size_x, count)
+            || !checked_mul_i64(count, size_y, count)
+            || !checked_mul_i64(count, size_z, count)
+            || count <= 0 || count > std::numeric_limits<int>::max()) return false;
+    if (!load_state_mirror_view(mirror, world_key, min_x, min_y, min_z,
+                                size_x, size_y, size_z, scratch, snapshot)) return false;
     scratch.mirror_cells.resize(static_cast<std::size_t>(count));
     scratch.mirror_raw_path_types.resize(static_cast<std::size_t>(count));
     scratch.mirror_floor_heights.resize(static_cast<std::size_t>(count));
     int index = 0;
-    std::uint64_t cached_key = 0;
-    const PathfinderStateMirrorSection* cached_section = nullptr;
-    for (int y = min_y; y < min_y + size_y; ++y) {
-        for (int z = min_z; z < min_z + size_z; ++z) {
-            for (int x = min_x; x < min_x + size_x; ++x, ++index) {
-                const std::uint64_t key = mirror_section_key(x, y, z);
-                if (cached_section == nullptr || key != cached_key) {
-                    const auto section = mirror.sections.find(key);
-                    if (section == mirror.sections.end()) return false;
-                    cached_key = key;
-                    cached_section = &section->second;
-                }
-                const int local = mirror_section_index(x, y, z);
-                if (cached_section->valid[local] == 0) return false;
-                scratch.mirror_cells[index] = index;
-                scratch.mirror_raw_path_types[index] = cached_section->raw_path_types[local];
-                scratch.mirror_floor_heights[index] = cached_section->floor_heights[local];
+    const std::int64_t end_y = static_cast<std::int64_t>(min_y) + size_y;
+    const std::int64_t end_z = static_cast<std::int64_t>(min_z) + size_z;
+    const std::int64_t end_x = static_cast<std::int64_t>(min_x) + size_x;
+    for (std::int64_t y_value = min_y; y_value < end_y; ++y_value) {
+        const int y = static_cast<int>(y_value);
+        for (std::int64_t z_value = min_z; z_value < end_z; ++z_value) {
+            const int z = static_cast<int>(z_value);
+            for (std::int64_t x_value = min_x; x_value < end_x; ++x_value, ++index) {
+                const int x = static_cast<int>(x_value);
+                std::int8_t raw_type = kBlocked;
+                float floor_height = 0.0F;
+                if (!snapshot_raw_type(snapshot, x, y, z, raw_type)
+                        || !snapshot_floor_height(snapshot, x, y, z, floor_height)) return false;
+                scratch.mirror_cells[static_cast<std::size_t>(index)] = index;
+                scratch.mirror_raw_path_types[static_cast<std::size_t>(index)] = raw_type;
+                scratch.mirror_floor_heights[static_cast<std::size_t>(index)] = floor_height;
             }
         }
     }
@@ -1746,12 +1605,10 @@ bool load_pathfinder_state_snapshot(const PathfinderStateMirror& mirror, int wor
     snapshot.raw_path_types = scratch.mirror_raw_path_types.data();
     snapshot.floor_heights = scratch.mirror_floor_heights.data();
     snapshot.descriptor_count = static_cast<int>(count);
-    snapshot.min_x = min_x;
-    snapshot.min_y = min_y;
-    snapshot.min_z = min_z;
-    snapshot.size_x = size_x;
-    snapshot.size_y = size_y;
-    snapshot.size_z = size_z;
+    snapshot.mirror_sections = nullptr;
+    snapshot.mirror_section_size_x = 0;
+    snapshot.mirror_section_size_y = 0;
+    snapshot.mirror_section_size_z = 0;
     return true;
 }
 
@@ -1774,15 +1631,6 @@ bool find_path_from_state_mirror_into(const PathfinderInputs& inputs,
                                       const PathfinderStateMirror& mirror, int world_key,
                                       PathfinderOutput& output,
                                       PathfinderScratch& scratch) noexcept {
-    LazyPathGrid lazy{inputs, mirror, world_key, scratch};
-    if (lazy.initialise()) {
-        PathfinderInputs lazy_inputs = inputs;
-        lazy_inputs.path_types = nullptr;
-        lazy_inputs.floor_levels = nullptr;
-        lazy_inputs.lazy_context = &lazy;
-        const bool ok = find_path_into(lazy_inputs, output, scratch);
-        if (!lazy.failed) return ok;
-    }
     int state_min_x = 0, state_max_x = 0, state_size_x = 0;
     int state_min_y = 0, state_max_y = 0, state_size_y = 0;
     int state_min_z = 0, state_max_z = 0, state_size_z = 0;
@@ -1793,11 +1641,12 @@ bool find_path_from_state_mirror_into(const PathfinderInputs& inputs,
             || !checked_state_axis(inputs.region_min_z, inputs.region_size_z, inputs.entity_width,
                                    state_min_z, state_max_z, state_size_z)) return false;
     PathfinderStateSnapshot snapshot{};
-    if (!load_pathfinder_state_snapshot(mirror, world_key,
-                                        state_min_x, state_min_y, state_min_z,
-                                        state_size_x, state_size_y, state_size_z,
-                                        scratch, snapshot)) return false;
-    return find_path_from_state_snapshot_into(inputs, snapshot, output, scratch);
+    if (!load_state_mirror_view(mirror, world_key,
+                                state_min_x, state_min_y, state_min_z,
+                                state_size_x, state_size_y, state_size_z,
+                                scratch, snapshot)) return false;
+    PathfinderInputs materialized_inputs = inputs;
+    return find_path_from_state_snapshot_into(materialized_inputs, snapshot, output, scratch);
 }
 
 bool find_path_from_state_snapshot_into(const PathfinderInputs& inputs,

@@ -530,14 +530,8 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
     pf::store_pathfinder_state_snapshot(g_state_mirror.mirror, worldKey, snapshot);
     // Still eager here, even though the mirror now holds this exact box.
     //
-    // Routing the upload path through find_path_from_state_mirror_into (LazyPathGrid)
-    // measured ~5.5ms -> ~0.4ms, so it is a live candidate. It is not enabled yet
-    // only because it cannot currently be validated: a verify=true run over it gave
-    // verifyMismatches=3, but the eager path measured 4 on the same workload and a
-    // whole-mirror-clear variant also 4, i.e. all three sit in the ~1-2% mismatch
-    // band already documented for 2026-07-30. The lazy upload was therefore never
-    // shown to be worse than this; switch it on once that pre-existing parity gap is
-    // diagnosed and a verify run can actually distinguish the two.
+    // Keep the cold upload on the same snapshot materialization path used by
+    // mirror hits so both entrances share node decoding and search semantics.
     const bool ok = pf::find_path_from_state_snapshot_into(inputs, snapshot, output, scratch);
 
     env->ReleaseIntArrayElements(jOutPath, out, 0);

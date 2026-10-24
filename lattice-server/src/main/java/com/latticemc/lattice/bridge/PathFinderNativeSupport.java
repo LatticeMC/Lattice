@@ -307,8 +307,8 @@ public final class PathFinderNativeSupport {
                                            int entityWidth, int entityHeight) {
         long volume = (long)sizeX * sizeY * sizeZ;
         if (volume < MIN_NATIVE_REGION_VOLUME) return false;
-        // Exactly the box findPathFromStateMirror's lazy grid and
-        // stateSnapshot.fill below will read.
+        // Exactly the expanded box findPathFromStateMirror materializes from the
+        // mirror, matching the stateSnapshot.fill bounds below.
         if (NativePathfinder.stateMirrorCovers(worldKey,
                 minX - 1, minY - 1, minZ - 1,
                 sizeX + entityWidth + 1, sizeY + entityHeight + 1, sizeZ + entityWidth + 1)) {

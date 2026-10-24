@@ -31,7 +31,6 @@ struct PathfinderNode {
 
 struct PathfinderInputs {
     const std::int8_t* path_types = nullptr;
-    void* lazy_context = nullptr;
     /// Per-cell floor level, mirroring `WalkNodeEvaluator.getFloorLevel(BlockPos)`:
     /// the Y coordinate an entity actually stands at, which for non-cuboid shapes
     /// (slabs, stairs, farmland, snow layers) is NOT the integer cell Y. Indexed
@@ -97,6 +96,8 @@ struct PathfinderInputs {
     int mob_block_z = 0;
 };
 
+struct PathfinderStateMirrorSection;
+
 /// Compact, request-local view of immutable BlockState descriptors. The cells
 /// point into descriptor arrays that are produced by Java after rejecting every
 /// dynamic shape. Native expands this to final `PathType`s before searching.
@@ -111,6 +112,15 @@ struct PathfinderStateSnapshot {
     int size_x = 0;
     int size_y = 0;
     int size_z = 0;
+    // Mirror hits expose their section storage as a read-only snapshot view,
+    // avoiding a second full-box copy before the shared materializer runs.
+    const PathfinderStateMirrorSection* const* mirror_sections = nullptr;
+    int mirror_section_min_x = 0;
+    int mirror_section_min_y = 0;
+    int mirror_section_min_z = 0;
+    int mirror_section_size_x = 0;
+    int mirror_section_size_y = 0;
+    int mirror_section_size_z = 0;
 };
 
 struct PathfinderResult {
@@ -127,8 +137,6 @@ struct PathfinderOutput {
     bool reached_target = false;
 };
 
-struct PathfinderStateMirrorSection;
-
 struct PathfinderScratch {
     std::vector<std::int8_t> materialized_path_types{};
     std::vector<float> materialized_floor_levels{};
@@ -143,12 +151,7 @@ struct PathfinderScratch {
     std::vector<int> mirror_cells{};
     std::vector<std::int8_t> mirror_raw_path_types{};
     std::vector<float> mirror_floor_heights{};
-    std::vector<std::int8_t> lazy_path_types{};
-    std::vector<float> lazy_floor_levels{};
-    std::vector<std::uint32_t> lazy_stamp{};
-    std::vector<std::uint32_t> lazy_floor_stamp{};
-    std::uint32_t current_lazy_stamp = 1;
-    std::vector<const PathfinderStateMirrorSection*> lazy_sections{};
+    std::vector<const PathfinderStateMirrorSection*> mirror_sections{};
 };
 
 struct PathfinderStateMirrorSection {
@@ -251,8 +254,8 @@ void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_ke
 /// Exposed so the JNI layer can log invalidations by section without duplicating
 /// the packing.
 [[nodiscard]] std::uint64_t pathfinder_mirror_section_key(int x, int y, int z) noexcept;
-/// Exact coverage probe for the box `load_pathfinder_state_snapshot` /
-/// `LazyPathGrid` would read. Answers "is every cell in this box already
+/// Exact coverage probe for the box `load_pathfinder_state_snapshot` would read.
+/// Answers "is every cell in this box already
 /// mirrored?" without materializing anything, so a caller can decide between the
 /// mirror path and the Java path *before* paying for either.
 ///
