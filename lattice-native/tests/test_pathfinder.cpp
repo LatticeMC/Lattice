@@ -199,6 +199,7 @@ TEST_CASE("pathfinder state mirror coverage probe matches the load path") {
     // A different world never matches, and degenerate sizes are refused.
     CHECK_FALSE(state_mirror_covers(mirror, 6, 0, 0, 0, 16, 16, 16));
     CHECK_FALSE(state_mirror_covers(mirror, 5, 0, 0, 0, 0, 16, 16));
+    CHECK_FALSE(state_mirror_covers(mirror, 5, std::numeric_limits<int>::max(), 0, 0, 2, 1, 1));
     // Absent neighbouring section.
     CHECK_FALSE(state_mirror_covers(mirror, 5, 0, 0, 0, 17, 16, 16));
 
