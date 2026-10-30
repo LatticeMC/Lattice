@@ -2,6 +2,8 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -16,9 +18,11 @@ constexpr std::int8_t BLOCKED = 0;
 constexpr std::int8_t OPEN = 1;
 constexpr std::int8_t WALKABLE = 2;
 constexpr std::int8_t WALKABLE_DOOR = 3;
+constexpr std::int8_t DOOR_WOOD_CLOSED = 18;
 constexpr std::int8_t WATER = 9;
 constexpr std::int8_t COCOA = 23;
 constexpr std::int8_t WATER_BORDER = 10;
+constexpr std::int8_t RAIL = 11;
 
 struct Grid {
     int sx;
@@ -83,6 +87,24 @@ int snapshot_index(int sx, int sz, int x, int y, int z) {
     return (y * sz + z) * sx + x;
 }
 
+void check_mirrors_equal(const PathfinderStateMirror& expected,
+                         const PathfinderStateMirror& actual) {
+    REQUIRE(actual.world_key == expected.world_key);
+    REQUIRE(actual.sections.size() == expected.sections.size());
+    for (const auto& [key, section] : expected.sections) {
+        const auto found = actual.sections.find(key);
+        REQUIRE(found != actual.sections.end());
+        CHECK(found->second.raw_path_types == section.raw_path_types);
+        CHECK(std::equal(found->second.floor_heights.begin(), found->second.floor_heights.end(),
+                         section.floor_heights.begin(), [](float actual, float expected) {
+                             return actual == expected
+                                 || (std::isnan(actual) && std::isnan(expected));
+                         }));
+        CHECK(found->second.valid == section.valid);
+        CHECK(found->second.valid_count == section.valid_count);
+    }
+}
+
 } // namespace
 
 TEST_CASE("pathfinder: straight path") {
@@ -138,6 +160,415 @@ TEST_CASE("pathfinder materializes static BlockState descriptors") {
     cells[snapshot_index(sx, sz, 3, 1, 2)] = 2;
     REQUIRE(materialize_pathfinder_state_snapshot(inputs, snapshot, scratch));
     CHECK(scratch.materialized_path_types[0] == WATER_BORDER);
+}
+
+TEST_CASE("pathfinder fused snapshot materialization matches canonical PathType semantics") {
+    constexpr int snapshot_size_x = 3;
+    constexpr int snapshot_size_y = 3;
+    constexpr int snapshot_size_z = 3;
+    constexpr int world_key = 43;
+    std::array<std::int8_t, 26> descriptor_types{};
+    std::array<float, 26> descriptor_floors{};
+    for (int type = 0; type < static_cast<int>(descriptor_types.size()); ++type) {
+        descriptor_types[static_cast<std::size_t>(type)] = static_cast<std::int8_t>(type);
+        descriptor_floors[static_cast<std::size_t>(type)] = 0.25F;
+    }
+
+    std::vector<int> cells(snapshot_size_x * snapshot_size_y * snapshot_size_z, OPEN);
+    cells[snapshot_index(snapshot_size_x, snapshot_size_z, 1, 0, 1)] = BLOCKED;
+    PathfinderStateSnapshot snapshot{};
+    snapshot.cells = cells.data();
+    snapshot.raw_path_types = descriptor_types.data();
+    snapshot.floor_heights = descriptor_floors.data();
+    snapshot.descriptor_count = static_cast<int>(descriptor_types.size());
+    snapshot.min_x = -1;
+    snapshot.min_y = -1;
+    snapshot.min_z = -1;
+    snapshot.size_x = snapshot_size_x;
+    snapshot.size_y = snapshot_size_y;
+    snapshot.size_z = snapshot_size_z;
+
+    std::array<float, 26> malus{};
+    for (int type = 0; type < static_cast<int>(malus.size()); ++type) {
+        switch (type % 4) {
+            case 0: malus[static_cast<std::size_t>(type)] = -1.0F; break;
+            case 1: malus[static_cast<std::size_t>(type)] = 0.25F; break;
+            case 2: malus[static_cast<std::size_t>(type)] = 0.5F; break;
+            default: malus[static_cast<std::size_t>(type)] = 0.75F; break;
+        }
+    }
+    malus[BLOCKED] = 0.5F;
+    const int target_x = 0;
+    const int target_y = 0;
+    const int target_z = 0;
+    PathfinderInputs inputs{};
+    inputs.region_min_x = target_x;
+    inputs.region_min_y = target_y;
+    inputs.region_min_z = target_z;
+    inputs.region_size_x = 1;
+    inputs.region_size_y = 1;
+    inputs.region_size_z = 1;
+    inputs.start_x = target_x;
+    inputs.start_y = target_y;
+    inputs.start_z = target_z;
+    inputs.target_x = &target_x;
+    inputs.target_y = &target_y;
+    inputs.target_z = &target_z;
+    inputs.target_count = 1;
+    inputs.config = PathfinderConfig{16.0F, 8, 0, 1.5F};
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.level_min_y = -64;
+    inputs.pathfinding_malus = malus.data();
+    inputs.pathfinding_malus_count = static_cast<int>(malus.size());
+
+    auto check_parity = [&]() {
+        int old_order_coords[24]{};
+        int fused_coords[24]{};
+        PathfinderOutput old_order_output{old_order_coords, 8};
+        PathfinderOutput fused_output{fused_coords, 8};
+        PathfinderScratch old_order_scratch{};
+        PathfinderScratch fused_scratch{};
+        PathfinderStateMirror old_order_mirror{};
+        PathfinderStateMirror fused_mirror{};
+
+        store_pathfinder_state_snapshot(old_order_mirror, world_key, snapshot);
+        const bool old_order_ok = find_path_from_state_snapshot_into(
+            inputs, snapshot, old_order_output, old_order_scratch);
+        const bool fused_ok = find_path_from_state_snapshot_and_store_into(
+            fused_mirror, world_key, inputs, snapshot, fused_output, fused_scratch);
+
+        CHECK(fused_ok == old_order_ok);
+        CHECK(fused_output.path_length == old_order_output.path_length);
+        CHECK(fused_output.target_index == old_order_output.target_index);
+        CHECK(fused_output.reached_target == old_order_output.reached_target);
+        if (fused_output.path_length == old_order_output.path_length
+                && fused_output.path_length >= 0 && fused_output.path_length <= 8) {
+            CHECK(std::equal(fused_coords, fused_coords + fused_output.path_length * 3,
+                             old_order_coords));
+        }
+        CHECK(fused_scratch.materialized_path_types == old_order_scratch.materialized_path_types);
+        CHECK(fused_scratch.materialized_floor_levels == old_order_scratch.materialized_floor_levels);
+        check_mirrors_equal(old_order_mirror, fused_mirror);
+    };
+
+    for (int raw_type = 0; raw_type < static_cast<int>(descriptor_types.size()); ++raw_type) {
+        cells[snapshot_index(snapshot_size_x, snapshot_size_z, 1, 1, 1)] = raw_type;
+        for (int water_mode = 0; water_mode < 3; ++water_mode) {
+            inputs.can_float = water_mode == 1;
+            inputs.is_amphibious = water_mode == 2;
+            for (int door_mode = 0; door_mode < 4; ++door_mode) {
+                inputs.can_pass_doors = (door_mode & 1) != 0;
+                inputs.can_open_doors = (door_mode & 2) != 0;
+                check_parity();
+            }
+        }
+    }
+
+    inputs.mob_block_x = 1;
+    inputs.mob_block_y = 0;
+    inputs.mob_block_z = 1;
+    inputs.level_min_y = -1;
+    cells[snapshot_index(snapshot_size_x, snapshot_size_z, 1, 1, 1)] = RAIL;
+    check_parity();
+
+    inputs.entity_width = 2;
+    inputs.entity_height = 2;
+    inputs.mob_block_x = 0;
+    inputs.mob_block_y = 0;
+    inputs.mob_block_z = 0;
+    inputs.level_min_y = -64;
+    inputs.can_pass_doors = true;
+    inputs.can_open_doors = true;
+    cells[snapshot_index(snapshot_size_x, snapshot_size_z, 1, 1, 1)] = WALKABLE;
+    cells[snapshot_index(snapshot_size_x, snapshot_size_z, 2, 1, 2)] = DOOR_WOOD_CLOSED;
+    check_parity();
+}
+
+TEST_CASE("pathfinder fused snapshot and canonical path preserve invalid floor failure") {
+    constexpr int sx = 3;
+    constexpr int sy = 3;
+    constexpr int sz = 3;
+    const std::int8_t descriptor_types[] = {BLOCKED, WALKABLE};
+    const float descriptor_floors[] = {
+        std::numeric_limits<float>::quiet_NaN(), 0.25F};
+    std::vector<int> cells(sx * sy * sz, 1);
+    cells[snapshot_index(sx, sz, 1, 0, 1)] = 0;
+    PathfinderStateSnapshot snapshot{};
+    snapshot.cells = cells.data();
+    snapshot.raw_path_types = descriptor_types;
+    snapshot.floor_heights = descriptor_floors;
+    snapshot.descriptor_count = 2;
+    snapshot.min_x = -1;
+    snapshot.min_y = -1;
+    snapshot.min_z = -1;
+    snapshot.size_x = sx;
+    snapshot.size_y = sy;
+    snapshot.size_z = sz;
+
+    const int target_x = 0;
+    const int target_y = 0;
+    const int target_z = 0;
+    float malus[] = {-1.0F, 0.0F};
+    PathfinderInputs inputs{};
+    inputs.region_min_x = target_x;
+    inputs.region_min_y = target_y;
+    inputs.region_min_z = target_z;
+    inputs.region_size_x = 1;
+    inputs.region_size_y = 1;
+    inputs.region_size_z = 1;
+    inputs.start_x = target_x;
+    inputs.start_y = target_y;
+    inputs.start_z = target_z;
+    inputs.target_x = &target_x;
+    inputs.target_y = &target_y;
+    inputs.target_z = &target_z;
+    inputs.target_count = 1;
+    inputs.config = PathfinderConfig{16.0F, 8, 0, 1.5F};
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.level_min_y = -64;
+    inputs.pathfinding_malus = malus;
+    inputs.pathfinding_malus_count = 2;
+
+    int old_order_coords[24]{};
+    int fused_coords[24]{};
+    PathfinderOutput old_order_output{old_order_coords, 8};
+    PathfinderOutput fused_output{fused_coords, 8};
+    PathfinderScratch old_order_scratch{};
+    PathfinderScratch fused_scratch{};
+    PathfinderStateMirror old_order_mirror{};
+    PathfinderStateMirror fused_mirror{};
+    store_pathfinder_state_snapshot(old_order_mirror, 44, snapshot);
+    const bool old_order_ok = find_path_from_state_snapshot_into(
+        inputs, snapshot, old_order_output, old_order_scratch);
+    const bool fused_ok = find_path_from_state_snapshot_and_store_into(
+        fused_mirror, 44, inputs, snapshot, fused_output, fused_scratch);
+
+    CHECK_FALSE(old_order_ok);
+    CHECK_FALSE(fused_ok);
+    CHECK(fused_output.path_length == old_order_output.path_length);
+    CHECK(fused_output.target_index == old_order_output.target_index);
+    CHECK(fused_output.reached_target == old_order_output.reached_target);
+    CHECK(fused_scratch.materialized_path_types == old_order_scratch.materialized_path_types);
+    CHECK(fused_scratch.materialized_floor_levels == old_order_scratch.materialized_floor_levels);
+    check_mirrors_equal(old_order_mirror, fused_mirror);
+}
+
+TEST_CASE("pathfinder cold snapshot upload and search matches the sequential path") {
+    constexpr int sx = 6;
+    constexpr int sy = 4;
+    constexpr int sz = 6;
+    const std::int8_t descriptor_types[] = {WALKABLE, BLOCKED};
+    const float descriptor_floors[] = {0.0F, 1.0F};
+    std::vector<int> cells(sx * sy * sz, 0);
+    for (int z = 0; z < sz; ++z) {
+        for (int x = 0; x < sx; ++x) {
+            cells[snapshot_index(sx, sz, x, 0, z)] = 1;
+        }
+    }
+    PathfinderStateSnapshot snapshot{};
+    snapshot.cells = cells.data();
+    snapshot.raw_path_types = descriptor_types;
+    snapshot.floor_heights = descriptor_floors;
+    snapshot.descriptor_count = 2;
+    snapshot.min_x = -1;
+    snapshot.min_y = -1;
+    snapshot.min_z = -1;
+    snapshot.size_x = sx;
+    snapshot.size_y = sy;
+    snapshot.size_z = sz;
+
+    float malus[26]{};
+    malus[BLOCKED] = -1.0F;
+    const int target_x = 2;
+    const int target_y = 0;
+    const int target_z = 1;
+    PathfinderInputs inputs{};
+    inputs.region_min_x = 0;
+    inputs.region_min_y = 0;
+    inputs.region_min_z = 0;
+    inputs.region_size_x = 3;
+    inputs.region_size_y = 1;
+    inputs.region_size_z = 3;
+    inputs.start_x = 0;
+    inputs.start_y = 0;
+    inputs.start_z = 1;
+    inputs.target_x = &target_x;
+    inputs.target_y = &target_y;
+    inputs.target_z = &target_z;
+    inputs.target_count = 1;
+    inputs.config = PathfinderConfig{16.0F, 16, 0, 1.5F};
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.level_min_y = -64;
+    inputs.pathfinding_malus = malus;
+    inputs.pathfinding_malus_count = 26;
+
+    auto compare_paths = [&](PathfinderStateMirror& expected_mirror,
+                             PathfinderStateMirror& actual_mirror) {
+        int expected_coords[48]{};
+        int actual_coords[48]{};
+        PathfinderOutput expected_output{expected_coords, 16, 7, 3, true};
+        PathfinderOutput actual_output{actual_coords, 16, 7, 3, true};
+        PathfinderScratch expected_scratch{};
+        PathfinderScratch actual_scratch{};
+        store_pathfinder_state_snapshot(expected_mirror, 41, snapshot);
+        const bool expected_ok = find_path_from_state_snapshot_into(
+            inputs, snapshot, expected_output, expected_scratch);
+        const bool actual_ok = find_path_from_state_snapshot_and_store_into(
+            actual_mirror, 41, inputs, snapshot, actual_output, actual_scratch);
+        CHECK(actual_ok == expected_ok);
+        CHECK(actual_output.path_length == expected_output.path_length);
+        CHECK(actual_output.target_index == expected_output.target_index);
+        CHECK(actual_output.reached_target == expected_output.reached_target);
+        CHECK(std::equal(actual_coords, actual_coords + actual_output.path_length * 3,
+                         expected_coords));
+        CHECK(actual_scratch.materialized_path_types == expected_scratch.materialized_path_types);
+        CHECK(actual_scratch.materialized_floor_levels == expected_scratch.materialized_floor_levels);
+        check_mirrors_equal(expected_mirror, actual_mirror);
+        if (expected_ok) CHECK(expected_output.reached_target);
+    };
+
+    SUBCASE("larger snapshot and search boxes") {
+        PathfinderStateMirror expected{};
+        PathfinderStateMirror actual{};
+        expected.world_key = 41;
+        actual.world_key = 41;
+        compare_paths(expected, actual);
+    }
+
+    SUBCASE("invalid descriptor after the search box preserves upload prefix") {
+        cells.back() = 9;
+        PathfinderStateMirror expected{};
+        PathfinderStateMirror actual{};
+        expected.world_key = 41;
+        actual.world_key = 41;
+        compare_paths(expected, actual);
+    }
+
+    SUBCASE("world change clears old mirror sections before uploading") {
+        PathfinderStateMirror expected{};
+        PathfinderStateMirror actual{};
+        expected.world_key = 7;
+        actual.world_key = 7;
+        const std::int8_t old_type[] = {OPEN};
+        const float old_floor[] = {0.0F};
+        const int old_cell[] = {0};
+        PathfinderStateSnapshot old_snapshot{};
+        old_snapshot.cells = old_cell;
+        old_snapshot.raw_path_types = old_type;
+        old_snapshot.floor_heights = old_floor;
+        old_snapshot.descriptor_count = 1;
+        old_snapshot.min_x = 32;
+        old_snapshot.min_y = 64;
+        old_snapshot.min_z = 96;
+        old_snapshot.size_x = 1;
+        old_snapshot.size_y = 1;
+        old_snapshot.size_z = 1;
+        store_pathfinder_state_snapshot(expected, 7, old_snapshot);
+        store_pathfinder_state_snapshot(actual, 7, old_snapshot);
+        CHECK_FALSE(expected.sections.empty());
+        compare_paths(expected, actual);
+    }
+
+    SUBCASE("invalid descriptor needed by materialization preserves failure behavior") {
+        cells[snapshot_index(sx, sz, 2, 1, 2)] = 9;
+        PathfinderStateMirror expected{};
+        PathfinderStateMirror actual{};
+        expected.world_key = 41;
+        actual.world_key = 41;
+        compare_paths(expected, actual);
+        CHECK(expected.sections.size() == actual.sections.size());
+    }
+}
+
+TEST_CASE("pathfinder fused snapshot upload matches old order across section boundary") {
+    constexpr int snapshot_size_x = 4;
+    constexpr int snapshot_size_y = 2;
+    constexpr int snapshot_size_z = 1;
+    constexpr int region_min_x = 15;
+    constexpr int region_size_x = 2;
+    constexpr int max_visited_nodes = 8;
+    constexpr int world_key = 42;
+    const int cells[snapshot_size_x * snapshot_size_y * snapshot_size_z]{};
+    const std::int8_t descriptor_types[] = {WALKABLE};
+    const float descriptor_floors[] = {1.0F};
+
+    PathfinderStateSnapshot snapshot{};
+    snapshot.cells = cells;
+    snapshot.raw_path_types = descriptor_types;
+    snapshot.floor_heights = descriptor_floors;
+    snapshot.descriptor_count = 1;
+    snapshot.min_x = 14;
+    snapshot.min_y = -1;
+    snapshot.min_z = 0;
+    snapshot.size_x = snapshot_size_x;
+    snapshot.size_y = snapshot_size_y;
+    snapshot.size_z = snapshot_size_z;
+
+    float malus[26]{};
+    malus[BLOCKED] = -1.0F;
+    const int target_x = 16;
+    const int target_y = 0;
+    const int target_z = 0;
+    PathfinderInputs inputs{};
+    inputs.region_min_x = region_min_x;
+    inputs.region_min_y = 0;
+    inputs.region_min_z = 0;
+    inputs.region_size_x = region_size_x;
+    inputs.region_size_y = 1;
+    inputs.region_size_z = 1;
+    inputs.start_x = 15;
+    inputs.start_y = 0;
+    inputs.start_z = 0;
+    inputs.target_x = &target_x;
+    inputs.target_y = &target_y;
+    inputs.target_z = &target_z;
+    inputs.target_count = 1;
+    inputs.config = PathfinderConfig{16.0F, max_visited_nodes, 0, 1.5F};
+    inputs.entity_width = 1;
+    inputs.entity_height = 1;
+    inputs.level_min_y = -64;
+    inputs.pathfinding_malus = malus;
+    inputs.pathfinding_malus_count = 26;
+
+    int old_order_coords[max_visited_nodes * 3]{};
+    int fused_coords[max_visited_nodes * 3]{};
+    PathfinderOutput old_order_output{old_order_coords, max_visited_nodes};
+    PathfinderOutput fused_output{fused_coords, max_visited_nodes};
+    PathfinderScratch old_order_scratch{};
+    PathfinderScratch fused_scratch{};
+    PathfinderStateMirror old_order_mirror{};
+    PathfinderStateMirror fused_mirror{};
+
+    store_pathfinder_state_snapshot(old_order_mirror, world_key, snapshot);
+    const bool old_order_ok = find_path_from_state_snapshot_into(
+        inputs, snapshot, old_order_output, old_order_scratch);
+    const bool fused_ok = find_path_from_state_snapshot_and_store_into(
+        fused_mirror, world_key, inputs, snapshot, fused_output, fused_scratch);
+
+    CHECK(fused_ok == old_order_ok);
+    REQUIRE(old_order_ok);
+    REQUIRE(fused_ok);
+    CHECK(old_order_output.target_index == fused_output.target_index);
+    CHECK(old_order_output.path_length == fused_output.path_length);
+    CHECK(old_order_output.reached_target == fused_output.reached_target);
+    CHECK(old_order_output.target_index == 0);
+    CHECK(old_order_output.path_length == 2);
+    CHECK(old_order_output.reached_target);
+    CHECK(std::equal(old_order_coords,
+                     old_order_coords + old_order_output.path_length * 3,
+                     fused_coords));
+    CHECK(old_order_coords[0] == 15);
+    CHECK(old_order_coords[1] == 0);
+    CHECK(old_order_coords[2] == 0);
+    CHECK(old_order_coords[3] == 16);
+    CHECK(old_order_coords[4] == 0);
+    CHECK(old_order_coords[5] == 0);
+    CHECK(old_order_mirror.sections.contains(pathfinder_mirror_section_key(15, 0, 0)));
+    CHECK(old_order_mirror.sections.contains(pathfinder_mirror_section_key(16, 0, 0)));
+    check_mirrors_equal(old_order_mirror, fused_mirror);
 }
 
 TEST_CASE("pathfinder state mirror stores, loads, and invalidates cells") {

@@ -4,7 +4,7 @@ import java.util.concurrent.atomic.LongAdder;
 import net.minecraft.world.level.pathfinder.PathType;
 
 public final class NativePathfinder {
-    public static final int EXPECTED_NATIVE_ABI = 10;
+    public static final int EXPECTED_NATIVE_ABI = 11;
     private static final int HISTOGRAM_BUCKETS = Long.SIZE;
     private static final LongAdder ATTEMPTS = new LongAdder();
     private static final LongAdder SUCCESSES = new LongAdder();
@@ -240,6 +240,68 @@ public final class NativePathfinder {
                                                        boolean canFloat, boolean isAmphibious, int levelMinY,
                                                        int worldKey,
                                                        int[] outPath) {
+        return findPathFromStateSnapshotInternal(stateCells, descriptorPathTypes, descriptorFloorHeights,
+                descriptorCount, stateMinX, stateMinY, stateMinZ, stateSizeX, stateSizeY, stateSizeZ,
+                regionMinX, regionMinY, regionMinZ, regionSizeX, regionSizeY, regionSizeZ,
+                startX, startY, startZ, targetX, targetY, targetZ, targetCount,
+                maxRange, maxVisitedNodes, reachRange, entityWidth, entityHeight, maxUpStep,
+                maxFallDistance, pathfindingMalus, mobJumpHeight, bbWidth,
+                canPassDoors, canOpenDoors, mobBlockX, mobBlockY, mobBlockZ,
+                canWalkOverFences, mobsIgnoreRails, canFloat, isAmphibious, levelMinY,
+                worldKey, outPath, false);
+    }
+
+    static PathResult findPathFromStateSnapshotForBenchmark(int[] stateCells,
+                                                            byte[] descriptorPathTypes,
+                                                            float[] descriptorFloorHeights,
+                                                            int descriptorCount,
+                                                            int stateMinX, int stateMinY, int stateMinZ,
+                                                            int stateSizeX, int stateSizeY, int stateSizeZ,
+                                                            int regionMinX, int regionMinY, int regionMinZ,
+                                                            int regionSizeX, int regionSizeY, int regionSizeZ,
+                                                            int startX, int startY, int startZ,
+                                                            int[] targetX, int[] targetY, int[] targetZ, int targetCount,
+                                                            float maxRange, int maxVisitedNodes, int reachRange,
+                                                            int entityWidth, int entityHeight, float maxUpStep,
+                                                            int maxFallDistance, float[] pathfindingMalus,
+                                                            float mobJumpHeight, float bbWidth,
+                                                            boolean canPassDoors, boolean canOpenDoors,
+                                                            int mobBlockX, int mobBlockY, int mobBlockZ,
+                                                            boolean canWalkOverFences, boolean mobsIgnoreRails,
+                                                            boolean canFloat, boolean isAmphibious, int levelMinY,
+                                                            int worldKey, int[] outPath,
+                                                            boolean legacyOrder) {
+        return findPathFromStateSnapshotInternal(stateCells, descriptorPathTypes, descriptorFloorHeights,
+                descriptorCount, stateMinX, stateMinY, stateMinZ, stateSizeX, stateSizeY, stateSizeZ,
+                regionMinX, regionMinY, regionMinZ, regionSizeX, regionSizeY, regionSizeZ,
+                startX, startY, startZ, targetX, targetY, targetZ, targetCount,
+                maxRange, maxVisitedNodes, reachRange, entityWidth, entityHeight, maxUpStep,
+                maxFallDistance, pathfindingMalus, mobJumpHeight, bbWidth,
+                canPassDoors, canOpenDoors, mobBlockX, mobBlockY, mobBlockZ,
+                canWalkOverFences, mobsIgnoreRails, canFloat, isAmphibious, levelMinY,
+                worldKey, outPath, legacyOrder);
+    }
+
+    private static PathResult findPathFromStateSnapshotInternal(int[] stateCells,
+                                                       byte[] descriptorPathTypes,
+                                                       float[] descriptorFloorHeights,
+                                                       int descriptorCount,
+                                                       int stateMinX, int stateMinY, int stateMinZ,
+                                                       int stateSizeX, int stateSizeY, int stateSizeZ,
+                                                       int regionMinX, int regionMinY, int regionMinZ,
+                                                       int regionSizeX, int regionSizeY, int regionSizeZ,
+                                                       int startX, int startY, int startZ,
+                                                       int[] targetX, int[] targetY, int[] targetZ, int targetCount,
+                                                       float maxRange, int maxVisitedNodes, int reachRange,
+                                                       int entityWidth, int entityHeight, float maxUpStep,
+                                                       int maxFallDistance, float[] pathfindingMalus,
+                                                       float mobJumpHeight, float bbWidth,
+                                                       boolean canPassDoors, boolean canOpenDoors,
+                                                       int mobBlockX, int mobBlockY, int mobBlockZ,
+                                                       boolean canWalkOverFences, boolean mobsIgnoreRails,
+                                                       boolean canFloat, boolean isAmphibious, int levelMinY,
+                                                       int worldKey, int[] outPath,
+                                                       boolean legacyOrder) {
         validateStateSnapshot(stateCells, descriptorPathTypes, descriptorFloorHeights, descriptorCount,
                 stateSizeX, stateSizeY, stateSizeZ);
         validate(null, null, regionSizeX, regionSizeY, regionSizeZ, targetX, targetY, targetZ, targetCount,
@@ -254,7 +316,8 @@ public final class NativePathfinder {
                     maxRange, maxVisitedNodes, reachRange, entityWidth, entityHeight, maxUpStep,
                     maxFallDistance, pathfindingMalus, mobJumpHeight, bbWidth,
                     canPassDoors, canOpenDoors, mobBlockX, mobBlockY, mobBlockZ,
-                    canWalkOverFences, mobsIgnoreRails, canFloat, isAmphibious, levelMinY, worldKey, outPath);
+                    canWalkOverFences, mobsIgnoreRails, canFloat, isAmphibious, levelMinY,
+                    worldKey, legacyOrder, outPath);
             return decode(outPath, header);
         } catch (UnsatisfiedLinkError | RuntimeException e) {
             nativeDisabled = true;
@@ -699,6 +762,7 @@ public final class NativePathfinder {
             boolean canWalkOverFences, boolean mobsIgnoreRails,
             boolean canFloat, boolean isAmphibious, int levelMinY,
             int worldKey,
+            boolean legacyOrder,
             int[] outPath);
 
     private static native long nativeFindPathFromStateMirror(

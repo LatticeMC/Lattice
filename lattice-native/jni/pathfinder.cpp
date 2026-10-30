@@ -16,7 +16,7 @@ namespace pf = lattice::world::entity;
 
 namespace {
 
-constexpr jint kPathfinderAbiVersion = 10;
+constexpr jint kPathfinderAbiVersion = 11;
 constexpr int kResultHeaderInts = 3;
 /// Bound on the shared invalidation log. A thread that falls further behind than
 /// this degrades to a full mirror clear, which is what every invalidation used to
@@ -402,7 +402,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
         jint mobBlockX, jint mobBlockY, jint mobBlockZ,
         jboolean canWalkOverFences, jboolean mobsIgnoreRails,
         jboolean canFloat, jboolean isAmphibious, jint levelMinY,
-        jint worldKey,
+        jint worldKey, jboolean legacyOrder,
         jintArray jOutPath) {
     if (!jStateCells || !jDescriptorPathTypes || !jDescriptorFloorHeights
             || !jTargetX || !jTargetY || !jTargetZ || !jPathfindingMalus || !jOutPath) {
@@ -527,12 +527,11 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
     output.capacity_nodes = maxVisitedNodes;
     thread_local pf::PathfinderScratch scratch{};
     (void)refresh_state_mirror(worldKey);
-    pf::store_pathfinder_state_snapshot(g_state_mirror.mirror, worldKey, snapshot);
-    // Still eager here, even though the mirror now holds this exact box.
-    //
-    // Keep the cold upload on the same snapshot materialization path used by
-    // mirror hits so both entrances share node decoding and search semantics.
-    const bool ok = pf::find_path_from_state_snapshot_into(inputs, snapshot, output, scratch);
+    const bool ok = legacyOrder == JNI_TRUE
+        ? (pf::store_pathfinder_state_snapshot(g_state_mirror.mirror, worldKey, snapshot),
+           pf::find_path_from_state_snapshot_into(inputs, snapshot, output, scratch))
+        : pf::find_path_from_state_snapshot_and_store_into(
+            g_state_mirror.mirror, worldKey, inputs, snapshot, output, scratch);
 
     env->ReleaseIntArrayElements(jOutPath, out, 0);
     release_inputs();

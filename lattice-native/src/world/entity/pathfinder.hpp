@@ -244,6 +244,11 @@ void build_pathfinder_masks(const std::int8_t* path_types,
                                                        PathfinderOutput& output,
                                                        PathfinderScratch& scratch) noexcept;
 
+[[nodiscard]] bool find_path_from_state_snapshot_and_store_into(
+        PathfinderStateMirror& mirror, int world_key,
+        const PathfinderInputs& inputs, const PathfinderStateSnapshot& snapshot,
+        PathfinderOutput& output, PathfinderScratch& scratch) noexcept;
+
 [[nodiscard]] bool materialize_pathfinder_state_snapshot(const PathfinderInputs& inputs,
                                                           const PathfinderStateSnapshot& snapshot,
                                                           PathfinderScratch& scratch) noexcept;

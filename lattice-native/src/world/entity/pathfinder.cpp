@@ -1437,6 +1437,164 @@ void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_ke
     }
 }
 
+bool find_path_from_state_snapshot_and_store_into(
+        PathfinderStateMirror& mirror, int world_key,
+        const PathfinderInputs& inputs, const PathfinderStateSnapshot& snapshot,
+        PathfinderOutput& output, PathfinderScratch& scratch) noexcept {
+    output.path_length = 0;
+    output.target_index = -1;
+    output.reached_target = false;
+
+    const bool storable = snapshot.cells && snapshot.raw_path_types && snapshot.floor_heights
+        && snapshot.descriptor_count > 0
+        && region_endpoint_fits(snapshot.min_x, snapshot.size_x)
+        && region_endpoint_fits(snapshot.min_y, snapshot.size_y)
+        && region_endpoint_fits(snapshot.min_z, snapshot.size_z);
+    const bool materializable = storable
+        && snapshot.size_x > 0 && snapshot.size_y > 0 && snapshot.size_z > 0
+        && region_endpoint_fits(inputs.region_min_x, inputs.region_size_x)
+        && region_endpoint_fits(inputs.region_min_y, inputs.region_size_y)
+        && region_endpoint_fits(inputs.region_min_z, inputs.region_size_z)
+        && volume(inputs) > 0 && output.coords && output.capacity_nodes > 0
+        && inputs.pathfinding_malus;
+    if (!materializable) {
+        store_pathfinder_state_snapshot(mirror, world_key, snapshot);
+        return find_path_from_state_snapshot_into(inputs, snapshot, output, scratch);
+    }
+
+    if (mirror.world_key != world_key) {
+        mirror.world_key = world_key;
+        mirror.sections.clear();
+    }
+
+    scratch.materialized_path_types.resize(static_cast<std::size_t>(volume(inputs)));
+    scratch.materialized_floor_levels.resize(static_cast<std::size_t>(volume(inputs)));
+    const bool single_cell_entity = inputs.entity_width == 1 && inputs.entity_height == 1;
+    std::array<std::int8_t, kPathTypeCount> single_cell_types{};
+    if (single_cell_entity) build_single_cell_type_table(inputs, single_cell_types);
+    bool upload_active = true;
+    bool materialization_active = true;
+    int snapshot_index = 0;
+    int materialized_count = 0;
+    std::uint64_t cached_key = 0;
+    PathfinderStateMirrorSection* cached_section = nullptr;
+    const std::int64_t region_end_x = static_cast<std::int64_t>(inputs.region_min_x) + inputs.region_size_x;
+    const std::int64_t region_end_y = static_cast<std::int64_t>(inputs.region_min_y) + inputs.region_size_y;
+    const std::int64_t region_end_z = static_cast<std::int64_t>(inputs.region_min_z) + inputs.region_size_z;
+    const std::int64_t snapshot_end_x = static_cast<std::int64_t>(snapshot.min_x) + snapshot.size_x;
+    const std::int64_t snapshot_end_y = static_cast<std::int64_t>(snapshot.min_y) + snapshot.size_y;
+    const std::int64_t snapshot_end_z = static_cast<std::int64_t>(snapshot.min_z) + snapshot.size_z;
+    const std::int64_t materialize_begin_x = std::max<std::int64_t>(
+        snapshot.min_x, inputs.region_min_x);
+    const std::int64_t materialize_end_x = std::min<std::int64_t>(
+        snapshot_end_x, region_end_x);
+
+    auto upload_cell = [&](int x, int y, int z, int descriptor) noexcept {
+        if (!upload_active) return;
+        if (descriptor < 0 || descriptor >= snapshot.descriptor_count) {
+            upload_active = false;
+            return;
+        }
+        const std::uint64_t key = mirror_section_key(x, y, z);
+        if (cached_section == nullptr || key != cached_key) {
+            cached_section = &mirror.sections[key];
+            cached_key = key;
+        }
+        const int local = mirror_section_index(x, y, z);
+        cached_section->raw_path_types[local] = snapshot.raw_path_types[descriptor];
+        cached_section->floor_heights[local] = snapshot.floor_heights[descriptor];
+        if (cached_section->valid[local] == 0) {
+            cached_section->valid[local] = 1;
+            ++cached_section->valid_count;
+        }
+    };
+    auto materialize_cell = [&](int x, int y, int z, int descriptor) noexcept {
+        std::int8_t type = kBlocked;
+        if (descriptor < 0 || descriptor >= snapshot.descriptor_count) {
+            materialization_active = false;
+            return;
+        }
+        const std::int8_t raw_type = snapshot.raw_path_types[descriptor];
+        if (raw_type < kBlocked || raw_type >= kPathTypeCount) {
+            materialization_active = false;
+            return;
+        }
+        float floor_height = 0.0F;
+        bool valid_type = false;
+        if (single_cell_entity) {
+            const std::int8_t mapped_type = single_cell_types[static_cast<std::size_t>(raw_type)];
+            if (mapped_type >= 0) {
+                type = mapped_type;
+                valid_type = true;
+            } else {
+                valid_type = mob_path_type(inputs, snapshot, x, y, z, type);
+            }
+        } else {
+            valid_type = mob_path_type(inputs, snapshot, x, y, z, type);
+        }
+        if (!valid_type) {
+            materialization_active = false;
+            return;
+        }
+        const std::size_t index = static_cast<std::size_t>(
+            ((static_cast<std::int64_t>(y) - inputs.region_min_y) * inputs.region_size_z
+                + (static_cast<std::int64_t>(z) - inputs.region_min_z))
+            * inputs.region_size_x + (static_cast<std::int64_t>(x) - inputs.region_min_x));
+        scratch.materialized_path_types[index] = type;
+        if ((inputs.can_float || inputs.is_amphibious) && raw_type == kWater) {
+            scratch.materialized_floor_levels[index] = static_cast<float>(y) + 0.5F;
+        } else {
+            if (!snapshot_floor_height(snapshot, x, y - 1, z, floor_height)) {
+                materialization_active = false;
+                return;
+            }
+            scratch.materialized_floor_levels[index] =
+                static_cast<float>(y - 1) + floor_height;
+        }
+        ++materialized_count;
+    };
+
+    for (std::int64_t y_value = snapshot.min_y; y_value < snapshot_end_y; ++y_value) {
+        const int y = static_cast<int>(y_value);
+        const bool materialize_y = y_value >= inputs.region_min_y && y_value < region_end_y;
+        for (std::int64_t z_value = snapshot.min_z; z_value < snapshot_end_z; ++z_value) {
+            const int z = static_cast<int>(z_value);
+            const bool materialize_row = materialize_y && z_value >= inputs.region_min_z
+                && z_value < region_end_z && materialize_begin_x < materialize_end_x;
+            if (!materialize_row) {
+                for (std::int64_t x_value = snapshot.min_x; x_value < snapshot_end_x;
+                        ++x_value, ++snapshot_index) {
+                    upload_cell(static_cast<int>(x_value), y, z, snapshot.cells[snapshot_index]);
+                }
+                continue;
+            }
+            for (std::int64_t x_value = snapshot.min_x; x_value < materialize_begin_x;
+                    ++x_value, ++snapshot_index) {
+                upload_cell(static_cast<int>(x_value), y, z, snapshot.cells[snapshot_index]);
+            }
+            for (std::int64_t x_value = materialize_begin_x; x_value < materialize_end_x;
+                    ++x_value, ++snapshot_index) {
+                const int x = static_cast<int>(x_value);
+                const int descriptor = snapshot.cells[snapshot_index];
+                upload_cell(x, y, z, descriptor);
+                if (materialization_active) {
+                    materialize_cell(x, y, z, descriptor);
+                }
+            }
+            for (std::int64_t x_value = materialize_end_x; x_value < snapshot_end_x;
+                    ++x_value, ++snapshot_index) {
+                upload_cell(static_cast<int>(x_value), y, z, snapshot.cells[snapshot_index]);
+            }
+        }
+    }
+
+    if (!materialization_active || materialized_count != volume(inputs)) return false;
+    PathfinderInputs materialized = inputs;
+    materialized.path_types = scratch.materialized_path_types.data();
+    materialized.floor_levels = scratch.materialized_floor_levels.data();
+    return find_path_into(materialized, output, scratch);
+}
+
 std::uint64_t pathfinder_mirror_section_key(int x, int y, int z) noexcept {
     return mirror_section_key(x, y, z);
 }
