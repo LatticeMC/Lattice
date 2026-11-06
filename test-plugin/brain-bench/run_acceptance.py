@@ -125,6 +125,46 @@ def verify_census(text, mode, phase=None):
     return errors
 
 
+def verify_memory_write_census(path):
+    brains = {}
+    try:
+        with Path(path).open(encoding='utf-8', newline='') as stream:
+            reader = csv.DictReader(stream)
+            if reader.fieldnames != ['brainIdentity', 'recordType', 'value', 'count', 'failedTicks']:
+                raise ValueError('unexpected header')
+            for row in reader:
+                if None in row or any(value is None for value in row.values()):
+                    raise ValueError('unexpected field count')
+                identity, value, count, failed = (int(row[key]) for key in ('brainIdentity', 'value', 'count', 'failedTicks'))
+                kind = row['recordType']
+                if identity <= 0 or value < 0 or count <= 0 or failed < 0:
+                    raise ValueError('negative or empty count')
+                if kind not in ('writesPerTick', 'consecutiveWriteTicks') or (kind == 'consecutiveWriteTicks' and value == 0):
+                    raise ValueError('invalid record type or streak')
+                stats = brains.setdefault(identity, dict(writesPerTick={}, consecutiveWriteTicks={}, failed=failed))
+                if stats['failed'] != failed or value in stats[kind]:
+                    raise ValueError('inconsistent failed count or duplicate bucket')
+                stats[kind][value] = count
+        if not brains:
+            raise ValueError('empty census')
+        total_ticks = write_ticks = 0
+        for stats in brains.values():
+            ticks = sum(stats['writesPerTick'].values())
+            written = sum(count for value, count in stats['writesPerTick'].items() if value > 0)
+            streak_ticks = sum(value * count for value, count in stats['consecutiveWriteTicks'].items())
+            if ticks == 0 or written != streak_ticks or stats['failed'] > ticks:
+                raise ValueError('inconsistent tick/streak totals')
+            if sum(stats['consecutiveWriteTicks'].values()) > ticks - written + 1:
+                raise ValueError('streaks require separating no-write ticks')
+            if stats['failed']:
+                raise ValueError('failed Brain ticks')
+            total_ticks += ticks
+            write_ticks += written
+        return dict(csv=str(path), brains=len(brains), ticks=total_ticks, writeTicks=write_ticks, failedTicks=0)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        raise RuntimeError(f'Invalid Brain memory write census: {path}: {error}') from error
+
+
 def run(args, protocol, index, mode):
     for port in (25565, 25575):
         with socket.socket() as connection:
@@ -149,6 +189,8 @@ def run(args, protocol, index, mode):
              '-Dlattice.schedulingBenchmark=true', '-Dlattice.brainPoiBenchmark=true', '-Dlattice.poiBfsScratch=true',
              '-Dlattice.randomTickSectionMask=false', '-Dlattice.optimizeRandomTick=false',
              '-jar', str(args.server), '--nogui', '--noconsole']
+    if args.memory_write_census:
+        flags.insert(flags.index('-jar'), '-Dlattice.brainMemoryWriteCensus=' + str(output / 'brain-memory-census.csv'))
     result = dict(index=index, mode=mode, protocol=protocol, command=flags, serverSha=sha(args.server),
                   pluginSha=sha(args.plugin), censuses={}, phases={}, statuses=[])
     save(output / 'command.json', result)
@@ -262,6 +304,8 @@ def run(args, protocol, index, mode):
             command('stop'); server.wait(timeout=120)
             if server.returncode != 0:
                 raise RuntimeError('Server nonzero exit')
+            if args.memory_write_census:
+                result['memoryWriteCensus'] = verify_memory_write_census(output / 'brain-memory-census.csv')
             save(output / 'result.json', result)
             log(f'COMPLETE {index}/{mode}: {result["aggregate"]}')
         except BaseException as error:
@@ -290,6 +334,7 @@ def main():
     for name in ('output', 'fixture', 'server', 'plugin', 'java-home', 'bot-classpath', 'jfc', 'protocol'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--pilot', action='store_true')
+    parser.add_argument('--memory-write-census', action='store_true')
     parser.add_argument('--indices', type=int, nargs='+', default=list(range(1, 17)))
     args = parser.parse_args()
     for name, value in vars(args).items():

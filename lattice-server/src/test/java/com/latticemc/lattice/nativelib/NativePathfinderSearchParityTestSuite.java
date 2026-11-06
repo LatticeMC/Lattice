@@ -97,6 +97,29 @@ class NativePathfinderSearchParityTestSuite {
     }
 
     private static NativePathfinder.PathResult nativePath(boolean[] passable) {
+        PathfinderOptimizationBenchmark.nativeSelectArithmetic(false);
+        NativePathfinder.PathResult baseline = nativePathImpl(passable);
+        final NativePathfinder.PathResult candidate;
+        try {
+            PathfinderOptimizationBenchmark.nativeSelectArithmetic(true);
+            candidate = nativePathImpl(passable);
+        } finally {
+            PathfinderOptimizationBenchmark.nativeSelectArithmetic(false);
+        }
+        assertNotNull(baseline);
+        assertNotNull(candidate);
+        assertEquals(baseline.reachedTarget(), candidate.reachedTarget());
+        assertEquals(baseline.targetIndex(), candidate.targetIndex());
+        assertEquals(baseline.length(), candidate.length());
+        for (int i = 0; i < baseline.length(); ++i) {
+            assertEquals(baseline.x(i), candidate.x(i), "arithmetic x[" + i + "]");
+            assertEquals(baseline.y(i), candidate.y(i), "arithmetic y[" + i + "]");
+            assertEquals(baseline.z(i), candidate.z(i), "arithmetic z[" + i + "]");
+        }
+        return baseline;
+    }
+
+    private static NativePathfinder.PathResult nativePathImpl(boolean[] passable) {
         byte[] pathTypes = new byte[passable.length];
         for (int i = 0; i < passable.length; ++i) {
             pathTypes[i] = (byte)(passable[i] ? PathType.WALKABLE.ordinal() : PathType.BLOCKED.ordinal());

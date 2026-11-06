@@ -454,6 +454,42 @@ val pathfinderSearchBenchmark by tasks.registering(JavaExec::class) {
     systemProperty("lattice.pathReverse", providers.gradleProperty("pathfinderSearchBenchmarkReverse").getOrElse("false"))
 }
 
+val pathfinderOptimizationBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Same-JVM ABBA comparison of isolated pathfinder optimizations"
+    dependsOn(tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.nativelib.PathfinderOptimizationBenchmark")
+    workingDir = temporaryDir
+    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
+    systemProperties(pathfinderSearchBenchmark.get().systemProperties)
+    systemProperty("lattice.pathAuditMode", providers.gradleProperty("pathfinderAuditMode").getOrElse("masks"))
+    systemProperty("lattice.pathAuditSizes", providers.gradleProperty("pathfinderAuditSizes").getOrElse("32,64,128,256"))
+    systemProperty("lattice.pathAuditRounds", providers.gradleProperty("pathfinderAuditRounds").getOrElse("1"))
+}
+
+val pathfinderAuditParity by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Untimed full-coordinate parity using the existing audit fixtures"
+    dependsOn(tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.latticemc.lattice.nativelib.PathfinderAuditParity")
+    workingDir = temporaryDir
+    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
+}
+
+val brainMemoryWriteCensusReplay by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Replay the actual Brain census hooks in an isolated JVM"
+    dependsOn(tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("net.minecraft.world.entity.ai.BrainMemoryWriteCensusReplay")
+    workingDir = temporaryDir
+    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
+    systemProperty("lattice.brainMemoryWriteCensus",
+        providers.gradleProperty("brainMemoryWriteCensusOutput").getOrElse(temporaryDir.resolve("census.csv").absolutePath))
+}
+
 val worldgenProfilerPushBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "Benchmark eager versus lazy world-generation profiler scope names"
