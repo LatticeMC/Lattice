@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 6 Nov 2026 12:00:00 +0800
+Subject: [PATCH] perf: add opt-in exact Brain memory write census
+
+Count setMemoryInternal calls during each Brain tick and record per-Brain
+write-count and consecutive-writing-tick distributions.
+---
+diff --git a/net/minecraft/world/entity/ai/Brain.java b/net/minecraft/world/entity/ai/Brain.java
+--- a/net/minecraft/world/entity/ai/Brain.java
++++ b/net/minecraft/world/entity/ai/Brain.java
+@@ -16,3 +16,4 @@ import com.latticemc.lattice.util.collection.BehaviorControlArraySet;
+ import com.latticemc.lattice.util.collection.BehaviorControlArraySet;
+ import com.latticemc.lattice.nativelib.NativeBrainEligibility;
++import com.latticemc.lattice.diagnostics.BrainMemoryWriteCensus;
+ import com.mojang.datafixers.util.Pair;
+@@ -185,3 +186,4 @@ public class Brain<E extends LivingEntity> {
+     public void clearMemories() {
++        if (BrainMemoryWriteCensus.isEnabled()) BrainMemoryWriteCensus.recordWrite(this);
+         this.memories.keySet().forEach(memoryModuleType -> this.memories.put((MemoryModuleType<?>)memoryModuleType, Optional.empty()));
+         this.latticeMemoryVersion++;
+@@ -219,5 +221,6 @@ public class Brain<E extends LivingEntity> {
+ 
+     <U> void setMemoryInternal(MemoryModuleType<U> memoryType, Optional<? extends ExpirableValue<?>> memory) {
++        if (BrainMemoryWriteCensus.isEnabled()) BrainMemoryWriteCensus.recordWrite(this);
+         if (this.memories.containsKey(memoryType)) {
+             if (memory.isPresent() && this.isEmptyCollection(memory.get().getValue())) {
+                 this.eraseMemory(memoryType);
+@@ -448,8 +451,22 @@ public class Brain<E extends LivingEntity> {
+     public void tick(ServerLevel level, E entity) {
++        if (!BrainMemoryWriteCensus.isEnabled()) {
++            this.forgetOutdatedMemories();
++            this.tickSensors(level, entity);
++            this.startEachNonRunningBehavior(level, entity);
++            this.tickEachRunningBehavior(level, entity);
++            return;
++        }
++        BrainMemoryWriteCensus.beginTick(this);
++        boolean completed = false;
++        try {
+-        this.forgetOutdatedMemories();
+-        this.tickSensors(level, entity);
+-        this.startEachNonRunningBehavior(level, entity);
+-        this.tickEachRunningBehavior(level, entity);
++            this.forgetOutdatedMemories();
++            this.tickSensors(level, entity);
++            this.startEachNonRunningBehavior(level, entity);
++            this.tickEachRunningBehavior(level, entity);
++            completed = true;
++        } finally {
++            BrainMemoryWriteCensus.endTick(this, !completed);
++        }
+     }
+ 
+     private void tickSensors(ServerLevel level, E brainHolder) {
+-- 
+2.43.0

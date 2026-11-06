@@ -164,7 +164,7 @@ struct PathfinderStateMirrorSection {
 };
 
 struct PathfinderStateMirror {
-    int world_key = 0;
+    std::int64_t world_key = 0;
     std::unordered_map<std::uint64_t, PathfinderStateMirrorSection> sections{};
 };
 
@@ -187,6 +187,8 @@ struct PathfinderCardinalFastPathStats {
 inline constexpr std::size_t kPathfinderCardinalFastPathBucketCount = 26 * 26;
 
 void set_pathfinder_cardinal_fastpath_enabled(bool enabled) noexcept;
+/// Test-only, thread-local candidate selection; production retains the SIMD builder.
+void set_pathfinder_fused_masks_for_benchmark(bool enabled) noexcept;
 void set_pathfinder_cardinal_fastpath_stats_enabled(bool enabled) noexcept;
 void reset_pathfinder_cardinal_fastpath_stats() noexcept;
 [[nodiscard]] PathfinderCardinalFastPathStats pathfinder_cardinal_fastpath_stats() noexcept;
@@ -245,7 +247,7 @@ void build_pathfinder_masks(const std::int8_t* path_types,
                                                        PathfinderScratch& scratch) noexcept;
 
 [[nodiscard]] bool find_path_from_state_snapshot_and_store_into(
-        PathfinderStateMirror& mirror, int world_key,
+        PathfinderStateMirror& mirror, std::int64_t world_key,
         const PathfinderInputs& inputs, const PathfinderStateSnapshot& snapshot,
         PathfinderOutput& output, PathfinderScratch& scratch) noexcept;
 
@@ -253,7 +255,7 @@ void build_pathfinder_masks(const std::int8_t* path_types,
                                                           const PathfinderStateSnapshot& snapshot,
                                                           PathfinderScratch& scratch) noexcept;
 
-void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_key,
+void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, std::int64_t world_key,
                                      const PathfinderStateSnapshot& snapshot) noexcept;
 /// Section key for a block position, matching `PathfinderStateMirror::sections`.
 /// Exposed so the JNI layer can log invalidations by section without duplicating
@@ -268,18 +270,18 @@ void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_ke
 /// `valid_count` alone, so the common case touches ~13 hash lookups for a
 /// 60x15x60 box. Only partially-populated sections fall back to a per-cell scan
 /// restricted to the query box.
-[[nodiscard]] bool state_mirror_covers(const PathfinderStateMirror& mirror, int world_key,
+[[nodiscard]] bool state_mirror_covers(const PathfinderStateMirror& mirror, std::int64_t world_key,
                                        int min_x, int min_y, int min_z,
                                        int size_x, int size_y, int size_z) noexcept;
-[[nodiscard]] bool load_pathfinder_state_snapshot(const PathfinderStateMirror& mirror, int world_key,
+[[nodiscard]] bool load_pathfinder_state_snapshot(const PathfinderStateMirror& mirror, std::int64_t world_key,
                                                    int min_x, int min_y, int min_z,
                                                    int size_x, int size_y, int size_z,
                                                    PathfinderScratch& scratch,
                                                    PathfinderStateSnapshot& snapshot) noexcept;
-void invalidate_pathfinder_state_mirror_cell(PathfinderStateMirror& mirror, int world_key,
+void invalidate_pathfinder_state_mirror_cell(PathfinderStateMirror& mirror, std::int64_t world_key,
                                              int x, int y, int z) noexcept;
 [[nodiscard]] bool find_path_from_state_mirror_into(const PathfinderInputs& inputs,
-                                                     const PathfinderStateMirror& mirror, int world_key,
+                                                     const PathfinderStateMirror& mirror, std::int64_t world_key,
                                                      PathfinderOutput& output,
                                                      PathfinderScratch& scratch) noexcept;
 

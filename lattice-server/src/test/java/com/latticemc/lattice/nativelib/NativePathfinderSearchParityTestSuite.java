@@ -46,7 +46,7 @@ class NativePathfinderSearchParityTestSuite {
 
         assertNotNull(vanilla);
         assertNotNull(nativeResult);
-        assertTrue(fastPathStats[3] > 0L, "flat diagonal fast path must be exercised");
+        assertTrue(fastPathStats[0] > 0L, "flat cardinal fast path must be exercised");
         assertEquals(vanilla.canReach(), nativeResult.reachedTarget());
         assertEquals(vanilla.getNodeCount(), nativeResult.length());
         for (int i = 0; i < vanilla.getNodeCount(); ++i) {

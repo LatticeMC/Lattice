@@ -4,7 +4,7 @@ import java.util.concurrent.atomic.LongAdder;
 import net.minecraft.world.level.pathfinder.PathType;
 
 public final class NativePathfinder {
-    public static final int EXPECTED_NATIVE_ABI = 11;
+    public static final int EXPECTED_NATIVE_ABI = 12;
     private static final int HISTOGRAM_BUCKETS = Long.SIZE;
     private static final LongAdder ATTEMPTS = new LongAdder();
     private static final LongAdder SUCCESSES = new LongAdder();
@@ -68,6 +68,22 @@ public final class NativePathfinder {
 
     public static void setEnabled(boolean value) {
         enabled = value;
+    }
+
+    public static long createMirrorWorld() {
+        if (!isAvailable()) return 0L;
+        return nativeCreateMirrorWorld();
+    }
+
+    public static void retireMirrorWorld(long generation) {
+        // A handle registered before disable still owns native resources.
+        if (generation != 0L) nativeRetireMirrorWorld(generation);
+    }
+
+    /** active logs, current-thread sections/payload/queue, retire/reject/clear counts. */
+    public static long[] mirrorLifecycleDiagnostics() {
+        if (!isAvailable()) throw new IllegalStateException("native pathfinder unavailable");
+        return nativeMirrorLifecycleDiagnostics();
     }
 
     /** Benchmark control for comparing the native baseline with the flat-cell fast path. */
@@ -238,7 +254,7 @@ public final class NativePathfinder {
                                                        int mobBlockX, int mobBlockY, int mobBlockZ,
                                                        boolean canWalkOverFences, boolean mobsIgnoreRails,
                                                        boolean canFloat, boolean isAmphibious, int levelMinY,
-                                                       int worldKey,
+                                                       long worldKey,
                                                        int[] outPath) {
         return findPathFromStateSnapshotInternal(stateCells, descriptorPathTypes, descriptorFloorHeights,
                 descriptorCount, stateMinX, stateMinY, stateMinZ, stateSizeX, stateSizeY, stateSizeZ,
@@ -269,7 +285,7 @@ public final class NativePathfinder {
                                                             int mobBlockX, int mobBlockY, int mobBlockZ,
                                                             boolean canWalkOverFences, boolean mobsIgnoreRails,
                                                             boolean canFloat, boolean isAmphibious, int levelMinY,
-                                                            int worldKey, int[] outPath,
+                                                            long worldKey, int[] outPath,
                                                             boolean legacyOrder) {
         return findPathFromStateSnapshotInternal(stateCells, descriptorPathTypes, descriptorFloorHeights,
                 descriptorCount, stateMinX, stateMinY, stateMinZ, stateSizeX, stateSizeY, stateSizeZ,
@@ -300,7 +316,7 @@ public final class NativePathfinder {
                                                        int mobBlockX, int mobBlockY, int mobBlockZ,
                                                        boolean canWalkOverFences, boolean mobsIgnoreRails,
                                                        boolean canFloat, boolean isAmphibious, int levelMinY,
-                                                       int worldKey, int[] outPath,
+                                                       long worldKey, int[] outPath,
                                                        boolean legacyOrder) {
         validateStateSnapshot(stateCells, descriptorPathTypes, descriptorFloorHeights, descriptorCount,
                 stateSizeX, stateSizeY, stateSizeZ);
@@ -318,6 +334,7 @@ public final class NativePathfinder {
                     canPassDoors, canOpenDoors, mobBlockX, mobBlockY, mobBlockZ,
                     canWalkOverFences, mobsIgnoreRails, canFloat, isAmphibious, levelMinY,
                     worldKey, legacyOrder, outPath);
+            if (header == 0L) return null;
             return decode(outPath, header);
         } catch (UnsatisfiedLinkError | RuntimeException e) {
             nativeDisabled = true;
@@ -326,7 +343,7 @@ public final class NativePathfinder {
         }
     }
 
-    public static PathResult findPathFromStateMirror(int worldKey,
+    public static PathResult findPathFromStateMirror(long worldKey,
                                                      int regionMinX, int regionMinY, int regionMinZ,
                                                      int regionSizeX, int regionSizeY, int regionSizeZ,
                                                      int startX, int startY, int startZ,
@@ -352,7 +369,7 @@ public final class NativePathfinder {
                 canWalkOverFences, mobsIgnoreRails, canFloat, isAmphibious, levelMinY, outPath);
     }
 
-    private static PathResult findPathFromStateMirrorUnchecked(int worldKey,
+    private static PathResult findPathFromStateMirrorUnchecked(long worldKey,
                                                                 int regionMinX, int regionMinY, int regionMinZ,
                                                                 int regionSizeX, int regionSizeY, int regionSizeZ,
                                                                 int startX, int startY, int startZ,
@@ -384,7 +401,7 @@ public final class NativePathfinder {
         }
     }
 
-    public static void invalidateStateMirror(int worldKey, int x, int y, int z) {
+    public static void invalidateStateMirror(long worldKey, int x, int y, int z) {
         if (!nativeChecked || !nativeCompatible || nativeDisabled || !LatticeNative.isLoaded()) return;
         try {
             nativeInvalidateStateMirror(worldKey, x, y, z);
@@ -443,7 +460,7 @@ public final class NativePathfinder {
      * replay in refresh_state_mirror. Keep a volume floor in front of it so tiny
      * boxes never pay that.
      */
-    public static boolean stateMirrorCovers(int worldKey,
+    public static boolean stateMirrorCovers(long worldKey,
                                             int minX, int minY, int minZ,
                                             int sizeX, int sizeY, int sizeZ) {
         if (!isAvailable()) return false;
@@ -721,6 +738,12 @@ public final class NativePathfinder {
 
     private static native int nativeAbiVersion();
 
+    private static native long nativeCreateMirrorWorld();
+
+    private static native void nativeRetireMirrorWorld(long generation);
+
+    private static native long[] nativeMirrorLifecycleDiagnostics();
+
     private static native void nativeSetCardinalFastPathEnabled(boolean enabled);
 
     private static native void nativeSetCardinalFastPathStatsEnabled(boolean enabled);
@@ -761,12 +784,12 @@ public final class NativePathfinder {
             boolean canPassDoors, boolean canOpenDoors, int mobBlockX, int mobBlockY, int mobBlockZ,
             boolean canWalkOverFences, boolean mobsIgnoreRails,
             boolean canFloat, boolean isAmphibious, int levelMinY,
-            int worldKey,
+            long worldKey,
             boolean legacyOrder,
             int[] outPath);
 
     private static native long nativeFindPathFromStateMirror(
-            int worldKey,
+            long worldKey,
             int regionMinX, int regionMinY, int regionMinZ,
             int regionSizeX, int regionSizeY, int regionSizeZ,
             int startX, int startY, int startZ,
@@ -780,9 +803,9 @@ public final class NativePathfinder {
             boolean canFloat, boolean isAmphibious, int levelMinY,
             int[] outPath);
 
-    private static native void nativeInvalidateStateMirror(int worldKey, int x, int y, int z);
+    private static native void nativeInvalidateStateMirror(long worldKey, int x, int y, int z);
 
-    private static native boolean nativeStateMirrorCovers(int worldKey,
+    private static native boolean nativeStateMirrorCovers(long worldKey,
             int minX, int minY, int minZ,
             int sizeX, int sizeY, int sizeZ);
 }

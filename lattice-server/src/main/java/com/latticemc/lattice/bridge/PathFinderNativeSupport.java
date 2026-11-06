@@ -21,34 +21,15 @@ import org.jspecify.annotations.Nullable;
 public final class PathFinderNativeSupport {
     private static final int MIN_NATIVE_REGION_AXIS = 32;
     private static final int PATH_TYPE_STRIDE_MARGIN = 2;
-    /// Cheap pre-filter in front of the coverage probe: a box this small cannot repay
-    /// the fixed cost of the JNI round trip and the lazy-grid setup even on a mirror
-    /// hit. Kept separate from MIN_NATIVE_REGION_AXIS, which bounds a single axis.
-    private static final int MIN_NATIVE_REGION_VOLUME = Integer.getInteger("lattice.pathfinderMinNativeVolume", 8192);
-    /// First gate, and the only one that protects the short-stroll case.
-    ///
-    /// Measured at 150 zombies on a 60x15x60 box: Java costs ~130-148us for these
-    /// requests, a mirror hit ~110us, and a mirror miss (snapshot upload) 3000-7500us.
-    /// The coverage probe below is exact, but it cannot fix this case, because the
-    /// mirror only gets populated by misses: warming it costs more than every request
-    /// it would ever accelerate. So short paths must not reach native at all.
-    private static final int SHORT_PATH_MANHATTAN_LIMIT = Integer.getInteger("lattice.pathfinderShortJavaGate", 24);
-    /// Uploads allowed per tick per thread when the mirror does not yet cover a box.
-    ///
-    /// Only the miss path calls store_pathfinder_state_snapshot, so a coverage gate with
-    /// no escape hatch would leave the mirror permanently empty and the gate permanently
-    /// closed. Bounding the uploads instead caps warm-up at roughly one snapshot upload
-    /// per tick per thread while still letting coverage grow.
-    private static final int MIRROR_WARMUP_UPLOADS_PER_TICK =
-            Integer.getInteger("lattice.pathfinderMirrorWarmupPerTick", 1);
+    private static final int SHORT_PATH_MANHATTAN_LIMIT =
+            Integer.getInteger("lattice.pathfinderShortJavaGate", 24);
     private static final PathType[] PATH_TYPES = PathType.values();
     private static final ThreadLocal<Boolean> VERIFY_SHADOW = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<float[]> PATHFINDING_MALUS_BUFFER = ThreadLocal.withInitial(() -> new float[PATH_TYPES.length]);
     private static final ThreadLocal<PathfinderBuffers> PATHFINDER_BUFFERS = ThreadLocal.withInitial(PathfinderBuffers::new);
-    /// {game tick, uploads already claimed in that tick} for this thread. The mirror is
-    /// thread-local on the native side, so the budget is too.
-    private static final ThreadLocal<long[]> WARMUP_BUDGET =
-            ThreadLocal.withInitial(() -> new long[] {Long.MIN_VALUE, 0L});
+    private static final PathfinderDispatchPolicy DISPATCH_POLICY = PathfinderDispatchPolicy.configured();
+    private static final PathfinderDispatchPolicy.TickBudget SNAPSHOT_BUDGET = new PathfinderDispatchPolicy.TickBudget(
+            Long.getLong("lattice.pathfinderSnapshotBudgetNanosPerTick", 7_500_000L));
 
     private PathFinderNativeSupport() {}
 
@@ -70,7 +51,8 @@ public final class PathFinderNativeSupport {
                 || !NativePathfinder.isAvailable()) {
             return null;
         }
-        if (isShortPath(mob, targets)) {
+        int maxDistance = maxTargetDistance(mob, targets);
+        if (SHORT_PATH_MANHATTAN_LIMIT > 0 && maxDistance <= SHORT_PATH_MANHATTAN_LIMIT) {
             NativePathfinder.recordShortPathGate();
             return null;
         }
@@ -157,14 +139,21 @@ public final class PathFinderNativeSupport {
         int maxY = start.y;
         int minZ = start.z;
         int maxZ = start.z;
+        int nearestDistance = Integer.MAX_VALUE;
         for (int i = 0; i < targetCount; ++i) {
             BlockPos target = buffers.target(i);
+            nearestDistance = Math.min(nearestDistance, PathfinderDispatchPolicy.distanceBeyondReach(
+                    start.x, start.y, start.z, target.getX(), target.getY(), target.getZ(), reachRange));
             minX = Math.min(minX, target.getX());
             maxX = Math.max(maxX, target.getX());
             minY = Math.min(minY, target.getY());
             maxY = Math.max(maxY, target.getY());
             minZ = Math.min(minZ, target.getZ());
             maxZ = Math.max(maxZ, target.getZ());
+        }
+        if (nearestDistance <= Math.max(0, SHORT_PATH_MANHATTAN_LIMIT)) {
+            NativePathfinder.recordShortPathGate();
+            return null;
         }
 
         minX -= margin;
@@ -185,11 +174,22 @@ public final class PathFinderNativeSupport {
 
         int entityWidth = Mth.floor(mob.getBbWidth() + 1.0F);
         int entityHeight = Mth.floor(mob.getBbHeight() + 1.0F);
-        int worldKey = System.identityHashCode(mob.level());
-        if (!shouldTryNative(mob, worldKey, minX, minY, minZ, sizeX, sizeY, sizeZ, entityWidth, entityHeight)) {
+        long worldKey = mob.level().lattice$pathfinderMirrorWorld().getOrCreate();
+        if (worldKey == 0L) return null;
+        long regionVolume = (long) sizeX * sizeY * sizeZ;
+        int maxVisitedNodes = (int)(configuredMaxVisitedNodes * maxVisitedNodesMultiplier);
+        long expandedVolume = (long)(sizeX + entityWidth + 1) * (sizeY + entityHeight + 1) * (sizeZ + entityWidth + 1);
+        boolean mirrorCovered = NativePathfinder.stateMirrorCovers(worldKey,
+                minX - 1, minY - 1, minZ - 1,
+                sizeX + entityWidth + 1, sizeY + entityHeight + 1, sizeZ + entityWidth + 1);
+        long tick = Integer.toUnsignedLong(mob.level().getServer().getTickCount());
+        PathfinderDispatchPolicy.SnapshotAdmission admission = DISPATCH_POLICY.admit(
+                regionVolume, expandedVolume, nearestDistance, maxVisitedNodes, mirrorCovered, tick, SNAPSHOT_BUDGET);
+        if (admission == null) {
             NativePathfinder.recordMirrorColdGate();
             return null;
         }
+        if (!mirrorCovered) NativePathfinder.recordMirrorWarmupPass();
 
         float[] pathfindingMalus = pathfindingMalusFor(mob);
         boolean canFloat = evaluator.canFloat();
@@ -205,7 +205,6 @@ public final class PathFinderNativeSupport {
         int[] targetX = buffers.targetX(targetCount);
         int[] targetY = buffers.targetY(targetCount);
         int[] targetZ = buffers.targetZ(targetCount);
-        int maxVisitedNodes = (int)(configuredMaxVisitedNodes * maxVisitedNodesMultiplier);
         int[] outPath = buffers.outPath(maxVisitedNodes);
         for (int i = 0; i < targetCount; ++i) {
             BlockPos target = buffers.target(i);
@@ -213,26 +212,32 @@ public final class PathFinderNativeSupport {
             targetY[i] = target.getY();
             targetZ[i] = target.getZ();
         }
-        long nativeStart = System.nanoTime();
-        try {
-            NativePathfinder.PathResult mirrorResult = NativePathfinder.findPathFromStateMirror(
-                    worldKey, minX, minY, minZ, sizeX, sizeY, sizeZ,
-                    start.x, start.y, start.z, targetX, targetY, targetZ, targetCount,
-                    maxRange, maxVisitedNodes, reachRange, entityWidth, entityHeight, maxUpStep,
-                    mob.getMaxFallDistance(), pathfindingMalus,
-                    mobJumpHeight, mob.getBbWidth(), canPassDoors, canOpenDoors,
-                    mobBlockPosition.getX(), mobBlockPosition.getY(), mobBlockPosition.getZ(),
-                    canWalkOverFences, mobsIgnoreRails, canFloat, isAmphibious, levelMinY, outPath);
-            if (mirrorResult != null) {
-                NativePathfinder.recordStateMirrorHit();
-                return mirrorResult;
+        long nativeStart;
+        if (mirrorCovered) {
+            nativeStart = System.nanoTime();
+            try {
+                NativePathfinder.PathResult mirrorResult = NativePathfinder.findPathFromStateMirror(
+                        worldKey, minX, minY, minZ, sizeX, sizeY, sizeZ,
+                        start.x, start.y, start.z, targetX, targetY, targetZ, targetCount,
+                        maxRange, maxVisitedNodes, reachRange, entityWidth, entityHeight, maxUpStep,
+                        mob.getMaxFallDistance(), pathfindingMalus,
+                        mobJumpHeight, mob.getBbWidth(), canPassDoors, canOpenDoors,
+                        mobBlockPosition.getX(), mobBlockPosition.getY(), mobBlockPosition.getZ(),
+                        canWalkOverFences, mobsIgnoreRails, canFloat, isAmphibious, levelMinY, outPath);
+                if (mirrorResult != null) {
+                    NativePathfinder.recordStateMirrorHit();
+                    return mirrorResult;
+                }
+                NativePathfinder.recordStateMirrorMiss();
+                if (!admission.allowSnapshotAfterMirrorFailure()) return null;
+            } finally {
+                long nativeNanos = System.nanoTime() - nativeStart;
+                NativePathfinder.recordNativeNanos(nativeNanos);
+                NativePathfinder.recordStateMirrorNativeNanos(nativeNanos);
+                if (jfrEvent != null) jfrEvent.recordNative(nativeNanos);
             }
+        } else {
             NativePathfinder.recordStateMirrorMiss();
-        } finally {
-            long nativeNanos = System.nanoTime() - nativeStart;
-            NativePathfinder.recordNativeNanos(nativeNanos);
-            NativePathfinder.recordStateMirrorNativeNanos(nativeNanos);
-            if (jfrEvent != null) jfrEvent.recordNative(nativeNanos);
         }
 
         PathfinderStateSnapshot stateSnapshot = buffers.stateSnapshot();
@@ -287,68 +292,16 @@ public final class PathFinderNativeSupport {
         }
     }
 
-    /**
-     * Decides whether the native path is worth attempting for this box.
-     *
-     * <p>The cost structure forces an exact predicate rather than a heuristic. Measured
-     * at 150 zombies on a 60x15x60 box: a mirror hit costs ~110us, a mirror miss
-     * ~6400us, and plain Java ~140us. Breaking even against Java therefore needs the
-     * mirror to hit on more than 99% of attempts — the miss penalty is ~200x the hit
-     * benefit, so no proxy (Manhattan distance, region volume, historical node counts)
-     * has anywhere near the required accuracy.
-     *
-     * <p>So the gate asks the mirror directly whether it already holds every cell the
-     * search would read, and otherwise refuses — except for a small per-tick upload
-     * budget, which is what populates the mirror in the first place.
-     */
-    private static boolean shouldTryNative(Mob mob, int worldKey,
-                                           int minX, int minY, int minZ,
-                                           int sizeX, int sizeY, int sizeZ,
-                                           int entityWidth, int entityHeight) {
-        long volume = (long)sizeX * sizeY * sizeZ;
-        if (volume < MIN_NATIVE_REGION_VOLUME) return false;
-        // Exactly the expanded box findPathFromStateMirror materializes from the
-        // mirror, matching the stateSnapshot.fill bounds below.
-        if (NativePathfinder.stateMirrorCovers(worldKey,
-                minX - 1, minY - 1, minZ - 1,
-                sizeX + entityWidth + 1, sizeY + entityHeight + 1, sizeZ + entityWidth + 1)) {
-            return true;
-        }
-        if (!claimWarmupUpload(mob.level().getGameTime())) return false;
-        NativePathfinder.recordMirrorWarmupPass();
-        return true;
-    }
-
-    /**
-     * Claims one of this tick's mirror warm-up uploads, if any are left.
-     *
-     * <p>Only the miss path uploads to the mirror, so a coverage gate with no escape
-     * hatch would keep the mirror empty forever. Allowing a bounded number of misses
-     * per tick lets coverage grow while capping the warm-up cost at roughly one
-     * snapshot upload per tick per thread.
-     */
-    private static boolean claimWarmupUpload(long gameTime) {
-        if (MIRROR_WARMUP_UPLOADS_PER_TICK <= 0) return false;
-        long[] budget = WARMUP_BUDGET.get();
-        if (budget[0] != gameTime) {
-            budget[0] = gameTime;
-            budget[1] = 0L;
-        }
-        if (budget[1] >= MIRROR_WARMUP_UPLOADS_PER_TICK) return false;
-        ++budget[1];
-        return true;
-    }
-
-    private static boolean isShortPath(Mob mob, Set<BlockPos> targets) {
-        if (SHORT_PATH_MANHATTAN_LIMIT <= 0) return false;
+    private static int maxTargetDistance(Mob mob, Set<BlockPos> targets) {
         BlockPos origin = mob.blockPosition();
+        int maximum = 0;
         for (BlockPos target : targets) {
-            int distance = Math.abs(target.getX() - origin.getX())
-                    + Math.abs(target.getY() - origin.getY())
-                    + Math.abs(target.getZ() - origin.getZ());
-            if (distance > SHORT_PATH_MANHATTAN_LIMIT) return false;
+            long distance = Math.abs((long) target.getX() - origin.getX())
+                    + Math.abs((long) target.getY() - origin.getY())
+                    + Math.abs((long) target.getZ() - origin.getZ());
+            maximum = (int) Math.min(Integer.MAX_VALUE, Math.max(maximum, distance));
         }
-        return true;
+        return maximum;
     }
 
     private static final class CachingPathfindingContext extends PathfindingContext {

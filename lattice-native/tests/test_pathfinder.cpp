@@ -24,6 +24,11 @@ constexpr std::int8_t COCOA = 23;
 constexpr std::int8_t WATER_BORDER = 10;
 constexpr std::int8_t RAIL = 11;
 
+struct FusedMasksScope {
+    FusedMasksScope() { set_pathfinder_fused_masks_for_benchmark(true); }
+    ~FusedMasksScope() { set_pathfinder_fused_masks_for_benchmark(false); }
+};
+
 struct Grid {
     int sx;
     int sy;
@@ -85,6 +90,16 @@ bool mask_get(const std::uint64_t* mask, std::size_t index) {
 
 int snapshot_index(int sx, int sz, int x, int y, int z) {
     return (y * sz + z) * sx + x;
+}
+
+void check_materialized_masks(const PathfinderInputs& inputs, const PathfinderScratch& scratch) {
+    const std::size_t count = scratch.materialized_path_types.size();
+    std::vector<std::uint64_t> passable((count + 63) / 64, UINT64_MAX);
+    std::vector<std::uint64_t> standing(passable);
+    build_pathfinder_masks_scalar(scratch.materialized_path_types.data(), count,
+        inputs.pathfinding_malus, inputs.pathfinding_malus_count, {passable.data(), standing.data()});
+    CHECK(scratch.passable == passable);
+    CHECK(scratch.standing == standing);
 }
 
 void check_mirrors_equal(const PathfinderStateMirror& expected,
@@ -163,6 +178,7 @@ TEST_CASE("pathfinder materializes static BlockState descriptors") {
 }
 
 TEST_CASE("pathfinder fused snapshot materialization matches canonical PathType semantics") {
+    FusedMasksScope fused_masks;
     constexpr int snapshot_size_x = 3;
     constexpr int snapshot_size_y = 3;
     constexpr int snapshot_size_z = 3;
@@ -249,6 +265,8 @@ TEST_CASE("pathfinder fused snapshot materialization matches canonical PathType 
         }
         CHECK(fused_scratch.materialized_path_types == old_order_scratch.materialized_path_types);
         CHECK(fused_scratch.materialized_floor_levels == old_order_scratch.materialized_floor_levels);
+        check_materialized_masks(inputs, old_order_scratch);
+        check_materialized_masks(inputs, fused_scratch);
         check_mirrors_equal(old_order_mirror, fused_mirror);
     };
 
@@ -1156,5 +1174,135 @@ TEST_CASE("pathfinder: reused dirty masks and changing shapes match fresh search
         build_pathfinder_masks(types.data(), n, malus, 3, {c.data(), d.data()});
         CHECK(a == c); CHECK(b == d);
         if (n % 64) { CHECK((a.back() >> (n%64)) == 0); CHECK((b.back() >> (n%64)) == 0); }
+    }
+}
+
+TEST_CASE("pathfinder: fused masks are request-local after failed materialization") {
+    FusedMasksScope fused_masks;
+    for (int mode : {0, 1, 2}) {
+        PathfinderScratch reused;
+        PathfinderStateMirror mirror;
+        for (int width : {65, 3, 17, 1, 65}) {
+            CAPTURE(mode);
+            CAPTURE(width);
+            const int sx = width + 4, sy = 4, sz = 5;
+            const std::int8_t types[] = {OPEN, BLOCKED};
+            const float floors[] = {0.0F, 1.0F};
+            std::vector<int> cells(sx * sy * sz, 0);
+            for (int z = 0; z < sz; ++z) {
+                for (int x = 0; x < sx; ++x) cells[snapshot_index(sx, sz, x, 0, z)] = 1;
+            }
+            PathfinderStateSnapshot snapshot{};
+            snapshot.cells = cells.data(); snapshot.raw_path_types = types; snapshot.floor_heights = floors;
+            snapshot.descriptor_count = 2; snapshot.min_x = -1; snapshot.min_y = -1; snapshot.min_z = -1;
+            snapshot.size_x = sx; snapshot.size_y = sy; snapshot.size_z = sz;
+            std::vector<float> malus(26, 0.0F);
+            malus[BLOCKED] = -1.0F;
+            int tx = width - 1, ty = 0, tz = 0;
+            PathfinderInputs in{};
+            in.region_size_x = width; in.region_size_y = 1; in.region_size_z = 1;
+            in.target_x = &tx; in.target_y = &ty; in.target_z = &tz; in.target_count = 1;
+            in.config.max_range = 128; in.config.max_visited_nodes = 128;
+            in.entity_width = width % 2 + 1; in.entity_height = in.entity_width;
+            in.can_pass_doors = width != 17; in.can_open_doors = width == 3;
+            in.is_amphibious = width == 1; in.can_float = width == 17;
+            in.level_min_y = -1;
+            in.pathfinding_malus = malus.data(); in.pathfinding_malus_count = static_cast<int>(malus.size());
+            int coords[384]{};
+            PathfinderOutput output{coords, 128};
+            auto search = [&]() {
+                if (mode == 0) return find_path_from_state_snapshot_into(in, snapshot, output, reused);
+                if (mode == 1) return find_path_from_state_snapshot_and_store_into(
+                    mirror, 73, in, snapshot, output, reused);
+                store_pathfinder_state_snapshot(mirror, 73, snapshot);
+                return find_path_from_state_mirror_into(in, mirror, 73, output, reused);
+            };
+            std::fill(reused.passable.begin(), reused.passable.end(), UINT64_MAX);
+            std::fill(reused.standing.begin(), reused.standing.end(), UINT64_MAX);
+            const int bad_cell = snapshot_index(sx, sz, width / 2 + 1, 1, 1);
+            cells[bad_cell] = 9;
+            if (mode == 2) {
+                invalidate_pathfinder_state_mirror_cell(mirror, 73, width / 2, 0, 0);
+            }
+            CHECK_FALSE(search());
+            CHECK(output.path_length == 0);
+            cells[bad_cell] = 0;
+            REQUIRE(search());
+            CHECK(output.reached_target);
+            check_materialized_masks(in, reused);
+            PathfinderScratch fresh;
+            int expected_coords[384]{};
+            PathfinderOutput expected{expected_coords, 128};
+            REQUIRE(find_path_from_state_snapshot_into(in, snapshot, expected, fresh));
+            CHECK(output.path_length == expected.path_length);
+            CHECK(output.target_index == expected.target_index);
+            CHECK(std::equal(coords, coords + output.path_length * 3, expected_coords));
+            CHECK(reused.passable == fresh.passable);
+            CHECK(reused.standing == fresh.standing);
+            malus[WALKABLE] = -1.0F;
+            CHECK_FALSE(search());
+            check_materialized_masks(in, reused);
+            malus[WALKABLE] = 0.0F;
+            REQUIRE(search());
+            check_materialized_masks(in, reused);
+            // A raw entry must rebuild, even after a successful prepared request.
+            std::vector<std::int8_t> blocked(width, BLOCKED);
+            in.path_types = blocked.data();
+            CHECK_FALSE(find_path_into(in, output, reused));
+            CHECK(std::all_of(reused.passable.begin(), reused.passable.end(),
+                             [](std::uint64_t word) { return word == 0; }));
+        }
+    }
+}
+
+TEST_CASE("pathfinder: fused masks classify mixed words and zero every tail bit") {
+    FusedMasksScope fused_masks;
+    for (int width : {1, 7, 8, 9, 63, 64, 65, 129}) {
+        for (int malus_mode : {0, 1, 2, 3}) {
+            CAPTURE(width);
+            CAPTURE(malus_mode);
+            const int sx = width + 2, sz = 5;
+            const std::int8_t types[] = {OPEN, BLOCKED, WALKABLE, COCOA, WATER, DOOR_WOOD_CLOSED};
+            const float floors[] = {0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F};
+            std::vector<int> cells(sx * 3 * sz, 1);
+            for (int z = 0; z < sz; ++z) {
+                for (int x = 0; x < sx; ++x) {
+                    cells[snapshot_index(sx, sz, x, 0, z)] = (x + z) % 2;
+                    cells[snapshot_index(sx, sz, x, 1, z)] = (x * 7 + z * 11) % 6;
+                }
+            }
+            cells[snapshot_index(sx, sz, 1, 1, 1)] = 2;
+            PathfinderStateSnapshot snapshot{};
+            snapshot.cells = cells.data(); snapshot.raw_path_types = types; snapshot.floor_heights = floors;
+            snapshot.descriptor_count = 6; snapshot.min_x = -1; snapshot.min_y = -1; snapshot.min_z = -1;
+            snapshot.size_x = sx; snapshot.size_y = 3; snapshot.size_z = sz;
+            std::vector<float> malus(26, 0.0F);
+            malus[BLOCKED] = -1.0F;
+            if (malus_mode == 1) malus[OPEN] = -1.0F;
+            if (malus_mode == 2) malus[WALKABLE] = std::numeric_limits<float>::quiet_NaN();
+            int tx = width - 1, ty = 0, tz = 2;
+            PathfinderInputs in{};
+            in.region_size_x = width; in.region_size_y = 1; in.region_size_z = 3;
+            in.target_x = &tx; in.target_y = &ty; in.target_z = &tz; in.target_count = 1;
+            in.config.max_range = 512; in.config.max_visited_nodes = width * 3;
+            in.entity_width = 1; in.entity_height = 1;
+            in.can_open_doors = malus_mode % 2 == 0;
+            in.can_pass_doors = malus_mode % 2 == 0;
+            in.can_float = true; in.level_min_y = -1;
+            in.pathfinding_malus = malus.data();
+            in.pathfinding_malus_count = malus_mode == 3 ? 3 : static_cast<int>(malus.size());
+            PathfinderScratch scratch;
+            scratch.passable.assign(10, UINT64_MAX);
+            scratch.standing.assign(10, UINT64_MAX);
+            REQUIRE(materialize_pathfinder_state_snapshot(in, snapshot, scratch));
+            check_materialized_masks(in, scratch);
+            int coords[129 * 9]{};
+            PathfinderOutput output{coords, 129 * 3};
+            PathfinderStateMirror mirror;
+            (void)find_path_from_state_snapshot_and_store_into(mirror, 91, in, snapshot, output, scratch);
+            check_materialized_masks(in, scratch);
+            (void)find_path_from_state_mirror_into(in, mirror, 91, output, scratch);
+            check_materialized_masks(in, scratch);
+        }
     }
 }

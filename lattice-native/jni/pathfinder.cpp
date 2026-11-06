@@ -1,6 +1,7 @@
 #include <jni.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -16,7 +17,7 @@ namespace pf = lattice::world::entity;
 
 namespace {
 
-constexpr jint kPathfinderAbiVersion = 11;
+constexpr jint kPathfinderAbiVersion = 12;
 constexpr int kResultHeaderInts = 3;
 /// Bound on the shared invalidation log. A thread that falls further behind than
 /// this degrades to a full mirror clear, which is what every invalidation used to
@@ -71,6 +72,7 @@ constexpr std::size_t kMaxInvalidationLog = 4096;
 /// the entries it has not seen and erases just those sections.
 struct MirrorInvalidationLog {
     std::mutex mutex;
+    bool retired = false;
     /// Generation of the entry that would be at `keys.front()`.
     std::uint64_t base_generation = 0;
     std::deque<std::uint64_t> keys;
@@ -87,33 +89,60 @@ struct ThreadStateMirror {
 };
 
 std::mutex g_state_mirror_mutex;
-std::unordered_map<int, std::shared_ptr<MirrorInvalidationLog>> g_state_mirror_logs;
+std::unordered_map<std::int64_t, std::shared_ptr<MirrorInvalidationLog>> g_state_mirror_logs;
+std::int64_t g_next_world_generation = 1;
+std::atomic<std::uint64_t> g_mirror_retire_count{0};
+std::atomic<std::uint64_t> g_mirror_reject_count{0};
+std::atomic<std::uint64_t> g_mirror_clear_count{0};
 thread_local ThreadStateMirror g_state_mirror{};
 
-std::shared_ptr<MirrorInvalidationLog> state_mirror_log(int world_key) {
+std::shared_ptr<MirrorInvalidationLog> state_mirror_log(std::int64_t world_key) {
     std::lock_guard lock(g_state_mirror_mutex);
-    auto& log = g_state_mirror_logs[world_key];
-    if (!log) log = std::make_shared<MirrorInvalidationLog>();
-    return log;
+    const auto it = g_state_mirror_logs.find(world_key);
+    return it == g_state_mirror_logs.end() ? nullptr : it->second;
 }
 
-/// Brings this thread's mirror up to date. Returns true if anything was dropped.
-bool refresh_state_mirror(int world_key) {
-    if (g_state_mirror.mirror.world_key != world_key || !g_state_mirror.log) {
-        g_state_mirror.log = state_mirror_log(world_key);
-    }
-    if (g_state_mirror.mirror.world_key != world_key) {
-        g_state_mirror.mirror.world_key = world_key;
-        g_state_mirror.mirror.sections.clear();
-        std::lock_guard lock(g_state_mirror.log->mutex);
-        g_state_mirror.generation = g_state_mirror.log->generation();
-        return true;
-    }
+void clear_thread_state_mirror() {
+    pf::PathfinderStateMirror{}.sections.swap(g_state_mirror.mirror.sections);
+    g_state_mirror.mirror.world_key = 0;
+    g_state_mirror.log.reset();
+    g_state_mirror.generation = 0;
+    g_mirror_clear_count.fetch_add(1, std::memory_order_relaxed);
+}
 
-    std::lock_guard lock(g_state_mirror.log->mutex);
+void clear_retired_thread_state_mirror() {
+    if (!g_state_mirror.log) return;
+    bool retired;
+    {
+        std::lock_guard lock(g_state_mirror.log->mutex);
+        retired = g_state_mirror.log->retired;
+    }
+    if (retired) clear_thread_state_mirror();
+}
+
+/// Admission is checked before pinning arrays. Retire may let an admitted call finish.
+bool refresh_state_mirror(std::int64_t world_key) {
+    if (g_state_mirror.mirror.world_key != world_key || !g_state_mirror.log) {
+        clear_retired_thread_state_mirror();
+        auto log = state_mirror_log(world_key);
+        if (!log) {
+            g_mirror_reject_count.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        clear_thread_state_mirror();
+        g_state_mirror.log = std::move(log);
+        g_state_mirror.mirror.world_key = world_key;
+    }
+    std::unique_lock lock(g_state_mirror.log->mutex);
     const MirrorInvalidationLog& log = *g_state_mirror.log;
+    if (log.retired) {
+        lock.unlock();
+        clear_thread_state_mirror();
+        g_mirror_reject_count.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     const std::uint64_t current = log.generation();
-    if (g_state_mirror.generation == current) return false;
+    if (g_state_mirror.generation == current) return true;
     if (g_state_mirror.generation < log.base_generation) {
         // Fell off the back of the log: no way to know which sections changed.
         g_state_mirror.mirror.sections.clear();
@@ -139,10 +168,69 @@ jlong encode_result(const pf::PathfinderOutput& output) {
 
 extern "C" {
 
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_PathfinderOptimizationBenchmark_nativeSelectMasks(
+        JNIEnv*, jclass, jboolean fused) {
+    pf::set_pathfinder_fused_masks_for_benchmark(fused != JNI_FALSE);
+}
+
 JNIEXPORT jint JNICALL
 Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeAbiVersion(
         JNIEnv* /*env*/, jclass /*cls*/) {
     return kPathfinderAbiVersion;
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeCreateMirrorWorld(
+        JNIEnv* env, jclass /*cls*/) {
+    std::lock_guard lock(g_state_mirror_mutex);
+    if (g_next_world_generation == 0) {
+        lattice::jni::throw_illegal_arg(env, "lattice pathfinder: world generation exhausted");
+        return 0;
+    }
+    const auto generation = g_next_world_generation;
+    g_state_mirror_logs.emplace(generation, std::make_shared<MirrorInvalidationLog>());
+    g_next_world_generation = generation == std::numeric_limits<std::int64_t>::max()
+        ? 0 : generation + 1;
+    return generation;
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeRetireMirrorWorld(
+        JNIEnv* /*env*/, jclass /*cls*/, jlong worldKey) {
+    std::lock_guard registry_lock(g_state_mirror_mutex);
+    const auto it = g_state_mirror_logs.find(worldKey);
+    if (it == g_state_mirror_logs.end()) return;
+    {
+        std::lock_guard log_lock(it->second->mutex);
+        it->second->retired = true;
+        it->second->keys.clear();
+    }
+    g_state_mirror_logs.erase(it);
+    g_mirror_retire_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeMirrorLifecycleDiagnostics(
+        JNIEnv* env, jclass /*cls*/) {
+    clear_retired_thread_state_mirror();
+    std::array<jlong, 7> values{};
+    {
+        std::lock_guard lock(g_state_mirror_mutex);
+        values[0] = static_cast<jlong>(g_state_mirror_logs.size());
+    }
+    values[1] = static_cast<jlong>(g_state_mirror.mirror.sections.size());
+    values[2] = values[1] * static_cast<jlong>(sizeof(pf::PathfinderStateMirrorSection));
+    if (g_state_mirror.log) {
+        std::lock_guard lock(g_state_mirror.log->mutex);
+        values[3] = static_cast<jlong>(g_state_mirror.log->keys.size());
+    }
+    values[4] = static_cast<jlong>(g_mirror_retire_count.load(std::memory_order_relaxed));
+    values[5] = static_cast<jlong>(g_mirror_reject_count.load(std::memory_order_relaxed));
+    values[6] = static_cast<jlong>(g_mirror_clear_count.load(std::memory_order_relaxed));
+    jlongArray result = env->NewLongArray(static_cast<jsize>(values.size()));
+    if (result) env->SetLongArrayRegion(result, 0, static_cast<jsize>(values.size()), values.data());
+    return result;
 }
 
 JNIEXPORT void JNICALL
@@ -402,7 +490,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
         jint mobBlockX, jint mobBlockY, jint mobBlockZ,
         jboolean canWalkOverFences, jboolean mobsIgnoreRails,
         jboolean canFloat, jboolean isAmphibious, jint levelMinY,
-        jint worldKey, jboolean legacyOrder,
+        jlong worldKey, jboolean legacyOrder,
         jintArray jOutPath) {
     if (!jStateCells || !jDescriptorPathTypes || !jDescriptorFloorHeights
             || !jTargetX || !jTargetY || !jTargetZ || !jPathfindingMalus || !jOutPath) {
@@ -444,6 +532,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
         return 0L;
     }
 
+    if (!refresh_state_mirror(worldKey)) return 0L;
     jint* stateCells = nullptr;
     jbyte* descriptorPathTypes = nullptr;
     jfloat* descriptorFloorHeights = nullptr;
@@ -526,7 +615,6 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
     output.coords = reinterpret_cast<int*>(out + kResultHeaderInts);
     output.capacity_nodes = maxVisitedNodes;
     thread_local pf::PathfinderScratch scratch{};
-    (void)refresh_state_mirror(worldKey);
     const bool ok = legacyOrder == JNI_TRUE
         ? (pf::store_pathfinder_state_snapshot(g_state_mirror.mirror, worldKey, snapshot),
            pf::find_path_from_state_snapshot_into(inputs, snapshot, output, scratch))
@@ -541,7 +629,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateSna
 
 JNIEXPORT jlong JNICALL
 Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateMirror(
-        JNIEnv* env, jclass /*cls*/, jint worldKey,
+        JNIEnv* env, jclass /*cls*/, jlong worldKey,
         jint regionMinX, jint regionMinY, jint regionMinZ,
         jint regionSizeX, jint regionSizeY, jint regionSizeZ,
         jint startX, jint startY, jint startZ,
@@ -578,6 +666,8 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateMir
         return 0L;
     }
 
+    if (!refresh_state_mirror(worldKey)) return 0L;
+    const jsize malusCount = env->GetArrayLength(jPathfindingMalus);
     jint* targetX = env->GetIntArrayElements(jTargetX, nullptr);
     jint* targetY = env->GetIntArrayElements(jTargetY, nullptr);
     jint* targetZ = env->GetIntArrayElements(jTargetZ, nullptr);
@@ -616,7 +706,7 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateMir
     inputs.max_up_step = maxUpStep;
     inputs.max_fall_distance = maxFallDistance;
     inputs.pathfinding_malus = reinterpret_cast<const float*>(malus);
-    inputs.pathfinding_malus_count = env->GetArrayLength(jPathfindingMalus);
+    inputs.pathfinding_malus_count = malusCount;
     inputs.mob_jump_height = mobJumpHeight;
     inputs.bb_width = bbWidth;
     inputs.can_pass_doors = canPassDoors != JNI_FALSE;
@@ -634,7 +724,6 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateMir
     output.coords = reinterpret_cast<int*>(out + kResultHeaderInts);
     output.capacity_nodes = maxVisitedNodes;
     thread_local pf::PathfinderScratch scratch{};
-    (void)refresh_state_mirror(worldKey);
     const bool ok = pf::find_path_from_state_mirror_into(inputs, g_state_mirror.mirror, worldKey, output, scratch);
     out[0] = static_cast<jint>(scratch.nodes.size());
 
@@ -648,10 +737,18 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeFindPathFromStateMir
 
 JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeInvalidateStateMirror(
-        JNIEnv* /*env*/, jclass /*cls*/, jint worldKey, jint x, jint y, jint z) {
+        JNIEnv* /*env*/, jclass /*cls*/, jlong worldKey, jint x, jint y, jint z) {
     const auto log = state_mirror_log(worldKey);
+    if (!log) {
+        g_mirror_reject_count.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     const std::uint64_t key = pf::pathfinder_mirror_section_key(x, y, z);
     std::lock_guard lock(log->mutex);
+    if (log->retired) {
+        g_mirror_reject_count.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     // Every invalidation must append, even a repeat of the most recent key: a
     // reader may have consumed the previous entry and already re-uploaded that
     // section, so collapsing duplicates would leave it holding stale cells.
@@ -664,10 +761,10 @@ Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeInvalidateStateMirro
 
 JNIEXPORT jboolean JNICALL
 Java_com_latticemc_lattice_nativelib_NativePathfinder_nativeStateMirrorCovers(
-        JNIEnv* /*env*/, jclass /*cls*/, jint worldKey,
+        JNIEnv* /*env*/, jclass /*cls*/, jlong worldKey,
         jint minX, jint minY, jint minZ,
         jint sizeX, jint sizeY, jint sizeZ) {
-    (void)refresh_state_mirror(worldKey);
+    if (!refresh_state_mirror(worldKey)) return JNI_FALSE;
     return pf::state_mirror_covers(g_state_mirror.mirror, worldKey, minX, minY, minZ, sizeX, sizeY, sizeZ)
         ? JNI_TRUE : JNI_FALSE;
 }

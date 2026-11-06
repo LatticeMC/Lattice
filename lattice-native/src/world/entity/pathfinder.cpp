@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 
 #include "lattice/dispatch.hpp"
@@ -42,6 +44,7 @@ constexpr int kPathTypeCount = 26;
 constexpr std::size_t kMaskWordBits = 64;
 constexpr std::int8_t kClosedFlag = 1;
 constexpr std::int8_t kOpenFlag = 2;
+thread_local bool g_fused_masks = false;
 
 [[nodiscard]] bool region_endpoint_fits(int minimum, int size) noexcept {
     const std::int64_t endpoint = static_cast<std::int64_t>(minimum)
@@ -473,6 +476,134 @@ void mask_set(std::uint64_t* mask, std::size_t index, bool value) noexcept {
     }
 }
 
+[[nodiscard]] bool mask_passable(std::int8_t type, const float* malus, int malus_count) noexcept {
+    return type != kBlocked && type >= 0 && type < malus_count && malus
+        && malus[type] >= 0.0F;
+}
+
+void prepare_materialized_masks(PathfinderScratch& scratch, std::size_t count) {
+    scratch.passable.assign(mask_words(count), 0ULL);
+    scratch.standing.assign(mask_words(count), 0ULL);
+}
+
+template<bool BuildMasks>
+class MaterializedTypeWriter {
+    PathfinderScratch& scratch_;
+    std::array<std::uint8_t, 256> flags_{};
+    std::size_t word_ = 0;
+    bool simple_malus_ = false;
+    bool finished_ = false;
+
+    [[nodiscard]] std::pair<std::uint64_t, std::uint64_t> classify(std::uint64_t cells) const noexcept {
+        constexpr std::uint64_t low_bits = 0x0101010101010101ULL;
+        constexpr std::uint64_t gather = 0x0102040810204080ULL;
+        std::uint64_t passable_bytes;
+        std::uint64_t standing_bytes;
+        if (simple_malus_ && (cells & 0xFCFCFCFCFCFCFCFCULL) == 0
+                && (cells & (cells >> 1) & low_bits) == 0) {
+            passable_bytes = (cells | (cells >> 1)) & low_bits;
+            standing_bytes = (cells >> 1) & low_bits;
+        } else {
+            std::uint64_t flags = 0;
+            for (std::size_t j = 0; j < 8; ++j) {
+                flags |= std::uint64_t{flags_[static_cast<std::uint8_t>(cells >> (j * 8))]} << (j * 8);
+            }
+            passable_bytes = flags & low_bits;
+            standing_bytes = (flags >> 1) & low_bits;
+        }
+        return {(passable_bytes * gather) >> 56, (standing_bytes * gather) >> 56};
+    }
+
+    void flush() noexcept {
+        if constexpr (!BuildMasks) return;
+        std::uint64_t passable = 0;
+        std::uint64_t standing = 0;
+        const std::size_t begin = word_ * 64;
+        const std::size_t count = std::min(std::size_t{64}, scratch_.materialized_path_types.size() - begin);
+        std::size_t i = 0;
+        for (; i + 8 <= count; i += 8) {
+            // Fixed-size loads keep the full-word path free of memcpy calls.
+            std::uint64_t cells = 0;
+            if constexpr (std::endian::native == std::endian::little) {
+                std::memcpy(&cells, scratch_.materialized_path_types.data() + begin + i, 8);
+            } else {
+                for (std::size_t j = 0; j < 8; ++j) {
+                    cells |= std::uint64_t{static_cast<std::uint8_t>(
+                        scratch_.materialized_path_types[begin + i + j])} << (j * 8);
+                }
+            }
+            const auto bits = classify(cells);
+            passable |= bits.first << i;
+            standing |= bits.second << i;
+        }
+        if (i < count) {
+            std::uint64_t cells = 0;
+            for (std::size_t j = 0; j < count - i; ++j) {
+                cells |= std::uint64_t{static_cast<std::uint8_t>(
+                    scratch_.materialized_path_types[begin + i + j])} << (j * 8);
+            }
+            const auto bits = classify(cells);
+            passable |= bits.first << i;
+            standing |= bits.second << i;
+        }
+        scratch_.passable[word_] = passable;
+        scratch_.standing[word_] = standing;
+    }
+
+public:
+    MaterializedTypeWriter(const PathfinderInputs& in, PathfinderScratch& scratch) noexcept
+        : scratch_(scratch) {
+        simple_malus_ = mask_passable(kOpen, in.pathfinding_malus, in.pathfinding_malus_count)
+            && mask_passable(kWalkable, in.pathfinding_malus, in.pathfinding_malus_count);
+        if constexpr (BuildMasks) for (int type = 0; type < kPathTypeCount; ++type) {
+            if (mask_passable(static_cast<std::int8_t>(type), in.pathfinding_malus, in.pathfinding_malus_count)) {
+                flags_[type] = type == kOpen ? 1 : 3;
+            }
+        }
+    }
+
+    ~MaterializedTypeWriter() { finish(); }
+
+    void finish() noexcept {
+        if (!finished_) {
+            flush();
+            finished_ = true;
+        }
+    }
+
+    void begin_word(std::size_t index) noexcept {
+        if constexpr (!BuildMasks) return;
+        const std::size_t word = index >> 6;
+        if (word != word_) {
+            flush();
+            word_ = word;
+        }
+    }
+
+    void store_in_word(std::size_t index, std::int8_t type) noexcept {
+        scratch_.materialized_path_types[index] = type;
+    }
+
+    // Materialization visits indices monotonically; write each mask word once.
+    void store(std::size_t index, std::int8_t type) noexcept {
+        begin_word(index);
+        store_in_word(index, type);
+    }
+};
+
+template<>
+class MaterializedTypeWriter<false> {
+    PathfinderScratch& scratch_;
+public:
+    MaterializedTypeWriter(const PathfinderInputs&, PathfinderScratch& scratch) noexcept : scratch_(scratch) {}
+    void finish() noexcept {}
+    void begin_word(std::size_t) noexcept {}
+    void store_in_word(std::size_t index, std::int8_t type) noexcept {
+        scratch_.materialized_path_types[index] = type;
+    }
+    void store(std::size_t index, std::int8_t type) noexcept { store_in_word(index, type); }
+};
+
 } // namespace
 
 void build_pathfinder_masks_scalar(const std::int8_t* path_types,
@@ -486,10 +617,7 @@ void build_pathfinder_masks_scalar(const std::int8_t* path_types,
     std::fill(masks.standing, masks.standing + words, 0ULL);
     for (std::size_t i = 0; i < count; ++i) {
         const int type = static_cast<int>(path_types[i]);
-        const bool is_passable = type != kBlocked
-            && type >= 0
-            && type < pathfinding_malus_count
-            && pathfinding_malus[type] >= 0.0F;
+        const bool is_passable = mask_passable(path_types[i], pathfinding_malus, pathfinding_malus_count);
         mask_set(masks.passable, i, is_passable);
         mask_set(masks.standing, i, is_passable && type != kOpen);
     }
@@ -516,6 +644,10 @@ std::array<std::atomic<std::uint64_t>, kPathfinderCardinalFastPathBucketCount> g
 
 void set_pathfinder_cardinal_fastpath_enabled(bool enabled) noexcept {
     g_cardinal_fastpath_enabled.store(enabled, std::memory_order_release);
+}
+
+void set_pathfinder_fused_masks_for_benchmark(bool enabled) noexcept {
+    g_fused_masks = enabled;
 }
 
 void set_pathfinder_cardinal_fastpath_stats_enabled(bool enabled) noexcept {
@@ -585,7 +717,8 @@ void build_pathfinder_masks(const std::int8_t* path_types,
 
 namespace {
 
-[[nodiscard]] SearchResult run_search(const PathfinderInputs& in, PathfinderScratch& scratch) noexcept {
+[[nodiscard]] SearchResult run_search(const PathfinderInputs& in, PathfinderScratch& scratch,
+                                      bool masks_prepared = false) noexcept {
     if (!valid_inputs(in)) return empty_search();
     const int grid_volume = volume(in);
     if (grid_volume <= 0) return empty_search();
@@ -617,11 +750,13 @@ namespace {
         return result;
     };
 
-    resize_mask(scratch.passable, static_cast<std::size_t>(grid_volume));
-    resize_mask(scratch.standing, static_cast<std::size_t>(grid_volume));
-    build_pathfinder_masks(in.path_types, static_cast<std::size_t>(grid_volume),
-                           in.pathfinding_malus, in.pathfinding_malus_count,
-                           PathfinderMasks{scratch.passable.data(), scratch.standing.data()});
+    if (!masks_prepared) {
+        resize_mask(scratch.passable, static_cast<std::size_t>(grid_volume));
+        resize_mask(scratch.standing, static_cast<std::size_t>(grid_volume));
+        build_pathfinder_masks(in.path_types, static_cast<std::size_t>(grid_volume),
+                               in.pathfinding_malus, in.pathfinding_malus_count,
+                               PathfinderMasks{scratch.passable.data(), scratch.standing.data()});
+    }
 
     // The start cell comes straight from the mob's position: vanilla's
     // `getStart` reads the block it already stands in rather than running the
@@ -1226,12 +1361,14 @@ void build_single_cell_type_table(const PathfinderInputs& in,
     }
 }
 
+template<bool BuildMasks>
 [[nodiscard]] bool materialize_single_cell_mirror_view(const PathfinderInputs& in,
                                                       const PathfinderStateSnapshot& snapshot,
                                                       int count,
                                                       PathfinderScratch& scratch) noexcept {
     std::array<std::int8_t, kPathTypeCount> single_cell_types{};
     build_single_cell_type_table(in, single_cell_types);
+    MaterializedTypeWriter<BuildMasks> type_writer(in, scratch);
     const std::int64_t end_y = static_cast<std::int64_t>(in.region_min_y) + in.region_size_y;
     const std::int64_t end_z = static_cast<std::int64_t>(in.region_min_z) + in.region_size_z;
     const std::int64_t end_x = static_cast<std::int64_t>(in.region_min_x) + in.region_size_x;
@@ -1246,7 +1383,9 @@ void build_single_cell_type_table(const PathfinderInputs& in,
                 const PathfinderStateMirrorSection* floor_section =
                     snapshot_mirror_section(snapshot, x, y - 1, z);
                 if (!path_section) return false;
-                const std::int64_t run = std::min<std::int64_t>(16 - (x & 15), end_x - x_value);
+                std::int64_t run = std::min(static_cast<std::int64_t>(16 - (x & 15)), end_x - x_value);
+                if constexpr (BuildMasks) run = std::min(run, static_cast<std::int64_t>(64 - (index & 63)));
+                type_writer.begin_word(static_cast<std::size_t>(index));
                 for (std::int64_t offset = 0; offset < run; ++offset, ++index) {
                     const int cell_x = static_cast<int>(x_value + offset);
                     const int path_local = mirror_section_index(cell_x, y, z);
@@ -1257,7 +1396,7 @@ void build_single_cell_type_table(const PathfinderInputs& in,
                     std::int8_t type = mapped_type;
                     if (mapped_type < 0
                             && !single_cell_path_type_from_raw(in, snapshot, cell_x, y, z, raw_type, type)) return false;
-                    scratch.materialized_path_types[static_cast<std::size_t>(index)] = type;
+                    type_writer.store_in_word(static_cast<std::size_t>(index), type);
                     if ((in.can_float || in.is_amphibious) && raw_type == kWater) {
                         scratch.materialized_floor_levels[static_cast<std::size_t>(index)] = static_cast<float>(y) + 0.5F;
                     } else {
@@ -1277,6 +1416,7 @@ void build_single_cell_type_table(const PathfinderInputs& in,
     return index == count;
 }
 
+template<bool BuildMasks>
 [[nodiscard]] bool materialize_state_snapshot(const PathfinderInputs& in,
                                                const PathfinderStateSnapshot& snapshot,
                                                PathfinderScratch& scratch) noexcept {
@@ -1290,9 +1430,11 @@ void build_single_cell_type_table(const PathfinderInputs& in,
     if (count <= 0) return false;
     scratch.materialized_path_types.resize(static_cast<std::size_t>(count));
     scratch.materialized_floor_levels.resize(static_cast<std::size_t>(count));
+    if constexpr (BuildMasks) prepare_materialized_masks(scratch, static_cast<std::size_t>(count));
     if (snapshot.mirror_sections && in.entity_width == 1 && in.entity_height == 1) {
-        return materialize_single_cell_mirror_view(in, snapshot, count, scratch);
+        return materialize_single_cell_mirror_view<BuildMasks>(in, snapshot, count, scratch);
     }
+    MaterializedTypeWriter<BuildMasks> type_writer(in, scratch);
     const std::int64_t end_y = static_cast<std::int64_t>(in.region_min_y) + in.region_size_y;
     const std::int64_t end_z = static_cast<std::int64_t>(in.region_min_z) + in.region_size_z;
     const std::int64_t end_x = static_cast<std::int64_t>(in.region_min_x) + in.region_size_x;
@@ -1308,7 +1450,7 @@ void build_single_cell_type_table(const PathfinderInputs& in,
                 std::int8_t raw_type = kBlocked;
                 if (!mob_path_type(in, snapshot, x, y, z, type)
                         || !snapshot_raw_type(snapshot, x, y, z, raw_type)) return false;
-                scratch.materialized_path_types[static_cast<std::size_t>(index)] = type;
+                type_writer.store(static_cast<std::size_t>(index), type);
                 if ((in.can_float || in.is_amphibious) && raw_type == kWater) {
                     scratch.materialized_floor_levels[static_cast<std::size_t>(index)] = static_cast<float>(y) + 0.5F;
                 } else {
@@ -1352,14 +1494,16 @@ bool find_path_into(const PathfinderInputs& in, PathfinderOutput& output) noexce
     return find_path_into(in, output, scratch);
 }
 
-bool find_path_into(const PathfinderInputs& in, PathfinderOutput& output,
-                    PathfinderScratch& scratch) noexcept {
+namespace {
+
+bool find_path_into_impl(const PathfinderInputs& in, PathfinderOutput& output,
+                         PathfinderScratch& scratch, bool masks_prepared) noexcept {
     output.path_length = 0;
     output.target_index = -1;
     output.reached_target = false;
     if (!output.coords || output.capacity_nodes <= 0) return false;
 
-    SearchResult search = run_search(in, scratch);
+    SearchResult search = run_search(in, scratch, masks_prepared);
     if (search.end_index < 0 || !search.scratch) return false;
 
     int count = 0;
@@ -1385,13 +1529,21 @@ bool find_path_into(const PathfinderInputs& in, PathfinderOutput& output,
     return true;
 }
 
+} // namespace
+
+bool find_path_into(const PathfinderInputs& in, PathfinderOutput& output,
+                    PathfinderScratch& scratch) noexcept {
+    return find_path_into_impl(in, output, scratch, false);
+}
+
 bool materialize_pathfinder_state_snapshot(const PathfinderInputs& inputs,
                                            const PathfinderStateSnapshot& snapshot,
                                            PathfinderScratch& scratch) noexcept {
-    return materialize_state_snapshot(inputs, snapshot, scratch);
+    return g_fused_masks ? materialize_state_snapshot<true>(inputs, snapshot, scratch)
+        : materialize_state_snapshot<false>(inputs, snapshot, scratch);
 }
 
-void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_key,
+void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, std::int64_t world_key,
                                      const PathfinderStateSnapshot& snapshot) noexcept {
     if (!snapshot.cells || !snapshot.raw_path_types || !snapshot.floor_heights
             || snapshot.descriptor_count <= 0
@@ -1437,8 +1589,9 @@ void store_pathfinder_state_snapshot(PathfinderStateMirror& mirror, int world_ke
     }
 }
 
-bool find_path_from_state_snapshot_and_store_into(
-        PathfinderStateMirror& mirror, int world_key,
+template<bool BuildMasks>
+bool find_path_from_state_snapshot_and_store_impl(
+        PathfinderStateMirror& mirror, std::int64_t world_key,
         const PathfinderInputs& inputs, const PathfinderStateSnapshot& snapshot,
         PathfinderOutput& output, PathfinderScratch& scratch) noexcept {
     output.path_length = 0;
@@ -1469,6 +1622,8 @@ bool find_path_from_state_snapshot_and_store_into(
 
     scratch.materialized_path_types.resize(static_cast<std::size_t>(volume(inputs)));
     scratch.materialized_floor_levels.resize(static_cast<std::size_t>(volume(inputs)));
+    if constexpr (BuildMasks) prepare_materialized_masks(scratch, static_cast<std::size_t>(volume(inputs)));
+    MaterializedTypeWriter<BuildMasks> type_writer(inputs, scratch);
     const bool single_cell_entity = inputs.entity_width == 1 && inputs.entity_height == 1;
     std::array<std::int8_t, kPathTypeCount> single_cell_types{};
     if (single_cell_entity) build_single_cell_type_table(inputs, single_cell_types);
@@ -1540,7 +1695,7 @@ bool find_path_from_state_snapshot_and_store_into(
             ((static_cast<std::int64_t>(y) - inputs.region_min_y) * inputs.region_size_z
                 + (static_cast<std::int64_t>(z) - inputs.region_min_z))
             * inputs.region_size_x + (static_cast<std::int64_t>(x) - inputs.region_min_x));
-        scratch.materialized_path_types[index] = type;
+        type_writer.store(index, type);
         if ((inputs.can_float || inputs.is_amphibious) && raw_type == kWater) {
             scratch.materialized_floor_levels[index] = static_cast<float>(y) + 0.5F;
         } else {
@@ -1588,18 +1743,28 @@ bool find_path_from_state_snapshot_and_store_into(
         }
     }
 
+    type_writer.finish();
     if (!materialization_active || materialized_count != volume(inputs)) return false;
     PathfinderInputs materialized = inputs;
     materialized.path_types = scratch.materialized_path_types.data();
     materialized.floor_levels = scratch.materialized_floor_levels.data();
-    return find_path_into(materialized, output, scratch);
+    return find_path_into_impl(materialized, output, scratch, BuildMasks);
+}
+
+bool find_path_from_state_snapshot_and_store_into(
+        PathfinderStateMirror& mirror, std::int64_t world_key,
+        const PathfinderInputs& inputs, const PathfinderStateSnapshot& snapshot,
+        PathfinderOutput& output, PathfinderScratch& scratch) noexcept {
+    return g_fused_masks
+        ? find_path_from_state_snapshot_and_store_impl<true>(mirror, world_key, inputs, snapshot, output, scratch)
+        : find_path_from_state_snapshot_and_store_impl<false>(mirror, world_key, inputs, snapshot, output, scratch);
 }
 
 std::uint64_t pathfinder_mirror_section_key(int x, int y, int z) noexcept {
     return mirror_section_key(x, y, z);
 }
 
-bool state_mirror_covers(const PathfinderStateMirror& mirror, int world_key,
+bool state_mirror_covers(const PathfinderStateMirror& mirror, std::int64_t world_key,
                          int min_x, int min_y, int min_z,
                          int size_x, int size_y, int size_z) noexcept {
     if (mirror.world_key != world_key || size_x <= 0 || size_y <= 0 || size_z <= 0
@@ -1648,7 +1813,7 @@ bool state_mirror_covers(const PathfinderStateMirror& mirror, int world_key,
 
 namespace {
 
-[[nodiscard]] bool load_state_mirror_view(const PathfinderStateMirror& mirror, int world_key,
+[[nodiscard]] bool load_state_mirror_view(const PathfinderStateMirror& mirror, std::int64_t world_key,
                                           int min_x, int min_y, int min_z,
                                           int size_x, int size_y, int size_z,
                                           PathfinderScratch& scratch,
@@ -1722,7 +1887,7 @@ namespace {
 
 } // namespace
 
-bool load_pathfinder_state_snapshot(const PathfinderStateMirror& mirror, int world_key,
+bool load_pathfinder_state_snapshot(const PathfinderStateMirror& mirror, std::int64_t world_key,
                                     int min_x, int min_y, int min_z,
                                     int size_x, int size_y, int size_z,
                                     PathfinderScratch& scratch,
@@ -1768,7 +1933,7 @@ bool load_pathfinder_state_snapshot(const PathfinderStateMirror& mirror, int wor
     return true;
 }
 
-void invalidate_pathfinder_state_mirror_cell(PathfinderStateMirror& mirror, int world_key,
+void invalidate_pathfinder_state_mirror_cell(PathfinderStateMirror& mirror, std::int64_t world_key,
                                              int x, int y, int z) noexcept {
     if (mirror.world_key != world_key) return;
     const auto section = mirror.sections.find(mirror_section_key(x, y, z));
@@ -1784,7 +1949,7 @@ void invalidate_pathfinder_state_mirror_cell(PathfinderStateMirror& mirror, int 
 }
 
 bool find_path_from_state_mirror_into(const PathfinderInputs& inputs,
-                                      const PathfinderStateMirror& mirror, int world_key,
+                                      const PathfinderStateMirror& mirror, std::int64_t world_key,
                                       PathfinderOutput& output,
                                       PathfinderScratch& scratch) noexcept {
     int state_min_x = 0, state_max_x = 0, state_size_x = 0;
@@ -1817,7 +1982,7 @@ bool find_path_from_state_snapshot_into(const PathfinderInputs& inputs,
     PathfinderInputs materialized = inputs;
     materialized.path_types = scratch.materialized_path_types.data();
     materialized.floor_levels = scratch.materialized_floor_levels.data();
-    return find_path_into(materialized, output, scratch);
+    return find_path_into_impl(materialized, output, scratch, g_fused_masks);
 }
 
 } // namespace lattice::world::entity

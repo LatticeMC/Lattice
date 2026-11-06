@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Fri, 6 Nov 2026 12:00:00 +0800
+Subject: [PATCH] Retire the native pathfinder mirror with its Level
+
+Each Level owns one lazy registration. Closing the chunk source, including
+its exceptional exit, retires that registration without retaining the Level.
+---
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -102,2 +102,8 @@
+ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemLevel, ca.spottedleaf.moonrise.patches.chunk_system.world.ChunkSystemEntityGetter { // Paper - rewrite chunk system // Paper - optimise collisions
++    private final com.latticemc.lattice.bridge.PathfinderMirrorWorld lattice$pathfinderMirrorWorld =
++        new com.latticemc.lattice.bridge.PathfinderMirrorWorld();
++
++    public final com.latticemc.lattice.bridge.PathfinderMirrorWorld lattice$pathfinderMirrorWorld() {
++        return this.lattice$pathfinderMirrorWorld;
++    }
+     public static final Codec<ResourceKey<Level>> RESOURCE_KEY_CODEC = ResourceKey.codec(Registries.DIMENSION);
+@@ -1744,3 +1750,7 @@
+     public void close() throws IOException {
+-        this.getChunkSource().close();
++        try {
++            this.getChunkSource().close();
++        } finally {
++            this.lattice$pathfinderMirrorWorld.close();
++        }
+     }

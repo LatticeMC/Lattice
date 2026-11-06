@@ -10,6 +10,7 @@ public final class PathfinderStaticCache {
 
     public static void invalidate(Level level, BlockPos pos) {
         PathfinderTickStateCache.invalidate(level, pos);
-        NativePathfinder.invalidateStateMirror(System.identityHashCode(level), pos.getX(), pos.getY(), pos.getZ());
+        long generation = level.lattice$pathfinderMirrorWorld().existingGeneration();
+        if (generation != 0L) NativePathfinder.invalidateStateMirror(generation, pos.getX(), pos.getY(), pos.getZ());
     }
 }
