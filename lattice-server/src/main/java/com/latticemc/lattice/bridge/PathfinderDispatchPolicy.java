@@ -140,7 +140,7 @@ final class PathfinderDispatchPolicy {
         }
 
         synchronized boolean tryReserve(long requestedTick, long nanos) {
-            if (requestedTick < this.tick || nanos < 0 || nanos > this.limitNanos) return false;
+            if (this.limitNanos == 0 || requestedTick < this.tick || nanos < 0 || nanos > this.limitNanos) return false;
             if (requestedTick > this.tick) {
                 this.tick = requestedTick;
                 this.reservedNanos = 0;

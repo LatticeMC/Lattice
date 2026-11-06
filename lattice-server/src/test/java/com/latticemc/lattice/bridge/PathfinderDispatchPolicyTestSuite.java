@@ -26,6 +26,7 @@ public final class PathfinderDispatchPolicyTestSuite {
         failedCoveredSearchIncludesAlreadyPaidCost();
         saturatedCostsRejectRatherThanWrap();
         nearbyTargetRejectsDespiteDistantTarget();
+        zeroBudgetDisablesMissEvenWithFreeSnapshot();
         System.out.println("PathfinderDispatchPolicyTestSuite: PASS");
     }
 
@@ -38,6 +39,19 @@ public final class PathfinderDispatchPolicyTestSuite {
                 "any target in reach ends the Java search immediately");
         check(PathfinderDispatchPolicy.distanceBeyondReach(Integer.MIN_VALUE, 0, 0,
                 Integer.MAX_VALUE, 0, 0, 0) == Integer.MAX_VALUE, "coordinate difference cannot wrap");
+    }
+
+    private static void zeroBudgetDisablesMissEvenWithFreeSnapshot() {
+        PathfinderDispatchPolicy policy = policy(1_000, 10, 100, 0, 0);
+        PathfinderDispatchPolicy.TickBudget budget = new PathfinderDispatchPolicy.TickBudget(0);
+        check(!budget.tryReserve(1, 0), "zero is the explicit snapshot disable switch");
+        check(policy.admit(100, 200, 100, 100, false, 1, budget) == null,
+                "zero-cost miss must not bypass disable");
+        PathfinderDispatchPolicy.SnapshotAdmission hit = policy.admit(100, 200, 100, 100, true, 1, budget);
+        check(hit != null, "disable leaves covered searches available");
+        check(!hit.allowSnapshotAfterMirrorFailure(), "failed covered search must honor disable");
+        check(new PathfinderDispatchPolicy.TickBudget(1).tryReserve(1, 0),
+                "zero estimate remains valid when upload is enabled");
     }
 
     private static void shortPathRejectsEvenWithCoverage() {

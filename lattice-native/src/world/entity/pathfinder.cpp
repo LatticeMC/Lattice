@@ -45,6 +45,14 @@ constexpr std::size_t kMaskWordBits = 64;
 constexpr std::int8_t kClosedFlag = 1;
 constexpr std::int8_t kOpenFlag = 2;
 thread_local bool g_fused_masks = false;
+thread_local bool g_search_arithmetic = false;
+
+struct SearchArithmetic {
+    float jump_height;
+    int vertical_limit;
+    int stride_y;
+    float fudge;
+};
 
 [[nodiscard]] bool region_endpoint_fits(int minimum, int size) noexcept {
     const std::int64_t endpoint = static_cast<std::int64_t>(minimum)
@@ -213,21 +221,32 @@ thread_local bool g_fused_masks = false;
 /// `vertical_delta_limit` is vanilla's `i1` (0 when the head cell is blocked
 /// or the mob stands in sticky honey), `node_floor_level` the origin cell's
 /// floor level. Returns false where vanilla returns null.
+template<bool optimized = false>
 [[nodiscard]] bool find_accepted_node(const PathfinderInputs& in, int x, int y, int z,
                                       int vertical_delta_limit, float node_floor_level,
                                       std::int8_t origin_type,
                                       const std::vector<std::uint64_t>& standing,
                                       int& out_y, std::int8_t& out_type,
-                                      float& out_malus, bool& out_closed) noexcept {
+                                      float& out_malus, bool& out_closed,
+                                      const SearchArithmetic* arithmetic = nullptr,
+                                      int supplied_grid = -1) noexcept {
     out_closed = false;
     if (!in_region(in, x, y, z)) return false;
 
     // Vanilla gate: floorLevel - nodeFloorLevel > getMobJumpHeight() -> null.
     // getMobJumpHeight() == max(1.125, maxUpStep).
-    const float jump_height = std::max(1.125F, in.max_up_step);
-    if (floor_level_at(in, x, y, z) - node_floor_level > jump_height) return false;
+    const float jump_height = optimized ? arithmetic->jump_height : std::max(1.125F, in.max_up_step);
+    int cell_grid = -1;
+    float cell_floor;
+    if constexpr (optimized) {
+        cell_grid = supplied_grid >= 0 ? supplied_grid : grid_index(in, x, y, z);
+        cell_floor = in.floor_levels ? in.floor_levels[cell_grid] : static_cast<float>(y);
+    } else {
+        cell_floor = floor_level_at(in, x, y, z);
+    }
+    if (cell_floor - node_floor_level > jump_height) return false;
 
-    const std::int8_t type = path_type_at(in, x, y, z);
+    const std::int8_t type = optimized ? in.path_types[cell_grid] : path_type_at(in, x, y, z);
     const float malus = malus_for(in, type);
 
     bool have_node = false;
@@ -259,9 +278,11 @@ thread_local bool g_fused_masks = false;
         // tryJumpOn: recurse one cell up with limit-1. The narrow-mob gap
         // collision check is omitted (needs the real AABB); Java rejects
         // those cases before handing the request to native.
-        return find_accepted_node(in, x, y + 1, z, vertical_delta_limit - 1,
+        return find_accepted_node<optimized>(in, x, y + 1, z, vertical_delta_limit - 1,
                                   node_floor_level, origin_type, standing,
-                                  out_y, out_type, out_malus, out_closed);
+                                  out_y, out_type, out_malus, out_closed, arithmetic,
+                                  optimized && y < static_cast<std::int64_t>(in.region_min_y) + in.region_size_y - 1
+                                      ? cell_grid + arithmetic->stride_y : -1);
     }
 
     if (type == kWater && !in.can_float) {
@@ -650,6 +671,10 @@ void set_pathfinder_fused_masks_for_benchmark(bool enabled) noexcept {
     g_fused_masks = enabled;
 }
 
+void set_pathfinder_search_arithmetic_for_benchmark(bool enabled) noexcept {
+    g_search_arithmetic = enabled;
+}
+
 void set_pathfinder_cardinal_fastpath_stats_enabled(bool enabled) noexcept {
     g_cardinal_fastpath_stats_enabled.store(enabled, std::memory_order_release);
 }
@@ -717,11 +742,18 @@ void build_pathfinder_masks(const std::int8_t* path_types,
 
 namespace {
 
-[[nodiscard]] SearchResult run_search(const PathfinderInputs& in, PathfinderScratch& scratch,
+template<bool optimized>
+[[nodiscard]] SearchResult run_search_variant(const PathfinderInputs& in, PathfinderScratch& scratch,
                                       bool masks_prepared = false) noexcept {
     if (!valid_inputs(in)) return empty_search();
     const int grid_volume = volume(in);
     if (grid_volume <= 0) return empty_search();
+    SearchArithmetic arithmetic{};
+    bool vertical_limit_ready = false;
+    if constexpr (optimized) {
+        arithmetic = {std::max(1.125F, in.max_up_step), 0,
+            in.region_size_x * in.region_size_z, in.config.fudge};
+    }
     const bool fastpath_enabled = g_cardinal_fastpath_enabled.load(std::memory_order_acquire);
     const bool collect_fastpath_stats = g_cardinal_fastpath_stats_enabled.load(std::memory_order_acquire);
     std::uint64_t cardinal_fastpath_hits = 0;
@@ -786,8 +818,9 @@ namespace {
     scratch.heap_index.reserve(static_cast<std::size_t>(max_nodes));
     scratch.heap_entries.reserve(static_cast<std::size_t>(max_nodes));
 
-    auto get_node = [&](int x, int y, int z, std::int8_t type, float malus) noexcept -> int {
-        const int gi = grid_index(in, x, y, z);
+    auto get_node = [&](int x, int y, int z, std::int8_t type, float malus,
+                        int supplied_grid = -1) noexcept -> int {
+        const int gi = optimized && supplied_grid >= 0 ? supplied_grid : grid_index(in, x, y, z);
         const std::size_t gsi = static_cast<std::size_t>(gi);
         if (scratch.grid_stamp[gsi] == scratch.current_stamp) {
             return scratch.grid_to_node[gsi];
@@ -826,6 +859,7 @@ namespace {
 
     constexpr int dir_x[4] = {0, 1, 0, -1};
     constexpr int dir_z[4] = {-1, 0, 1, 0};
+    const int dir_grid[4] = {-in.region_size_x, 1, in.region_size_x, -1};
 
     while (!heap.empty()) {
         if (++visited >= in.config.max_visited_nodes) break;
@@ -867,19 +901,49 @@ namespace {
         // the diagonal gate inspects them), then the four diagonals.
         int cardinal[4] = {-1, -1, -1, -1};
         bool cardinal_fastpath_resolved[4] = {};
-        const std::int8_t origin_type = path_type_at(in, current.x, current.y, current.z);
+        const int current_grid = optimized ? grid_index(in, current.x, current.y, current.z) : -1;
+        const std::int8_t origin_type = optimized ? in.path_types[current_grid]
+            : path_type_at(in, current.x, current.y, current.z);
         const int origin_type_index = static_cast<int>(origin_type);
         const bool flat_origin = origin_type == kWalkable;
         // A WALKABLE origin can only jump when its head cell is passable. If
         // that vanilla vertical-delta limit is zero, a BLOCKED cardinal
         // neighbour is rejected before any other findAcceptedNode branch.
+        const std::int8_t head_type = optimized
+            ? path_type_at(in, current.x, current.y + 1, current.z) : kBlocked;
+        auto origin_vertical_limit = [&]() noexcept {
+            if (!(malus_for(in, head_type) >= 0.0F) || origin_type == kStickyHoney) return 0;
+            // Preserve the original lazy conversion, including all-fastpath searches.
+            if (!vertical_limit_ready) {
+                arithmetic.vertical_limit = static_cast<int>(std::floor(std::max(1.0F, in.max_up_step)));
+                vertical_limit_ready = true;
+            }
+            return arithmetic.vertical_limit;
+        };
         const bool flat_origin_no_vertical_delta = fastpath_enabled && flat_origin
-            && malus_for(in, path_type_at(in, current.x, current.y + 1, current.z)) < 0.0F;
-        const float origin_floor_level = flat_origin
+            && malus_for(in, optimized ? head_type
+                : path_type_at(in, current.x, current.y + 1, current.z)) < 0.0F;
+        const float origin_floor_level = (optimized || flat_origin)
             ? (in.floor_levels
-                ? in.floor_levels[grid_index(in, current.x, current.y, current.z)]
+                ? in.floor_levels[optimized ? current_grid : grid_index(in, current.x, current.y, current.z)]
                 : static_cast<float>(current.y))
             : 0.0F;
+        auto resolve_neighbor = [&](int x, int z, int grid, int& y, std::int8_t& type,
+                                    float& malus, bool& closed) noexcept {
+            if constexpr (optimized) {
+                return find_accepted_node<true>(in, x, current.y, z, origin_vertical_limit(),
+                    origin_floor_level, origin_type, scratch.standing, y, type, malus, closed,
+                    &arithmetic, grid);
+            } else {
+                return resolve_step_node(in, current.x, current.y, current.z, x, z,
+                    scratch.standing, y, type, malus, closed);
+            }
+        };
+        auto resolved_grid = [&](int grid, int y) noexcept {
+            return optimized && grid >= 0
+                ? static_cast<int>(static_cast<std::int64_t>(grid)
+                    + (static_cast<std::int64_t>(y) - current.y) * arithmetic.stride_y) : -1;
+        };
         for (int d = 0; d < 4; ++d) {
             if (collect_fastpath_stats) ++cardinal_fastpath_candidates;
             int ny = current.y;
@@ -890,11 +954,11 @@ namespace {
             const int nz = current.z + dir_z[d];
             bool fast_resolved = false;
             const bool neighbor_in_region = in_region(in, nx, current.y, nz);
-            int neighbor_grid = -1;
+            int neighbor_grid = optimized && neighbor_in_region ? current_grid + dir_grid[d] : -1;
             const bool inspect_neighbor_type = neighbor_in_region
                 && ((fastpath_enabled && flat_origin) || collect_fastpath_stats);
             if (inspect_neighbor_type) {
-                neighbor_grid = grid_index(in, nx, current.y, nz);
+                if constexpr (!optimized) neighbor_grid = grid_index(in, nx, current.y, nz);
                 type = in.path_types[neighbor_grid];
                 if (collect_fastpath_stats) {
                     const int neighbor_type_index = static_cast<int>(type);
@@ -942,11 +1006,10 @@ namespace {
                 }
             }
             if (!fast_resolved
-                    && !resolve_step_node(in, current.x, current.y, current.z, nx, nz,
-                                          scratch.standing, ny, type, malus, closed)) {
+                    && !resolve_neighbor(nx, nz, neighbor_grid, ny, type, malus, closed)) {
                 continue;
             }
-            const int ni = get_node(nx, ny, nz, type, malus);
+            const int ni = get_node(nx, ny, nz, type, malus, resolved_grid(neighbor_grid, ny));
             if (ni < 0) continue;
             if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
             cardinal[d] = ni;
@@ -992,10 +1055,12 @@ namespace {
             bool closed = false;
             if (collect_fastpath_stats) ++diagonal_fastpath_candidates;
             bool fast_resolved = false;
+            int diagonal_grid = optimized && in_region(in, nx, current.y, nz)
+                ? current_grid + dir_grid[d] + dir_grid[(d + 1) & 3] : -1;
             if (fastpath_enabled && cardinal_fastpath_resolved[d]
                     && cardinal_fastpath_resolved[(d + 1) & 3]
                     && in_region(in, nx, current.y, nz)) {
-                const int diagonal_grid = grid_index(in, nx, current.y, nz);
+                if constexpr (!optimized) diagonal_grid = grid_index(in, nx, current.y, nz);
                 type = in.path_types[diagonal_grid];
                 if (type == kWalkable) {
                     malus = malus_for(in, type);
@@ -1012,11 +1077,10 @@ namespace {
                 }
             }
             if (!fast_resolved
-                    && !resolve_step_node(in, current.x, current.y, current.z,
-                                          nx, nz, scratch.standing, ny, type, malus, closed)) {
+                    && !resolve_neighbor(nx, nz, diagonal_grid, ny, type, malus, closed)) {
                 continue;
             }
-            const int ni = get_node(nx, ny, nz, type, malus);
+            const int ni = get_node(nx, ny, nz, type, malus, resolved_grid(diagonal_grid, ny));
             if (ni < 0) continue;
             if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
             // isDiagonalValid(node): not closed, not a walkable door, malus >= 0.
@@ -1031,25 +1095,30 @@ namespace {
             // AmphibiousNodeEvaluator first obtains the normal walking
             // neighbours above, then appends water-only vertical moves. Keep
             // the same two acceptance calls and their asymmetric step limits.
-            const std::int8_t origin_type = path_type_at(in, current.x, current.y, current.z);
-            const std::int8_t head_type = path_type_at(in, current.x, current.y + 1, current.z);
-            const int vertical_limit = (malus_for(in, head_type) >= 0.0F && origin_type != kStickyHoney)
+            const std::int8_t amphibious_origin = optimized ? origin_type
+                : path_type_at(in, current.x, current.y, current.z);
+            const std::int8_t amphibious_head = optimized ? head_type
+                : path_type_at(in, current.x, current.y + 1, current.z);
+            const int vertical_limit = optimized ? origin_vertical_limit()
+                : (malus_for(in, amphibious_head) >= 0.0F && amphibious_origin != kStickyHoney)
                 ? static_cast<int>(std::floor(std::max(1.0F, in.max_up_step))) : 0;
-            const float node_floor_level = floor_level_at(in, current.x, current.y, current.z);
+            const float node_floor_level = optimized ? origin_floor_level
+                : floor_level_at(in, current.x, current.y, current.z);
             for (int direction = 0; direction < 2; ++direction) {
                 const int dy = direction == 0 ? 1 : -1;
-                if (direction == 1 && origin_type == kTrapdoor) continue;
+                if (direction == 1 && amphibious_origin == kTrapdoor) continue;
                 int ny = current.y + dy;
                 std::int8_t type = kBlocked;
                 float malus = -1.0F;
                 bool closed = false;
                 const int limit = direction == 0 ? std::max(0, vertical_limit - 1) : vertical_limit;
-                if (!find_accepted_node(in, current.x, ny, current.z, limit, node_floor_level,
-                                        origin_type, scratch.standing, ny, type, malus, closed)) {
+                if (!find_accepted_node<optimized>(in, current.x, ny, current.z, limit, node_floor_level,
+                                        amphibious_origin, scratch.standing, ny, type, malus, closed,
+                                        &arithmetic)) {
                     continue;
                 }
                 if (type != kWater) continue;
-                const int ni = get_node(current.x, ny, current.z, type, malus);
+                const int ni = get_node(current.x, ny, current.z, type, malus, resolved_grid(current_grid, ny));
                 if (ni < 0) continue;
                 if (closed) scratch.nodes[static_cast<std::size_t>(ni)].flags |= kClosedFlag;
                 const PathfinderNode& neighbor = scratch.nodes[static_cast<std::size_t>(ni)];
@@ -1078,7 +1147,7 @@ namespace {
                 // start h made a partial search keep its start node even when
                 // it had already moved closer to the target.
                 const float heuristic = best_h(in, neighbor, &best_target);
-                neighbor.h = heuristic * in.config.fudge;
+                neighbor.h = heuristic * (optimized ? arithmetic.fudge : in.config.fudge);
                 neighbor.f = neighbor.g + neighbor.h;
                 if (heuristic < best_node_h) {
                     best_node_h = heuristic;
@@ -1100,6 +1169,12 @@ namespace {
     result.target_index = best_node_target;
     result.reached_target = false;
     return finish(result);
+}
+
+[[nodiscard]] SearchResult run_search(const PathfinderInputs& in, PathfinderScratch& scratch,
+                                      bool masks_prepared = false) noexcept {
+    return g_search_arithmetic ? run_search_variant<true>(in, scratch, masks_prepared)
+        : run_search_variant<false>(in, scratch, masks_prepared);
 }
 
 [[nodiscard]] bool snapshot_in_bounds(const PathfinderStateSnapshot& snapshot,

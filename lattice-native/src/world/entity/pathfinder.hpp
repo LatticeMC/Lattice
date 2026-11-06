@@ -189,6 +189,7 @@ inline constexpr std::size_t kPathfinderCardinalFastPathBucketCount = 26 * 26;
 void set_pathfinder_cardinal_fastpath_enabled(bool enabled) noexcept;
 /// Test-only, thread-local candidate selection; production retains the SIMD builder.
 void set_pathfinder_fused_masks_for_benchmark(bool enabled) noexcept;
+void set_pathfinder_search_arithmetic_for_benchmark(bool enabled) noexcept;
 void set_pathfinder_cardinal_fastpath_stats_enabled(bool enabled) noexcept;
 void reset_pathfinder_cardinal_fastpath_stats() noexcept;
 [[nodiscard]] PathfinderCardinalFastPathStats pathfinder_cardinal_fastpath_stats() noexcept;

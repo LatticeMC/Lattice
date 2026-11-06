@@ -95,6 +95,7 @@ std::atomic<std::uint64_t> g_mirror_retire_count{0};
 std::atomic<std::uint64_t> g_mirror_reject_count{0};
 std::atomic<std::uint64_t> g_mirror_clear_count{0};
 thread_local ThreadStateMirror g_state_mirror{};
+thread_local bool g_legacy_refresh_for_benchmark = false;
 
 std::shared_ptr<MirrorInvalidationLog> state_mirror_log(std::int64_t world_key) {
     std::lock_guard lock(g_state_mirror_mutex);
@@ -120,8 +121,39 @@ void clear_retired_thread_state_mirror() {
     if (retired) clear_thread_state_mirror();
 }
 
+/// Replay ea360e7 refresh for registered, active benchmark worlds only.
+bool refresh_state_mirror_legacy_for_benchmark(std::int64_t world_key) {
+    if (g_state_mirror.mirror.world_key != world_key || !g_state_mirror.log) {
+        g_state_mirror.log = state_mirror_log(world_key);
+        if (!g_state_mirror.log) return false;
+    }
+    if (g_state_mirror.mirror.world_key != world_key) {
+        g_state_mirror.mirror.world_key = world_key;
+        g_state_mirror.mirror.sections.clear();
+        std::lock_guard lock(g_state_mirror.log->mutex);
+        g_state_mirror.generation = g_state_mirror.log->generation();
+        return true;
+    }
+    std::lock_guard lock(g_state_mirror.log->mutex);
+    const MirrorInvalidationLog& log = *g_state_mirror.log;
+    const std::uint64_t current = log.generation();
+    if (g_state_mirror.generation == current) return true;
+    if (g_state_mirror.generation < log.base_generation) {
+        g_state_mirror.mirror.sections.clear();
+        g_state_mirror.generation = current;
+        return true;
+    }
+    for (std::size_t i = static_cast<std::size_t>(g_state_mirror.generation - log.base_generation);
+            i < log.keys.size(); ++i) {
+        g_state_mirror.mirror.sections.erase(log.keys[i]);
+    }
+    g_state_mirror.generation = current;
+    return true;
+}
+
 /// Admission is checked before pinning arrays. Retire may let an admitted call finish.
 bool refresh_state_mirror(std::int64_t world_key) {
+    if (g_legacy_refresh_for_benchmark) return refresh_state_mirror_legacy_for_benchmark(world_key);
     if (g_state_mirror.mirror.world_key != world_key || !g_state_mirror.log) {
         clear_retired_thread_state_mirror();
         auto log = state_mirror_log(world_key);
@@ -172,6 +204,18 @@ JNIEXPORT void JNICALL
 Java_com_latticemc_lattice_nativelib_PathfinderOptimizationBenchmark_nativeSelectMasks(
         JNIEnv*, jclass, jboolean fused) {
     pf::set_pathfinder_fused_masks_for_benchmark(fused != JNI_FALSE);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_PathfinderOptimizationBenchmark_nativeSelectArithmetic(
+        JNIEnv*, jclass, jboolean optimized) {
+    pf::set_pathfinder_search_arithmetic_for_benchmark(optimized != JNI_FALSE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_PathfinderOptimizationBenchmark_nativeSelectLifecycle(
+        JNIEnv*, jclass, jboolean legacy) {
+    g_legacy_refresh_for_benchmark = legacy != JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -27,6 +28,14 @@ constexpr std::int8_t RAIL = 11;
 struct FusedMasksScope {
     FusedMasksScope() { set_pathfinder_fused_masks_for_benchmark(true); }
     ~FusedMasksScope() { set_pathfinder_fused_masks_for_benchmark(false); }
+};
+
+struct SearchArithmeticScope {
+    ~SearchArithmeticScope() {
+        set_pathfinder_search_arithmetic_for_benchmark(false);
+        set_pathfinder_cardinal_fastpath_stats_enabled(false);
+        set_pathfinder_cardinal_fastpath_enabled(true);
+    }
 };
 
 struct Grid {
@@ -120,7 +129,162 @@ void check_mirrors_equal(const PathfinderStateMirror& expected,
     }
 }
 
+void check_search_arithmetic(const PathfinderInputs& inputs, bool fastpath) {
+    SearchArithmeticScope scope;
+    const int capacity = inputs.config.max_visited_nodes;
+    std::vector<int> baseline_coords(static_cast<std::size_t>(capacity) * 3);
+    std::vector<int> candidate_coords(baseline_coords.size());
+    PathfinderOutput baseline_output{baseline_coords.data(), capacity};
+    PathfinderOutput candidate_output{candidate_coords.data(), capacity};
+    PathfinderScratch baseline{};
+    PathfinderScratch candidate{};
+    set_pathfinder_cardinal_fastpath_enabled(fastpath);
+    set_pathfinder_cardinal_fastpath_stats_enabled(true);
+    set_pathfinder_search_arithmetic_for_benchmark(false);
+    reset_pathfinder_cardinal_fastpath_stats();
+    const bool baseline_ok = find_path_into(inputs, baseline_output, baseline);
+    const auto baseline_stats = pathfinder_cardinal_fastpath_stats();
+    set_pathfinder_search_arithmetic_for_benchmark(true);
+    reset_pathfinder_cardinal_fastpath_stats();
+    const bool candidate_ok = find_path_into(inputs, candidate_output, candidate);
+    const auto candidate_stats = pathfinder_cardinal_fastpath_stats();
+    REQUIRE(candidate_ok == baseline_ok);
+    CHECK(candidate_output.reached_target == baseline_output.reached_target);
+    CHECK(candidate_output.target_index == baseline_output.target_index);
+    CHECK(candidate_output.path_length == baseline_output.path_length);
+    CHECK(candidate_coords == baseline_coords);
+    CHECK(candidate.passable == baseline.passable);
+    CHECK(candidate.standing == baseline.standing);
+    CHECK(candidate.grid_to_node == baseline.grid_to_node);
+    CHECK(candidate.grid_stamp == baseline.grid_stamp);
+    CHECK(candidate.heap_index == baseline.heap_index);
+    CHECK(candidate.heap_entries == baseline.heap_entries);
+    CHECK(candidate_stats.hits == baseline_stats.hits);
+    CHECK(candidate_stats.candidates == baseline_stats.candidates);
+    CHECK(candidate_stats.out_of_region_candidates == baseline_stats.out_of_region_candidates);
+    CHECK(candidate_stats.diagonal_hits == baseline_stats.diagonal_hits);
+    CHECK(candidate_stats.diagonal_candidates == baseline_stats.diagonal_candidates);
+    REQUIRE(candidate.nodes.size() == baseline.nodes.size());
+    for (std::size_t i = 0; i < baseline.nodes.size(); ++i) {
+        const auto& a = baseline.nodes[i];
+        const auto& b = candidate.nodes[i];
+        CAPTURE(i);
+        CHECK(b.x == a.x);
+        CHECK(b.y == a.y);
+        CHECK(b.z == a.z);
+        CHECK(b.type == a.type);
+        CHECK(b.flags == a.flags);
+        CHECK(b.came_from == a.came_from);
+        CHECK(std::bit_cast<std::uint32_t>(b.cost_malus) == std::bit_cast<std::uint32_t>(a.cost_malus));
+        CHECK(std::bit_cast<std::uint32_t>(b.g) == std::bit_cast<std::uint32_t>(a.g));
+        CHECK(std::bit_cast<std::uint32_t>(b.walked_distance) == std::bit_cast<std::uint32_t>(a.walked_distance));
+        CHECK(std::bit_cast<std::uint32_t>(b.h) == std::bit_cast<std::uint32_t>(a.h));
+        CHECK(std::bit_cast<std::uint32_t>(b.f) == std::bit_cast<std::uint32_t>(a.f));
+    }
+}
+
 } // namespace
+
+TEST_CASE("pathfinder: arithmetic candidate preserves every node and float bit") {
+    std::uint32_t seed = 0x0045A17U;
+    auto next = [&]() {
+        seed = seed * 1664525U + 1013904223U;
+        return seed;
+    };
+    for (int scene = 0; scene < 64; ++scene) {
+        CAPTURE(scene);
+        Grid grid(9, 5, 7);
+        grid.malus.resize(26, 0.0F);
+        std::vector<float> floors(grid.cells.size());
+        for (int y = 0; y < grid.sy; ++y) {
+            for (int z = 0; z < grid.sz; ++z) {
+                for (int x = 0; x < grid.sx; ++x) {
+                    auto& type = grid.at(x, y, z);
+                    switch (scene % 4) {
+                        case 0: type = y == 0 ? WALKABLE : BLOCKED; break;
+                        case 1: type = y == x / 3 ? WALKABLE : (y > x / 3 ? OPEN : BLOCKED); break;
+                        case 2: type = y < 3 ? WATER : OPEN; break;
+                        default: type = static_cast<std::int8_t>(next() % 26); break;
+                    }
+                    if (scene % 4 == 0 && y == 0 && x == 4 && z > 0 && z < 6) type = BLOCKED;
+                    floors[snapshot_index(grid.sx, grid.sz, x, y, z)]
+                        = static_cast<float>(y) + static_cast<float>(next() % 4) * 0.25F;
+                }
+            }
+        }
+        if (scene % 4 == 3) {
+            for (std::size_t type = 0; type < grid.malus.size(); ++type) {
+                grid.malus[type] = type % 3 == 0 ? -1.0F : static_cast<float>(type % 5) * 0.5F;
+            }
+            grid.malus[BLOCKED] = -1.0F;
+        }
+        if (scene == 63) grid.malus[WATER] = std::numeric_limits<float>::quiet_NaN();
+        int target_x[] = {-9, -17};
+        int target_y[] = {-2, -4};
+        int target_z[] = {29, 23};
+        PathfinderInputs inputs{};
+        inputs.path_types = grid.cells.data();
+        inputs.floor_levels = scene % 3 == 0 ? nullptr : floors.data();
+        inputs.region_min_x = -17;
+        inputs.region_min_y = -4;
+        inputs.region_min_z = 23;
+        inputs.region_size_x = grid.sx;
+        inputs.region_size_y = grid.sy;
+        inputs.region_size_z = grid.sz;
+        inputs.start_x = scene % 2 == 0 ? -17 : -9;
+        inputs.start_y = scene % 4 == 1 && scene % 2 != 0 ? -2 : -4;
+        inputs.start_z = scene % 2 == 0 ? 23 : 29;
+        inputs.target_x = target_x;
+        inputs.target_y = target_y;
+        inputs.target_z = target_z;
+        inputs.target_count = scene % 3 == 0 ? 2 : 1;
+        if (scene % 2 != 0) {
+            std::swap(target_x[0], target_x[1]);
+            std::swap(target_y[0], target_y[1]);
+            std::swap(target_z[0], target_z[1]);
+        }
+        inputs.config = {128.0F, scene % 8 == 0 ? 1 : (scene % 8 == 1 ? 7 : 315),
+            scene % 3, scene % 3 == 0 ? 1.0F : 1.5F};
+        inputs.max_up_step = scene % 4 == 0 ? 0.6F : (scene % 4 == 1 ? 2.0F : 1.125F);
+        inputs.entity_width = scene % 2 + 1;
+        inputs.entity_height = scene % 3 + 1;
+        inputs.pathfinding_malus = grid.malus.data();
+        inputs.pathfinding_malus_count = static_cast<int>(grid.malus.size());
+        inputs.can_walk_over_fences = scene % 2 == 0;
+        inputs.mobs_ignore_rails = scene % 3 == 0;
+        inputs.can_float = scene % 2 == 0;
+        inputs.is_amphibious = scene % 4 == 2;
+        check_search_arithmetic(inputs, false);
+        check_search_arithmetic(inputs, true);
+    }
+}
+
+TEST_CASE("pathfinder: arithmetic candidate keeps unused jump limits lazy") {
+    Grid grid(8, 1, 3);
+    fill_floor(grid, 0);
+    const int target_x = 7;
+    const int target_y = 0;
+    const int target_z = 1;
+    PathfinderInputs inputs{};
+    inputs.path_types = grid.cells.data();
+    inputs.region_size_x = grid.sx;
+    inputs.region_size_y = grid.sy;
+    inputs.region_size_z = grid.sz;
+    inputs.start_z = 1;
+    inputs.target_x = &target_x;
+    inputs.target_y = &target_y;
+    inputs.target_z = &target_z;
+    inputs.target_count = 1;
+    inputs.config = {64.0F, 24, 0, 1.5F};
+    inputs.pathfinding_malus = grid.malus.data();
+    inputs.pathfinding_malus_count = static_cast<int>(grid.malus.size());
+    for (float step : {std::numeric_limits<float>::infinity(), std::numeric_limits<float>::max(),
+                       std::numeric_limits<float>::quiet_NaN()}) {
+        inputs.max_up_step = step;
+        check_search_arithmetic(inputs, false);
+        check_search_arithmetic(inputs, true);
+    }
+}
 
 TEST_CASE("pathfinder: straight path") {
     Grid grid(8, 2, 3);
