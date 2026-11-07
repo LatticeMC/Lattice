@@ -33,7 +33,16 @@ public final class NativeNoiseJniBenchmark {
         if (!LatticeNative.isLoaded()) {
             throw new IllegalStateException("Lattice native library is unavailable");
         }
+        boolean originalScalarEnabled = NativeScalarNoiseControl.perlinEnabled();
+        NativeScalarNoiseControl.setPerlinEnabled(true);
+        try {
+            runLoaded(options);
+        } finally {
+            NativeScalarNoiseControl.setPerlinEnabled(originalScalarEnabled);
+        }
+    }
 
+    private static void runLoaded(Options options) {
         double[] x = new double[options.maxCount()];
         double[] y = new double[x.length];
         double[] z = new double[x.length];
@@ -51,6 +60,8 @@ public final class NativeNoiseJniBenchmark {
         verifyDerivativeScratch(derivativeSampler);
         PerlinNoise perlin = PerlinNoise.create(RandomSource.create(0x22334455L), -7,
             1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0);
+        requireScalarOwner(improved);
+        requireScalarOwner(perlin);
         NormalNoise normal = NormalNoise.create(RandomSource.create(0x33445566L), -7,
             1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0);
         NativeDoublePerlinNoise nativeDouble = ((NativeNormalNoiseAccess) normal).lattice$getNativeDoublePerlinNoise();
@@ -96,27 +107,35 @@ public final class NativeNoiseJniBenchmark {
             "operation,count,java-p50-ns,java-p95-ns,native-p50-ns,native-p95-ns,speedup-p50,speedup-p95,bitwise,max-abs-error%n");
 
         boolean parityPassed = true;
-        try {
-            for (Operation operation : operations) {
-                for (int count : options.counts()) {
-                    Result result = run(operation, count, options);
-                    parityPassed &= result.maxAbsError() <= PARITY_TOLERANCE;
-                    System.out.printf(Locale.ROOT,
-                        "%s,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%s,%.17e%n",
-                        operation.name(), count,
-                        result.javaStats().p50(), result.javaStats().p95(),
-                        result.nativeStats().p50(), result.nativeStats().p95(),
-                        result.javaStats().p50() / result.nativeStats().p50(),
-                        result.javaStats().p95() / result.nativeStats().p95(),
-                        result.bitwise() ? "yes" : "no", result.maxAbsError());
-                }
+        for (Operation operation : operations) {
+            for (int count : options.counts()) {
+                Result result = run(operation, count, options);
+                parityPassed &= result.maxAbsError() <= PARITY_TOLERANCE;
+                System.out.printf(Locale.ROOT,
+                    "%s,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%s,%.17e%n",
+                    operation.name(), count,
+                    result.javaStats().p50(), result.javaStats().p95(),
+                    result.nativeStats().p50(), result.nativeStats().p95(),
+                    result.javaStats().p50() / result.nativeStats().p50(),
+                    result.javaStats().p95() / result.nativeStats().p95(),
+                    result.bitwise() ? "yes" : "no", result.maxAbsError());
             }
-        } finally {
-            NativeScalarNoiseControl.setPerlinEnabled(false);
         }
         System.out.printf(Locale.ROOT, "result=%s blackhole=%.17g%n", parityPassed ? "success" : "parity-failure", blackhole);
         if (!parityPassed) {
             throw new IllegalStateException("native scalar-noise parity exceeded " + PARITY_TOLERANCE);
+        }
+    }
+
+    private static void requireScalarOwner(Object noise) {
+        try {
+            var field = noise.getClass().getDeclaredField("lattice$native");
+            field.setAccessible(true);
+            if (field.get(noise) == null) {
+                throw new IllegalStateException("Scalar benchmark has no native owner: " + noise.getClass().getName());
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Could not verify scalar benchmark owner", e);
         }
     }
 
