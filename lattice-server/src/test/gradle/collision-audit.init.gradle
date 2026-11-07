@@ -1,0 +1,29 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.named('test') {
+        jvmArgs '--enable-preview'
+        systemProperty 'lattice.native.path', server.findProperty('collisionAuditNativePath') ?:
+                gradle.rootProject.file('build/lattice-native/lattice.dll').absolutePath
+        systemProperty 'lattice.native.download', 'false'
+        systemProperty 'lattice.nativeCpu', server.findProperty('collisionAudit.cpu') ?: 'auto'
+        systemProperty 'lattice.verify', server.findProperty('collisionAudit.verify') ?: 'true'
+        systemProperty 'collisionAudit.legacyLibrary',
+                server.findProperty('collisionAudit.legacyLibrary') ?: 'false'
+    }
+    server.tasks.register('collisionAuditBenchmark', JavaExec) {
+        dependsOn server.tasks.named('testClasses')
+        classpath = server.sourceSets.test.runtimeClasspath
+        mainClass = 'com.latticemc.lattice.nativelib.CollisionAuditBenchmark'
+        jvmArgs '--enable-preview'
+        systemProperty 'lattice.native.path', server.findProperty('collisionAuditNativePath') ?:
+                gradle.rootProject.file('build/lattice-native/lattice.dll').absolutePath
+        systemProperty 'lattice.native.download', 'false'
+        systemProperty 'lattice.nativeCpu', server.findProperty('collisionAudit.cpu') ?: 'auto'
+        systemProperty 'lattice.verify', 'false'
+        ['warmup': '32', 'samples': '21', 'rounds': '1024'].each { key, fallback ->
+            systemProperty "collisionAudit.${key}", server.findProperty("collisionAudit.${key}") ?: fallback
+        }
+        systemProperty 'collisionAudit.output', server.findProperty('collisionAudit.output') ?:
+                gradle.rootProject.file('build/collision-audit.json').absolutePath
+    }
+}
