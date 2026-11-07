@@ -172,6 +172,21 @@ lattice_add_test(palette
              ${_palette_simd_srcs}
              ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
 
+add_executable(lattice_benchmark_palette_bulk EXCLUDE_FROM_ALL
+    benchmark_palette_bulk.cpp
+    ${CMAKE_SOURCE_DIR}/src/world/palette/packed_storage.cpp
+    ${_palette_simd_srcs}
+    ${CMAKE_SOURCE_DIR}/src/core/cpu/detect.cpp)
+target_include_directories(lattice_benchmark_palette_bulk PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(lattice_benchmark_palette_bulk PRIVATE lattice_baseline_flags)
+if(MSVC)
+    target_compile_options(lattice_benchmark_palette_bulk PRIVATE /O2)
+else()
+    target_compile_options(lattice_benchmark_palette_bulk PRIVATE -O3)
+endif()
+
 lattice_add_test(zlib_codec
     SOURCES  test_zlib_codec.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/io/compression/zlib_codec.cpp)
