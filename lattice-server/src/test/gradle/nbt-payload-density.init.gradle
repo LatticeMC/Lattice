@@ -1,0 +1,19 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.register('nbtPayloadDensityAudit', JavaExec) {
+        dependsOn server.tasks.named('testClasses')
+        classpath = server.sourceSets.test.runtimeClasspath
+        mainClass = 'net.minecraft.world.level.chunk.storage.NbtPayloadDensityAudit'
+        jvmArgs '--enable-preview'
+        systemProperty 'lattice.native.download', 'false'
+        doFirst {
+            def root = server.findProperty('nbtAuditRegionRoot')
+            if (!root) throw new GradleException('Specify -PnbtAuditRegionRoot pointing to saved chunk region folders')
+            def files = gradle.rootProject.fileTree(root) {
+                include '**/region/r.*.*.mca'
+            }.files.sort { it.absolutePath }
+            if (files.empty) throw new GradleException("No chunk region files under ${root}")
+            args files.collect { it.absolutePath }
+        }
+    }
+}
