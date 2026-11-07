@@ -194,6 +194,18 @@ Lattice builds on work from the Minecraft server and performance community, incl
 Individual imported patches carry more specific attribution in their patch headers.
 
 ## Special Thanks
-
-- [YourKit](https://www.yourkit.com/) supports open source projects with profiling tools used to investigate Java and native performance.
-- [IntelliJ IDEA](https://www.jetbrains.com/idea/) provides the development environment used for Java and JVM-side work on Lattice.
+<table>
+  <tr>
+    <td colspan="2" align="center">
+      <a href="https://www.yourkit.com/">
+        <img src="https://www.yourkit.com/images/yklogo.png" alt="YourKit" width="300">
+      </a>
+      <p>YourKit supports open source projects with innovative and intelligent tools for monitoring and profiling Java and .NET applications. YourKit is the creator of <a href="https://www.yourkit.com/java/profiler/">YourKit Java Profiler</a>, <a href="https://www.yourkit.com/dotnet-profiler/">YourKit .NET Profiler</a>, and <a href="https://www.yourkit.com/youmonitor/">YourKit YouMonitor</a>.</p>
+      <p>
+      <a href="https://www.jetbrains.com/idea/">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 64 64" width="80" height="80" class="menu-second-title-box__logo-img"><path fill="#017EFE" d="M59.927 0H25.96a4.07 4.07 0 0 0-3.743 2.468L14 20.5l32 30 16.187-10.589a4.07 4.07 0 0 0 1.811-3.387L64 4.073A4.073 4.073 0 0 0 59.927 0"></path><path fill="#FE2857" d="M14.52 5.818H4.072A4.073 4.073 0 0 0 0 9.891v13.093q0 .289.04.576l5.278 36.944A4.07 4.07 0 0 0 9.35 64h15.673c2.25 0 6.977-3.496 11.227-6.5l10.25-7.25c0-.437-5.361-21.585-5.5-22L20.614 8.603C18.75 6.75 18.75 5.818 14.519 5.818"></path><path fill="#FF8100" d="m19.502 40.847 18.08 16.355a4.08 4.08 0 0 0 2.651.98H54.11a4.073 4.073 0 0 0 4.072-4.072V42.6a4.08 4.08 0 0 0-1.421-3.092L37.679 23.154z"></path><path fill="#000" d="M52 12H12v40h40z"></path><path fill="#fff" d="M17 29.386h2.979v-9.772H17V17h8.839v2.614H22.86v9.772h2.979V32H17zm10.339-.086h2.154q.653 0 1.162-.278.509-.279.787-.787.279-.51.279-1.163V17h2.925v10.275q0 1.35-.622 2.427-.621 1.077-1.714 1.687T29.856 32H27.34zM17 44h16v3H17z"></path></svg>
+      </a>
+      <p> <a href="https://www.jetbrains.com/idea/">IntelliJ IDEA</a> provides the development environment used for Java and JVM-side work on Lattice.</p>
+    </td>
+  </tr>
+</table>

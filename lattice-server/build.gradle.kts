@@ -439,13 +439,16 @@ val aabbQueryBenchmark by tasks.registering(JavaExec::class) {
 
 val pathfinderSearchBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
-    description = "Benchmark vanilla PathFinder (Java A*) vs NativePathfinder.findPath (native A*) on a synthetic grid"
+    description = "Benchmark native pathfinder snapshot old-order vs fused cold search on a synthetic grid"
     dependsOn(rootProject.tasks.named("buildLatticeNative"), tasks.processResources, tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("com.latticemc.lattice.nativelib.PathfinderSearchBenchmark")
     workingDir = rootProject.layout.projectDirectory.asFile
     jvmArgs("--enable-native-access=ALL-UNNAMED")
     systemProperty("lattice.verify", providers.systemProperty("lattice.verify").getOrElse("false"))
+    systemProperty("lattice.pathEntry", providers.gradleProperty("pathfinderSearchBenchmarkEntry").getOrElse("kernel"))
+    systemProperty("lattice.pathWorld", providers.gradleProperty("pathfinderSearchBenchmarkWorld").getOrElse("serpentine"))
+    systemProperty("lattice.pathLength", providers.gradleProperty("pathfinderSearchBenchmarkLength").getOrElse("long"))
     systemProperty("lattice.pathWarmup", providers.gradleProperty("pathfinderSearchBenchmarkWarmup").getOrElse("6"))
     systemProperty("lattice.pathSamples", providers.gradleProperty("pathfinderSearchBenchmarkSamples").getOrElse("11"))
     systemProperty("lattice.pathSizeX", providers.gradleProperty("pathfinderSearchBenchmarkSizeX").getOrElse("64"))
