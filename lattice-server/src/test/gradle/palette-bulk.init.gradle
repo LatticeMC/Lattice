@@ -1,0 +1,22 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    def nativePath = gradle.rootProject.file('build/lattice-native/lattice.dll').absolutePath
+    def configureAudit = { task ->
+        task.systemProperty 'lattice.native.path', server.findProperty('paletteAuditNativePath') ?: nativePath
+        task.systemProperty 'lattice.native.download', 'false'
+        task.systemProperty 'lattice.nativePaletteOps', 'true'
+        task.systemProperty 'lattice.nativePaletteOpsMinCount', server.findProperty('paletteAuditThreshold') ?: '0'
+        task.systemProperty 'lattice.verify', server.findProperty('paletteAuditVerify') ?: 'false'
+    }
+    server.tasks.withType(Test).configureEach(configureAudit)
+    server.tasks.register('paletteAuditBenchmark', JavaExec) {
+        dependsOn server.tasks.named('testClasses')
+        classpath = server.sourceSets.test.runtimeClasspath
+        mainClass = 'com.latticemc.lattice.nativelib.PaletteBulkBenchmark'
+        jvmArgs '--enable-preview'
+        configureAudit(delegate)
+        systemProperty 'paletteBenchmark.warmup', server.findProperty('paletteBenchmark.warmup') ?: '32'
+        systemProperty 'paletteBenchmark.samples', server.findProperty('paletteBenchmark.samples') ?: '21'
+        systemProperty 'paletteBenchmark.rounds', server.findProperty('paletteBenchmark.rounds') ?: '16384'
+    }
+}
