@@ -8,6 +8,8 @@ import com.latticemc.lattice.nativelib.NativeInterpolatedNoise;
 import com.latticemc.lattice.nativelib.NativePerlinNoise;
 import com.latticemc.lattice.nativelib.NativeScalarNoiseControl;
 import com.latticemc.lattice.nativelib.NativeSimplexNoise;
+import com.sun.management.ThreadMXBean;
+import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -20,6 +22,7 @@ import net.minecraft.world.level.levelgen.DensityFunction;
 /** Diagnostic benchmark for existing scalar JNI noise entry points. */
 public final class NativeNoiseJniBenchmark {
     private static final double PARITY_TOLERANCE = 1.0E-6;
+    private static final ThreadMXBean ALLOCATION_BEAN = allocationBean();
     private static volatile double blackhole;
 
     private NativeNoiseJniBenchmark() {
@@ -103,6 +106,7 @@ public final class NativeNoiseJniBenchmark {
         System.out.printf(Locale.ROOT, "Native scalar-noise JNI benchmark%n");
         System.out.printf(Locale.ROOT, "cpu=%s java=%s warmup=%d samples=%d counts=%s%n",
             LatticeNative.cpuSummary(), System.getProperty("java.version"), options.warmup(), options.samples(), options.counts());
+        System.out.println("sample,operation,count,iterations,path,index,total-ns,allocated-bytes,checksum");
         System.out.printf(Locale.ROOT,
             "operation,count,java-p50-ns,java-p95-ns,native-p50-ns,native-p95-ns,speedup-p50,speedup-p95,bitwise,max-abs-error%n");
 
@@ -182,22 +186,30 @@ public final class NativeNoiseJniBenchmark {
         double maxAbsError = 0.0;
         operation.selectJava().run();
         double[] javaValues = new double[count];
-        for (int i = 0; i < count; i++) javaValues[i] = operation.javaSample().sample(i);
+        for (int i = 0; i < count; i++) {
+            javaValues[i] = operation.javaSample().sample(i);
+            if (!Double.isFinite(javaValues[i])) throw new AssertionError("Non-finite Java noise at " + i);
+        }
         operation.selectNative().run();
         for (int i = 0; i < count; i++) {
             double nativeValue = operation.nativeSample().sample(i);
+            if (!Double.isFinite(nativeValue)) throw new AssertionError("Non-finite native noise at " + i);
             bitwise &= Double.doubleToRawLongBits(javaValues[i]) == Double.doubleToRawLongBits(nativeValue);
             maxAbsError = Math.max(maxAbsError, Math.abs(javaValues[i] - nativeValue));
         }
 
         int iterations = Math.max(1, operation.targetPoints() / count);
+        double expectedChecksum = 0.0;
+        for (int iteration = 0; iteration < iterations; iteration++) {
+            for (double value : javaValues) expectedChecksum += value;
+        }
         for (int warmup = 0; warmup < options.warmup(); warmup++) {
             measureOnce(operation.selectJava(), operation.javaSample(), count, iterations);
             measureOnce(operation.selectNative(), operation.nativeSample(), count, iterations);
         }
 
-        long[] javaTimings = new long[options.samples()];
-        long[] nativeTimings = new long[options.samples()];
+        Measurement[] javaTimings = new Measurement[options.samples()];
+        Measurement[] nativeTimings = new Measurement[options.samples()];
         for (int sample = 0; sample < options.samples(); sample++) {
             if ((sample & 1) == 0) {
                 javaTimings[sample] = measureOnce(operation.selectJava(), operation.javaSample(), count, iterations);
@@ -207,22 +219,54 @@ public final class NativeNoiseJniBenchmark {
                 javaTimings[sample] = measureOnce(operation.selectJava(), operation.javaSample(), count, iterations);
             }
         }
+        for (int sample = 0; sample < options.samples(); sample++) {
+            verifyMeasurement(javaTimings[sample], expectedChecksum, true);
+            verifyMeasurement(nativeTimings[sample], expectedChecksum, bitwise);
+            printMeasurement(operation.name(), count, iterations, "java", sample, javaTimings[sample]);
+            printMeasurement(operation.name(), count, iterations, "native", sample, nativeTimings[sample]);
+        }
         return new Result(stats(javaTimings, count, iterations), stats(nativeTimings, count, iterations), bitwise, maxAbsError);
     }
 
-    private static long measureOnce(Runnable selector, Sample sample, int count, int iterations) {
+    private static Measurement measureOnce(Runnable selector, Sample sample, int count, int iterations) {
         selector.run();
         double checksum = 0.0;
+        long allocatedBefore = ALLOCATION_BEAN.getThreadAllocatedBytes(Thread.currentThread().threadId());
         long start = System.nanoTime();
         for (int iteration = 0; iteration < iterations; iteration++) {
             for (int i = 0; i < count; i++) checksum += sample.sample(i);
         }
         long elapsed = System.nanoTime() - start;
+        long allocated = ALLOCATION_BEAN.getThreadAllocatedBytes(Thread.currentThread().threadId()) - allocatedBefore;
         blackhole += checksum;
-        return elapsed;
+        return new Measurement(elapsed, allocated, checksum);
     }
 
-    private static Stats stats(long[] timings, int count, int iterations) {
+    private static ThreadMXBean allocationBean() {
+        if (!(ManagementFactory.getThreadMXBean() instanceof ThreadMXBean bean)
+            || !bean.isThreadAllocatedMemorySupported()) {
+            throw new IllegalStateException("Thread allocation measurement is unavailable");
+        }
+        if (!bean.isThreadAllocatedMemoryEnabled()) bean.setThreadAllocatedMemoryEnabled(true);
+        return bean;
+    }
+
+    private static void verifyMeasurement(Measurement measurement, double expectedChecksum, boolean bitwise) {
+        if (measurement.elapsed() <= 0 || measurement.allocated() < 0 || !Double.isFinite(measurement.checksum())
+            || (bitwise && Double.doubleToRawLongBits(measurement.checksum())
+                != Double.doubleToRawLongBits(expectedChecksum))) {
+            throw new AssertionError("Invalid noise measurement: " + measurement);
+        }
+    }
+
+    private static void printMeasurement(String operation, int count, int iterations, String path, int sample,
+                                         Measurement measurement) {
+        System.out.printf(Locale.ROOT, "sample,%s,%d,%d,%s,%d,%d,%d,%.17g%n",
+            operation, count, iterations, path, sample, measurement.elapsed(), measurement.allocated(), measurement.checksum());
+    }
+
+    private static Stats stats(Measurement[] measurements, int count, int iterations) {
+        long[] timings = Arrays.stream(measurements).mapToLong(Measurement::elapsed).toArray();
         Arrays.sort(timings);
         int p50Index = timings.length / 2;
         int p95Index = Math.min(timings.length - 1, (int) Math.ceil(timings.length * 0.95) - 1);
@@ -261,6 +305,9 @@ public final class NativeNoiseJniBenchmark {
     }
 
     private record Stats(double p50, double p95) {
+    }
+
+    private record Measurement(long elapsed, long allocated, double checksum) {
     }
 
     private record Result(Stats javaStats, Stats nativeStats, boolean bitwise, double maxAbsError) {

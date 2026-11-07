@@ -1,0 +1,10 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.named('nativeNoiseJniBenchmark', JavaExec).configure {
+        systemProperty 'lattice.nativeCpu', server.findProperty('scalarAuditCpu') ?: 'auto'
+        systemProperty 'lattice.native.path', server.findProperty('scalarAuditNativePath') ?:
+                gradle.rootProject.file('build/lattice-native/lattice.dll').absolutePath
+        systemProperty 'lattice.native.download', 'false'
+        systemProperty 'lattice.verify', 'false'
+    }
+}
