@@ -33,7 +33,7 @@ void bulk_get_bmi2(const std::uint64_t* data, int element_bits,
     if (!data || !out || element_bits <= 0 || element_bits > 32 || count == 0) return;
     const int epl = 64 / element_bits;
     if (epl <= 0) return;
-    if (!detail::is_specialised_bits(element_bits)) {
+    if (element_bits != 1 && element_bits != 2 && !detail::is_specialised_bits(element_bits)) {
         bulk_get_scalar(data, element_bits, start_index, count, out);
         return;
     }
@@ -42,6 +42,11 @@ void bulk_get_bmi2(const std::uint64_t* data, int element_bits,
     const std::size_t end_idx  = start_index + count;
     const std::size_t first_aligned = ((start_index + epl_sz - 1) / epl_sz) * epl_sz;
     const std::size_t last_aligned  = (end_idx / epl_sz) * epl_sz;
+
+    if ((element_bits == 1 || element_bits == 2) && first_aligned >= last_aligned) {
+        bulk_get_scalar(data, element_bits, start_index, count, out);
+        return;
+    }
 
     // Leading unaligned fragment.
     if (first_aligned > start_index) {

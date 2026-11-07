@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
+#include <random>
 #include <vector>
 
 #include "world/palette/packed_storage.hpp"
@@ -101,4 +102,42 @@ TEST_CASE("packed_storage: 9-bit tail element round-trip") {
     set(data.data(), 9, N - 1, 511u);
     CHECK(get(data.data(), 9, N - 1) == 511u);
     CHECK(get(data.data(), 9, N - 2) == 0u);
+}
+
+TEST_CASE("packed_storage: bulk windows preserve every bit width and caller ownership") {
+    constexpr std::size_t size = 4160;
+    constexpr std::uint32_t sentinel = 0xDEADBEEFu;
+    std::mt19937_64 random(0x12B17u);
+    for (int bits = 1; bits <= 32; ++bits) {
+        const std::size_t epl = 64 / bits;
+        const std::uint64_t mask = (std::uint64_t{1} << bits) - 1;
+        std::vector<std::uint64_t> data(required_long_count(bits, size));
+        for (auto& word : data) word = random();
+        const auto original = data;
+        for (const std::size_t start : {std::size_t{0}, std::size_t{1}, epl - 1, epl, epl + 1}) {
+            for (const std::size_t count : {std::size_t{0}, std::size_t{1}, epl - 1, epl, epl + 1,
+                                            std::size_t{255}, std::size_t{256}, std::size_t{4096}}) {
+                if (start + count > size) continue;
+                CAPTURE(bits);
+                CAPTURE(start);
+                CAPTURE(count);
+                std::vector<std::uint32_t> scalar(count + 4, sentinel);
+                std::vector<std::uint32_t> current(count + 4, sentinel);
+                bulk_get_scalar(data.data(), bits, start, count, scalar.data() + 2);
+                bulk_get(data.data(), bits, start, count, current.data() + 2);
+                CHECK(data == original);
+                CHECK(current == scalar);
+                CHECK(current[0] == sentinel);
+                CHECK(current[1] == sentinel);
+                CHECK(current[count + 2] == sentinel);
+                CHECK(current[count + 3] == sentinel);
+                for (std::size_t i = 0; i < count; ++i) {
+                    const std::size_t index = start + i;
+                    const auto expected = static_cast<std::uint32_t>(
+                        (original[index / epl] >> ((index % epl) * bits)) & mask);
+                    CHECK(current[i + 2] == expected);
+                }
+            }
+        }
+    }
 }

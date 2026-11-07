@@ -82,6 +82,8 @@ dispatch_bulk_get_aligned(int element_bits,
                           std::size_t first_long, std::size_t last_long_exclusive,
                           std::uint32_t* out) noexcept {
     switch (element_bits) {
+        case 1:  bulk_get_aligned<1> (data, first_long, last_long_exclusive, out); break;
+        case 2:  bulk_get_aligned<2> (data, first_long, last_long_exclusive, out); break;
         case 4:  bulk_get_aligned<4> (data, first_long, last_long_exclusive, out); break;
         case 5:  bulk_get_aligned<5> (data, first_long, last_long_exclusive, out); break;
         case 6:  bulk_get_aligned<6> (data, first_long, last_long_exclusive, out); break;
