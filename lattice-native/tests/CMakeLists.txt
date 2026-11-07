@@ -178,6 +178,13 @@ lattice_add_test(zlib_codec
 find_package(Threads REQUIRED)
 target_link_libraries(lattice_test_zlib_codec PRIVATE Threads::Threads)
 
+add_executable(lattice_benchmark_zlib_bound EXCLUDE_FROM_ALL
+    benchmark_zlib_bound.cpp
+    ${CMAKE_SOURCE_DIR}/src/io/compression/zlib_codec.cpp)
+target_include_directories(lattice_benchmark_zlib_bound PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(lattice_benchmark_zlib_bound PRIVATE
+    libdeflate::libdeflate_static lattice_baseline_flags)
+
 lattice_add_test(nbt_parser
     SOURCES  test_nbt_parser.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/io/nbt/nbt_parser.cpp)
