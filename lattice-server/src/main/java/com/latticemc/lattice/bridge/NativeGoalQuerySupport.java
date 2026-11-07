@@ -62,7 +62,7 @@ public final class NativeGoalQuerySupport {
                     entity.isSpectator());
         }
 
-        final int[] nearestIds = NativeEntityQuery.query(
+        final int[] nearestIds = NativeEntityQuery.queryAll(
                 area.minX, area.minY, area.minZ,
                 area.maxX, area.maxY, area.maxZ,
                 snapshotCount == snapshots.length ? snapshots : Arrays.copyOf(snapshots, snapshotCount),
@@ -70,7 +70,6 @@ public final class NativeGoalQuerySupport {
                 source != null ? NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC : NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SPEC,
                 source != null ? source.getId() : -1,
                 true,
-                snapshotCount,
                 x, y, z);
         for (int id : nearestIds) {
             final T candidate = byId.get(id);
@@ -110,7 +109,7 @@ public final class NativeGoalQuerySupport {
                     entity.isSpectator());
         }
 
-        final int[] nearestIds = NativeEntityQuery.query(
+        final int[] nearestIds = NativeEntityQuery.queryAll(
                 area.minX, area.minY, area.minZ,
                 area.maxX, area.maxY, area.maxZ,
                 snapshotCount == snapshots.length ? snapshots : Arrays.copyOf(snapshots, snapshotCount),
@@ -118,7 +117,6 @@ public final class NativeGoalQuerySupport {
                 predicateKind,
                 source.getId(),
                 true,
-                snapshotCount,
                 x, y, z);
         final List<T> sorted = new ArrayList<>(nearestIds.length);
         for (int id : nearestIds) {
@@ -159,7 +157,7 @@ public final class NativeGoalQuerySupport {
                     player.isSpectator());
         }
 
-        final int[] nearestIds = NativeEntityQuery.query(
+        final int[] nearestIds = NativeEntityQuery.queryAll(
                 area.minX, area.minY, area.minZ,
                 area.maxX, area.maxY, area.maxZ,
                 snapshotCount == snapshots.length ? snapshots : Arrays.copyOf(snapshots, snapshotCount),
@@ -167,7 +165,6 @@ public final class NativeGoalQuerySupport {
                 NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SPEC,
                 -1,
                 true,
-                snapshotCount,
                 x, y, z);
         final double maxDistanceSq = range * range;
         for (int id : nearestIds) {

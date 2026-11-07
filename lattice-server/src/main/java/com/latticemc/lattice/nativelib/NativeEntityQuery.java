@@ -36,6 +36,24 @@ public final class NativeEntityQuery {
         return LatticeNative.isLoaded();
     }
 
+    /**
+     * Returns all built-in matches. Use this entry point when a Java predicate
+     * will filter the result, so truncation cannot hide an acceptable candidate.
+     */
+    public static int[] queryAll(double queryMinX, double queryMinY, double queryMinZ,
+                                double queryMaxX, double queryMaxY, double queryMaxZ,
+                                EntitySnapshot[] entities, int[] allowedTypeIds,
+                                PredicateKind predicateKind, int excludedEntityId,
+                                boolean sortByDistance, double refX, double refY, double refZ) {
+        return query(queryMinX, queryMinY, queryMinZ, queryMaxX, queryMaxY, queryMaxZ,
+                entities, allowedTypeIds, predicateKind, excludedEntityId,
+                sortByDistance, 0, refX, refY, refZ);
+    }
+
+    /**
+     * Limits built-in matches before any caller-side filtering. Zero is unlimited;
+     * positive limits are not suitable for subsequent Java predicates.
+     */
     public static int[] query(double queryMinX, double queryMinY, double queryMinZ,
                               double queryMaxX, double queryMaxY, double queryMaxZ,
                               EntitySnapshot[] entities,
@@ -118,8 +136,11 @@ public final class NativeEntityQuery {
                                 double refX, double refY, double refZ,
                                 int[] outputIds,
                                 double[] outputDistances) {
+        validateArrays(entityIds, entityTypeIds, positions, aabbs, alive, spectator,
+                predicateKind, sortByDistance, maxResults, outputIds, outputDistances);
         int count = 0;
         final int limit = maxResults > 0 ? Math.min(maxResults, outputIds.length) : outputIds.length;
+        if (limit == 0) return 0;
         for (int i = 0; i < entityIds.length; ++i) {
             if (!typeAllowed(entityTypeIds[i], allowedTypeIds)) continue;
             if (!predicateAllowed(entityIds[i], alive[i], spectator[i], predicateKind, excludedEntityId)) continue;
@@ -137,8 +158,9 @@ public final class NativeEntityQuery {
                 distance = dx * dx + dy * dy + dz * dz;
             }
             if (!sortByDistance) {
-                if (count >= outputIds.length) return count;
-                outputIds[count++] = entityIds[i];
+                outputIds[count] = entityIds[i];
+                if (outputDistances != null) outputDistances[count] = 0.0;
+                if (++count == limit) return count;
                 continue;
             }
             if (count < limit) {
@@ -181,6 +203,33 @@ public final class NativeEntityQuery {
             }
         }
         return count;
+    }
+
+    private static void validateArrays(int[] entityIds, int[] entityTypeIds,
+                                       double[] positions, double[] aabbs,
+                                       boolean[] alive, boolean[] spectator,
+                                       PredicateKind predicateKind, boolean sortByDistance,
+                                       int maxResults, int[] outputIds, double[] outputDistances) {
+        if (entityIds == null || entityTypeIds == null || positions == null || aabbs == null
+                || alive == null || spectator == null) {
+            throw new IllegalArgumentException("null entity arrays");
+        }
+        if (predicateKind == null) throw new IllegalArgumentException("null predicate kind");
+        if (maxResults < 0) throw new IllegalArgumentException("negative max results");
+        if (outputIds == null) throw new IllegalArgumentException("null output ids");
+        final int count = entityIds.length;
+        if (entityTypeIds.length < count || alive.length < count || spectator.length < count
+                || positions.length < (long) count * POSITION_STRIDE
+                || aabbs.length < (long) count * AABB_STRIDE) {
+            throw new IllegalArgumentException("entity arrays too short");
+        }
+        if (sortByDistance && outputDistances == null) {
+            throw new IllegalArgumentException("null sorted distances");
+        }
+        final long distanceCapacity = (long) outputIds.length * (sortByDistance ? 2 : 1);
+        if (outputDistances != null && outputDistances.length < distanceCapacity) {
+            throw new IllegalArgumentException("distances too short");
+        }
     }
 
     private static boolean typeAllowed(int typeId, int[] allowedTypeIds) {

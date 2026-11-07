@@ -39,12 +39,13 @@ struct EntityQueryInputs {
     int excluded_entity_id;
 
     bool sort_by_distance;
-    std::size_t max_results;
+    std::size_t max_results; // Zero is unlimited, including unsorted queries.
     double ref_x;
     double ref_y;
     double ref_z;
 };
 
+// Sorted distances uses 2 * output_capacity slots: distances then ordinals.
 [[nodiscard]] std::size_t query_entities(const EntityQueryInputs& inputs,
                                          int* matched_entity_ids,
                                          double* distances,

@@ -114,9 +114,12 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
     }
     if (inputs.allowed_type_count > 0 && !inputs.allowed_type_ids) return 0;
 
+    const std::size_t limit = inputs.max_results == 0
+        ? output_capacity
+        : std::min(inputs.max_results, output_capacity);
     if (!inputs.sort_by_distance) {
         std::size_t out = 0;
-        for (std::size_t i = 0; i < inputs.entity_count && out < output_capacity; ++i) {
+        for (std::size_t i = 0; i < inputs.entity_count && out < limit; ++i) {
             if (!type_allowed(inputs, i) || !predicate_allowed(inputs, i) || !intersects(inputs, i)) continue;
             matched_entity_ids[out] = inputs.entity_ids[i];
             if (distances) distances[out] = 0.0;
@@ -126,9 +129,6 @@ static std::size_t query_impl(const EntityQueryInputs& inputs,
     }
 
     if (!distances) return 0;
-    const std::size_t limit = inputs.max_results == 0
-        ? output_capacity
-        : std::min(inputs.max_results, output_capacity);
     if (limit == 0) return 0;
 
     double* ordinals = distances + output_capacity;

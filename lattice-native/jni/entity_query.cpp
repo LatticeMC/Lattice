@@ -47,14 +47,18 @@ Java_com_latticemc_lattice_nativelib_NativeEntityQuery_nativeQuery(
     if (env->GetArrayLength(jEntityTypeIds) < entity_count ||
         env->GetArrayLength(jEntityAlive) < entity_count ||
         env->GetArrayLength(jEntitySpectator) < entity_count ||
-        env->GetArrayLength(jEntityPositions) < static_cast<jsize>(ec * ve::kEntityPositionStride) ||
-        env->GetArrayLength(jEntityAabbs) < static_cast<jsize>(ec * ve::kEntityAabbStride)) {
+        env->GetArrayLength(jEntityPositions) < static_cast<jlong>(ec) * static_cast<jlong>(ve::kEntityPositionStride) ||
+        env->GetArrayLength(jEntityAabbs) < static_cast<jlong>(ec) * static_cast<jlong>(ve::kEntityAabbStride)) {
         lattice::jni::throw_illegal_arg(env, "lattice entity-query: entity arrays too short");
         return 0;
     }
 
     const jsize output_capacity_jsize = env->GetArrayLength(jOutputIds);
-    const jsize needed_distances = sortByDistance == JNI_TRUE ? output_capacity_jsize * 2 : output_capacity_jsize;
+    if (sortByDistance == JNI_TRUE && !jOutputDistances) {
+        lattice::jni::throw_illegal_arg(env, "lattice entity-query: null sorted distances");
+        return 0;
+    }
+    const jlong needed_distances = static_cast<jlong>(output_capacity_jsize) * (sortByDistance == JNI_TRUE ? 2 : 1);
     if (jOutputDistances && env->GetArrayLength(jOutputDistances) < needed_distances) {
         lattice::jni::throw_illegal_arg(env, "lattice entity-query: distances too short");
         return 0;

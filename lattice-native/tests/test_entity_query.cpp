@@ -139,6 +139,34 @@ TEST_CASE("entity_query: distance sorting returns nearest N") {
     CHECK(distances[1] == doctest::Approx(4.0));
 }
 
+TEST_CASE("entity_query: unsorted limits preserve order and output tail") {
+    const int ids[] = {10, 20, 30};
+    const int types[] = {1, 1, 1};
+    const double positions[9] = {}, boxes[18] = {};
+    const std::uint8_t alive[] = {1, 1, 1}, spectator[3] = {};
+    auto inputs = make_inputs(ids, types, positions, boxes, alive, spectator, 3);
+    for (std::size_t max : {0u, 1u, 2u, 8u}) {
+        inputs.max_results = max;
+        int output[4] = {-1, -1, -1, -1};
+        double distances[4] = {-1, -1, -1, -1};
+        const std::size_t expected = max == 1 ? 1 : max == 2 ? 2 : 3;
+        REQUIRE(query_entities(inputs, output, distances, 4) == expected);
+        for (std::size_t i = 0; i < expected; ++i) {
+            CHECK(output[i] == ids[i]);
+            CHECK(distances[i] == 0.0);
+        }
+        for (std::size_t i = expected; i < 4; ++i) {
+            CHECK(output[i] == -1);
+            CHECK(distances[i] == -1.0);
+        }
+    }
+    inputs.max_results = 0;
+    int output[1] = {-1};
+    CHECK(query_entities(inputs, output, nullptr, 1) == 1);
+    CHECK(output[0] == 10);
+    CHECK(query_entities(inputs, output, nullptr, 0) == 0);
+}
+
 #include "entity_query_reference.hpp"
 #include <bit>
 #include <limits>
@@ -175,7 +203,11 @@ TEST_CASE("entity_query: ordered legacy differential including NaN barriers") {
         const auto original_positions = positions; const auto original_boxes = boxes;
         const auto original_ids = ids; const auto original_types = types;
         const auto original_alive = alive; const auto original_spectator = spectator;
-        const auto want = entity_query_reference::query_entities(in, expected.data(), b.data(), capacity);
+        // The legacy unsorted oracle ignores max_results; cap its output window
+        // without changing the frozen reference algorithm.
+        const auto reference_capacity = !in.sort_by_distance && in.max_results > 0
+            ? std::min(in.max_results, capacity) : capacity;
+        const auto want = entity_query_reference::query_entities(in, expected.data(), b.data(), reference_capacity);
         const auto got = query_entities(in, actual.data(), a.data(), capacity);
         REQUIRE(got == want);
         for (std::size_t i = 0; i < got; ++i) {
