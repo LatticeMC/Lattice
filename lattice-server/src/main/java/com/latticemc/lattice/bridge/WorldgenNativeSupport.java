@@ -69,6 +69,8 @@ public final class WorldgenNativeSupport {
         int sectionCount = sections.length;
         long[][] storages = new long[sectionCount][];
         int[] elementBits = new int[sectionCount];
+        @SuppressWarnings("unchecked")
+        Palette<BlockState>[] palettes = (Palette<BlockState>[])new Palette<?>[sectionCount];
         Heightmap[] heightmaps = new Heightmap[types.size()];
         Heightmap.Types[] heightmapTypes = new Heightmap.Types[types.size()];
         int typeIndex = 0;
@@ -86,47 +88,43 @@ public final class WorldgenNativeSupport {
             Palette<BlockState> palette = data.palette();
             storages[sectionIndex] = storage.getBits() == 0 ? null : storage.getRaw();
             elementBits[sectionIndex] = storage.getBits();
+            palettes[sectionIndex] = palette;
             maxPaletteSize = Math.max(maxPaletteSize, palette.getSize());
         }
 
         int maskLongsPerSection = NativeHeightmap.maskLongsPerSection(maxPaletteSize);
-        long[][] sectionMasks = new long[types.size()][sectionCount * maskLongsPerSection];
-        for (int sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex) {
-            PalettedContainer<BlockState> states = sections[sectionIndex].getStates();
-            Palette<BlockState> palette = PalettedContainerAccess.dataOf(states).palette();
-            int paletteSize = palette.getSize();
-            for (int i = 0; i < heightmaps.length; ++i) {
-                int maskOffset = sectionIndex * maskLongsPerSection;
-                buildMask(
-                    sectionMasks[i],
-                    maskOffset,
-                    maskLongsPerSection,
-                    palette,
-                    paletteSize,
-                    ((HeightmapAccessor)heightmaps[i]).lattice$isOpaque()
-                );
-            }
-        }
-
-        int[] highestTaken = new int[NativeHeightmap.COLUMN_COUNT];
+        long[] sectionMasks = new long[sectionCount * maskLongsPerSection];
         int[] firstAvailable = new int[NativeHeightmap.COLUMN_COUNT];
         int minY = chunk.getMinY();
         int sectionBaseY = chunk.getSectionYFromSectionIndex(0) << 4;
+        int bits = net.minecraft.util.Mth.ceillog2(chunk.getHeight() + 1);
         for (int i = 0; i < heightmaps.length; ++i) {
+            for (int sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex) {
+                Palette<BlockState> palette = palettes[sectionIndex];
+                int maskOffset = sectionIndex * maskLongsPerSection;
+                buildMask(
+                    sectionMasks,
+                    maskOffset,
+                    maskLongsPerSection,
+                    palette,
+                    palette.getSize(),
+                    ((HeightmapAccessor)heightmaps[i]).lattice$isOpaque()
+                );
+            }
+            // Populate overwrites every column, so its absolute heights can be converted in place.
             NativeHeightmap.populateHeightmap(
                 storages,
                 elementBits,
-                sectionMasks[i],
+                sectionMasks,
                 maskLongsPerSection,
                 sectionCount,
                 sectionBaseY,
                 minY - 1,
-                highestTaken
+                firstAvailable
             );
-            for (int column = 0; column < highestTaken.length; ++column) {
-                firstAvailable[column] = highestTaken[column] + 1 - minY;
+            for (int column = 0; column < firstAvailable.length; ++column) {
+                firstAvailable[column] = firstAvailable[column] + 1 - minY;
             }
-            int bits = net.minecraft.util.Mth.ceillog2(chunk.getHeight() + 1);
             long[] packed = new SimpleBitStorage(bits, NativeHeightmap.COLUMN_COUNT, firstAvailable).getRaw();
             ((HeightmapAccessor)heightmaps[i]).lattice$setRawData(chunk, heightmapTypes[i], packed);
         }
