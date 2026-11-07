@@ -1,0 +1,15 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.withType(Test).configureEach {
+        systemProperty 'lattice.verify', server.findProperty('heightmapAuditVerify') ?: 'false'
+    }
+    server.tasks.register('heightmapAuditBenchmark', JavaExec) {
+        dependsOn server.tasks.named('testClasses')
+        classpath = server.sourceSets.test.runtimeClasspath
+        mainClass = 'com.latticemc.lattice.bridge.WorldgenHeightmapBenchmark'
+        jvmArgs '--enable-preview'
+        systemProperty 'heightmapBenchmark.warmup', server.findProperty('heightmapBenchmark.warmup') ?: '32'
+        systemProperty 'heightmapBenchmark.samples', server.findProperty('heightmapBenchmark.samples') ?: '21'
+        systemProperty 'heightmapBenchmark.rounds', server.findProperty('heightmapBenchmark.rounds') ?: '128'
+    }
+}
