@@ -29,7 +29,7 @@ index 8d1ec147f230d9bed0a4c740be7cd41ab8c4951f..c5101d650334a4d91deccb821bced41d
              this.p[i + randomInt] = b;
          }
  
-+        this.lattice$native = NativePerlinNoise.tryCreate(this.p, this.xo, this.yo, this.zo);
++        this.lattice$native = NativeScalarNoiseControl.perlinEnabled() ? NativePerlinNoise.tryCreate(this.p, this.xo, this.yo, this.zo) : null;
      }
  
      @Override
@@ -99,7 +99,7 @@ index c38023b6d616dfc8479da4dc33b40859a369d35e..a5a77e300ffb46167350ae7c939de1be
          this.lowestFreqInputFactor = Math.pow(2.0, -i);
          this.lowestFreqValueFactor = Math.pow(2.0, size - 1) / (Math.pow(2.0, size) - 1.0);
          this.maxValue = this.edgeValue(2.0);
-+        this.lattice$native = this.lattice$createNative();
++        this.lattice$native = NativeScalarNoiseControl.perlinEnabled() ? this.lattice$createNative() : null;
 +    }
 +
 +    private NativeOctavePerlinNoise lattice$createNative() {

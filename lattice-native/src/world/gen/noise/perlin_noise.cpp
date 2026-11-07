@@ -371,24 +371,57 @@ void sample_y_scaled_array_ymax(const PerlinNoiseSampler& s,
 double sample_derivative(const PerlinNoiseSampler& s,
                          double x, double y, double z,
                          double out_dxdydz[3]) noexcept {
-    // Analytical derivatives are reserved for a follow-up commit; the
-    // chain-rule decomposition through smoothstep + 8-corner trilinear
-    // interpolation is fiddly enough to deserve its own diff-verify
-    // pass. For now this is implemented via central differences over a
-    // small epsilon — only the *value* matches the scalar reference
-    // bit-for-bit; the derivative is computed numerically.
-    //
-    // Hot-path callers should not use this; vanilla density functions
-    // that need a gradient run analytically on the Java side. The
-    // entry point exists so the public API surface is stable.
-    constexpr double kEps = 1e-6;
-    const double v0 = sample_core(s, x, y, z);
-    if (out_dxdydz) {
-        out_dxdydz[0] = (sample_core(s, x + kEps, y, z) - v0) / kEps;
-        out_dxdydz[1] = (sample_core(s, x, y + kEps, z) - v0) / kEps;
-        out_dxdydz[2] = (sample_core(s, x, y, z + kEps) - v0) / kEps;
+    // Match ImprovedNoise.sampleWithDerivative, including the gradient-dot
+    // and interpolation order. Finite differences do not preserve its output.
+    constexpr int gradients[16][3] = {
+        {1, 1, 0}, {-1, 1, 0}, {1, -1, 0}, {-1, -1, 0},
+        {1, 0, 1}, {-1, 0, 1}, {1, 0, -1}, {-1, 0, -1},
+        {0, 1, 1}, {0, -1, 1}, {0, 1, -1}, {0, -1, -1},
+        {1, 1, 0}, {0, -1, 1}, {-1, 1, 0}, {0, -1, -1}
+    };
+    x += s.origin_x;
+    y += s.origin_y;
+    z += s.origin_z;
+    const int xi = floor_to_int(x), yi = floor_to_int(y), zi = floor_to_int(z);
+    x -= xi;
+    y -= yi;
+    z -= zi;
+    const int* corners[8];
+    double values[8];
+    for (int i = 0; i < 8; ++i) {
+        const int dx = i & 1, dy = (i >> 1) & 1, dz = (i >> 2) & 1;
+        const auto hash = pmap(s.permutation,
+            pmap(s.permutation, pmap(s.permutation, xi + dx) + yi + dy) + zi + dz);
+        corners[i] = gradients[hash & 15];
+        values[i] = corners[i][0] * (x - dx)
+                  + corners[i][1] * (y - dy)
+                  + corners[i][2] * (z - dz);
     }
-    return v0;
+    const double u = smooth_step(x), v = smooth_step(y), w = smooth_step(z);
+    const auto lerp2 = [](double a, double b, double s0, double s1, double s2, double s3) {
+        return lerp(b, lerp(a, s0, s1), lerp(a, s2, s3));
+    };
+    const auto lerp3 = [&](const double* a) {
+        return lerp(w, lerp2(u, v, a[0], a[1], a[2], a[3]),
+                       lerp2(u, v, a[4], a[5], a[6], a[7]));
+    };
+    if (out_dxdydz != nullptr) {
+        double components[8];
+        for (int axis = 0; axis < 3; ++axis) {
+            for (int i = 0; i < 8; ++i) components[i] = corners[i][axis];
+            out_dxdydz[axis] = lerp3(components);
+        }
+        const double du = 30.0 * x * x * (x - 1.0) * (x - 1.0);
+        const double dv = 30.0 * y * y * (y - 1.0) * (y - 1.0);
+        const double dw = 30.0 * z * z * (z - 1.0) * (z - 1.0);
+        out_dxdydz[0] += du * lerp2(v, w, values[1] - values[0], values[3] - values[2],
+                                         values[5] - values[4], values[7] - values[6]);
+        out_dxdydz[1] += dv * lerp2(w, u, values[2] - values[0], values[6] - values[4],
+                                         values[3] - values[1], values[7] - values[5]);
+        out_dxdydz[2] += dw * lerp2(u, v, values[4] - values[0], values[5] - values[1],
+                                         values[6] - values[2], values[7] - values[3]);
+    }
+    return lerp3(values);
 }
 
 } // namespace lattice::world::gen::noise

@@ -1,6 +1,7 @@
 package com.latticemc.lattice.nativelib;
 
 import java.lang.ref.Cleaner;
+import java.lang.ref.Reference;
 
 public final class NativeOctavePerlinNoise {
     private static final Cleaner CLEANER = Cleaner.create();
@@ -39,11 +40,19 @@ public final class NativeOctavePerlinNoise {
     }
 
     public double sample(double x, double y, double z) {
-        return nativeSample(this.handle, x, y, z);
+        try {
+            return nativeSample(this.handle, x, y, z);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
     }
 
     public double sampleFull(double x, double y, double z, double yScale, double yMax, boolean useOrigin) {
-        return nativeSampleFull(this.handle, x, y, z, yScale, yMax, useOrigin);
+        try {
+            return nativeSampleFull(this.handle, x, y, z, yScale, yMax, useOrigin);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
     }
 
     private record Destroy(long handle) implements Runnable {

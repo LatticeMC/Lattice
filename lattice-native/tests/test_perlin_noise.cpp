@@ -190,6 +190,42 @@ TEST_CASE("perlin: sample_derivative returns finite gradient") {
     CHECK(std::isfinite(deriv[2]));
 }
 
+TEST_CASE("perlin: derivative at lattice corners uses every vanilla gradient") {
+    constexpr int gradients[16][3] = {
+        {1, 1, 0}, {-1, 1, 0}, {1, -1, 0}, {-1, -1, 0},
+        {1, 0, 1}, {-1, 0, 1}, {1, 0, -1}, {-1, 0, -1},
+        {0, 1, 1}, {0, -1, 1}, {0, 1, -1}, {0, -1, -1},
+        {1, 1, 0}, {0, -1, 1}, {-1, 1, 0}, {0, -1, -1}
+    };
+    auto s = make_identity_sampler();
+    for (int i = 0; i < 16; ++i) {
+        double derivative[3];
+        CHECK(sample_derivative(s, i, 0, 0, derivative) == 0.0);
+        for (int axis = 0; axis < 3; ++axis) CHECK(derivative[axis] == gradients[i][axis]);
+    }
+}
+
+TEST_CASE("perlin: analytical derivative agrees with central differences") {
+    auto s = make_shuffled_sampler();
+    constexpr double epsilon = 1.0e-5;
+    for (int i = 0; i < 64; ++i) {
+        double p[3] = {-3.25 + i * 0.37, 7.5 - i * 0.41, -1.75 + i * 0.43};
+        double derivative[3];
+        const double value = sample_derivative(s, p[0], p[1], p[2], derivative);
+        CHECK(value == doctest::Approx(sample(s, p[0], p[1], p[2])).epsilon(1e-12));
+        CHECK(value == sample_derivative(s, p[0], p[1], p[2], nullptr));
+        for (int axis = 0; axis < 3; ++axis) {
+            const double coordinate = p[axis];
+            p[axis] = coordinate + epsilon;
+            const double plus = sample(s, p[0], p[1], p[2]);
+            p[axis] = coordinate - epsilon;
+            const double minus = sample(s, p[0], p[1], p[2]);
+            p[axis] = coordinate;
+            CHECK(derivative[axis] == doctest::Approx((plus - minus) / (2 * epsilon)).epsilon(1e-7));
+        }
+    }
+}
+
 #if defined(LATTICE_TEST_HAS_PERLIN_AVX2)
 TEST_CASE("perlin: AVX2 batch paths match scalar reference") {
     if (!lattice::cpu::initialize().avx2) return;

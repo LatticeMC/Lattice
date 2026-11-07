@@ -2,7 +2,7 @@ package com.latticemc.lattice.nativelib;
 
 public final class NativeScalarNoiseControl {
     private static volatile boolean perlinEnabled = Boolean.parseBoolean(
-            System.getProperty("lattice.nativeScalarPerlin", "false"));
+            System.getProperty("lattice.nativeScalarPerlin", "true"));
 
     private NativeScalarNoiseControl() {
     }

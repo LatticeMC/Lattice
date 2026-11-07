@@ -44,6 +44,8 @@ class LatticeConfigTestSuite {
         assertTrue(contents.contains("poi-bfs-scratch"));
         assertFalse(contents.contains("chunk-map-cache"));
         assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
+        assertEquals("true", System.getProperty("lattice.nativeScalarPerlin"));
+        assertTrue(contents.contains("low-end CPUs"));
         assertEquals("1024", System.getProperty("lattice.nativeDensityFunctionParityInterval"));
         assertEquals("false", System.getProperty("lattice.nativeIocp"));
         assertEquals("false", System.getProperty("lattice.nativeIoUring"));
@@ -67,6 +69,7 @@ class LatticeConfigTestSuite {
                   native-function: false
                 native:
                   cpu-tier: AVX2
+                  scalar-perlin: false
                 entity:
                   visibility:
                     native-prefilter: true
@@ -91,6 +94,7 @@ class LatticeConfigTestSuite {
         assertEquals("true", System.getProperty("lattice.disable"));
         assertEquals("false", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("avx2", System.getProperty("lattice.nativeCpu"));
+        assertEquals("false", System.getProperty("lattice.nativeScalarPerlin"));
         assertEquals("true", System.getProperty("lattice.nativeEntityVisibilityPrefilter"));
         assertEquals("300", System.getProperty("lattice.nativeBrainEligibility.minBehaviors"));
         assertEquals("0", System.getProperty("lattice.nativeEntityVisibilityMinPlayers"));
@@ -111,6 +115,8 @@ class LatticeConfigTestSuite {
         Files.writeString(config, """
                 palette:
                   enabled: true
+                native:
+                  scalar-perlin: true
                 density:
                   native-function: false
                 performance:
@@ -119,6 +125,7 @@ class LatticeConfigTestSuite {
                     section-lookup-reuse: true
                 """);
         System.setProperty("lattice.nativePaletteOps", "false");
+        System.setProperty("lattice.nativeScalarPerlin", "false");
         System.setProperty("lattice.nativeDensityFunction", "true");
         System.setProperty("lattice.nativeLosSectionLookupReuse", "false");
         System.setProperty("lattice.poiBfsScratch", "false");
@@ -126,6 +133,7 @@ class LatticeConfigTestSuite {
         LatticeConfig.preload(config);
 
         assertEquals("false", System.getProperty("lattice.nativePaletteOps"));
+        assertEquals("false", System.getProperty("lattice.nativeScalarPerlin"));
         assertEquals("true", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("false", System.getProperty("lattice.nativeLosSectionLookupReuse"));
         assertEquals("false", System.getProperty("lattice.poiBfsScratch"));

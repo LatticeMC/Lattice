@@ -1,6 +1,7 @@
 package com.latticemc.lattice.nativelib;
 
 import java.lang.ref.Cleaner;
+import java.lang.ref.Reference;
 
 public final class NativePerlinNoise {
     private static final Cleaner CLEANER = Cleaner.create();
@@ -32,15 +33,27 @@ public final class NativePerlinNoise {
     }
 
     public double sample(double x, double y, double z) {
-        return nativeSample(this.handle, x, y, z);
+        try {
+            return nativeSample(this.handle, x, y, z);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
     }
 
     public double sampleYScaled(double x, double y, double z, double yScale, double yMax) {
-        return nativeSampleYScaled(this.handle, x, y, z, yScale, yMax);
+        try {
+            return nativeSampleYScaled(this.handle, x, y, z, yScale, yMax);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
     }
 
     public double sampleDerivative(double x, double y, double z, double[] outDeriv) {
-        return nativeSampleDerivative(this.handle, x, y, z, outDeriv);
+        try {
+            return nativeSampleDerivative(this.handle, x, y, z, outDeriv);
+        } finally {
+            Reference.reachabilityFence(this);
+        }
     }
 
     public double sampleDerivativeAndAddTo(double x, double y, double z, double[] values) {

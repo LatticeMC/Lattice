@@ -44,7 +44,7 @@ public final class LatticeConfig {
             bool("native.aabb-query", "lattice.nativeAabbQuery", true, "Use native AABB intersection scans when available."),
             bool("performance.los.section-lookup-reuse", "lattice.nativeLosSectionLookupReuse", true,
                     "Reuse the loaded LevelChunkSection lookup while filling one LOS ray mask."),
-            bool("native.scalar-perlin", "lattice.nativeScalarPerlin", false, "Use native scalar Perlin noise evaluation."),
+            bool("native.scalar-perlin", "lattice.nativeScalarPerlin", true, "Use native scalar Perlin noise evaluation by default for low-end CPUs; explicitly disable for Java scalar evaluation."),
             bool("native.io.iocp", "lattice.nativeIocp", false, "Reserve the Windows IOCP native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
             bool("native.io.io-uring", "lattice.nativeIoUring", false, "Reserve the Linux io_uring native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
             bool("native.io.kqueue", "lattice.nativeKqueue", false, "Reserve the macOS kqueue native-I/O backend. It is unavailable in this build, so Java I/O remains active."),
