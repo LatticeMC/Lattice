@@ -150,6 +150,28 @@ void adjust_movement(const double* moving,
         moving, out_movement, obstacles, obstacle_count);
 }
 
+void adjust_movement_yzx(const double* moving,
+                         double* out_movement,
+                         const double* obstacles,
+                         std::size_t obstacle_count) noexcept {
+    if (!moving || !out_movement || !obstacles || obstacle_count == 0) return;
+    if (!g_initialised.load(std::memory_order_acquire)) {
+        init_collision_dispatch();
+    }
+    const CalcFn calc = g_calc.load(std::memory_order_acquire);
+    double current[6];
+    for (int i = 0; i < 6; ++i) current[i] = moving[i];
+    constexpr int order[3] = {1, 2, 0};
+    for (int axis : order) {
+        const double adjusted = calc(axis, current, out_movement[axis], obstacles, obstacle_count);
+        out_movement[axis] = adjusted;
+        if (adjusted != 0.0) {
+            current[axis] += adjusted;
+            current[axis + 3] += adjusted;
+        }
+    }
+}
+
 // ---- Runtime-dispatched single-axis entry -----------------------------------
 
 double calc_max_offset(int axis, const double* moving,

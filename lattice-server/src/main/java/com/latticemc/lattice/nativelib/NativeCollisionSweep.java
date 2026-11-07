@@ -3,6 +3,7 @@ package com.latticemc.lattice.nativelib;
 import java.util.Arrays;
 import java.util.List;
 import net.minecraft.world.phys.AABB;
+import org.slf4j.LoggerFactory;
 
 public final class NativeCollisionSweep {
     public static final int AABB_STRIDE = 6;
@@ -10,6 +11,7 @@ public final class NativeCollisionSweep {
     public static final double COLLISION_EPSILON = 1.0E-7;
     private static final int[] AXIS_ORDER_YXZ = {1, 0, 2};
     private static final int[] AXIS_ORDER_YZX = {1, 2, 0};
+    private static volatile boolean nativeYzxAvailable = true;
 
     private NativeCollisionSweep() {}
 
@@ -148,6 +150,22 @@ public final class NativeCollisionSweep {
             return;
         }
 
+        if (nativeYzxAvailable) {
+            try {
+                nativeAdjustMovementYzx(moving, movement, obstacles, obstacleCount);
+                return;
+            } catch (UnsatisfiedLinkError error) {
+                synchronized (NativeCollisionSweep.class) {
+                    if (nativeYzxAvailable) {
+                        nativeYzxAvailable = false;
+                        LoggerFactory.getLogger("LatticeNative").warn(
+                                "Native YZX collision sweep unavailable; retaining legacy native sweep: {}",
+                                error.getMessage());
+                    }
+                }
+            }
+        }
+
         double[] remappedMoving = remapAabbXzy(moving);
         double[] remappedMovement = {movement[2], movement[1], movement[0]};
         double[] remappedObstacles = remapAabbsXzy(obstacles, obstacleCount);
@@ -268,6 +286,12 @@ public final class NativeCollisionSweep {
     }
 
     private static native void nativeAdjustMovement(
+            double[] moving,
+            double[] movement,
+            double[] obstacles,
+            int obstacleCount);
+
+    private static native void nativeAdjustMovementYzx(
             double[] moving,
             double[] movement,
             double[] obstacles,

@@ -289,6 +289,52 @@ Java_com_latticemc_lattice_nativelib_NativeCollisionSweep_nativeAdjustMovement(
     env->ReleasePrimitiveArrayCritical(jMoving, mv_p, JNI_ABORT);
 }
 
+JNIEXPORT void JNICALL
+Java_com_latticemc_lattice_nativelib_NativeCollisionSweep_nativeAdjustMovementYzx(
+        JNIEnv* env, jclass /*cls*/,
+        jdoubleArray jMoving,
+        jdoubleArray jMovement,
+        jdoubleArray jObstacles,
+        jint obstacleCount) {
+    if (!jMoving || !jMovement) {
+        lattice::jni::throw_illegal_arg(env, "lattice collision: null array");
+        return;
+    }
+    if (obstacleCount < 0) {
+        lattice::jni::throw_illegal_arg(env, "lattice collision: negative obstacle count");
+        return;
+    }
+    if (env->GetArrayLength(jMoving) < static_cast<jsize>(ve::kCollisionAabbStride) ||
+        env->GetArrayLength(jMovement) < 3) {
+        lattice::jni::throw_illegal_arg(env, "lattice collision: moving/movement too short");
+        return;
+    }
+    if (obstacleCount > 0 && (!jObstacles ||
+        static_cast<std::size_t>(env->GetArrayLength(jObstacles)) <
+            static_cast<std::size_t>(obstacleCount) * ve::kCollisionAabbStride)) {
+        lattice::jni::throw_illegal_arg(env, "lattice collision: obstacles too short");
+        return;
+    }
+    if (obstacleCount == 0) return;
+
+    // Fixed-size snapshots keep all JNI operations outside the computation.
+    double moving[6], movement[3];
+    env->GetDoubleArrayRegion(jMoving, 0, 6, moving);
+    if (env->ExceptionCheck()) return;
+    env->GetDoubleArrayRegion(jMovement, 0, 3, movement);
+    if (env->ExceptionCheck()) return;
+    ve::init_collision_dispatch();
+    void* obstacles = env->GetPrimitiveArrayCritical(jObstacles, nullptr);
+    if (!obstacles) {
+        lattice::jni::throw_oom(env, "lattice collision: pin obstacles");
+        return;
+    }
+    ve::adjust_movement_yzx(moving, movement, static_cast<const double*>(obstacles),
+                           static_cast<std::size_t>(obstacleCount));
+    env->ReleasePrimitiveArrayCritical(jObstacles, obstacles, JNI_ABORT);
+    env->SetDoubleArrayRegion(jMovement, 0, 3, movement);
+}
+
 // ---------------------------------------------------------------------------
 // NativeCollisionSweep.calcMaxOffset  (single-axis)
 // ---------------------------------------------------------------------------

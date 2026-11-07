@@ -116,6 +116,12 @@ void adjust_movement(const double* moving,
                      const double* obstacles,
                      std::size_t obstacle_count) noexcept;
 
+/// Runtime-dispatched YZX sweep in the original coordinate layout.
+void adjust_movement_yzx(const double* moving,
+                         double* out_movement,
+                         const double* obstacles,
+                         std::size_t obstacle_count) noexcept;
+
 /// Runtime-dispatched single-axis entry. Selects the fastest variant.
 [[nodiscard]] double calc_max_offset(int axis, const double* moving,
                                      double desired,

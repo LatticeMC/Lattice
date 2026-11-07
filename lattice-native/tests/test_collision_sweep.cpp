@@ -1,9 +1,51 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <array>
+#include <bit>
+#include <random>
+#include <vector>
+
 #include "world/entity/collision_sweep.hpp"
 
 using namespace lattice::world::entity;
+
+TEST_CASE("collision: original-coordinate YZX matches frozen XZY remap") {
+    const std::array<double, 6> moving = {-0.375, -1.25, 0.625, 0.5, 0.25, 1.125};
+    const std::array<double, 6> remapped_moving = {0.625, -1.25, -0.375, 1.125, 0.25, 0.5};
+    std::mt19937_64 random(20261107);
+    for (std::size_t count : {0, 1, 3, 4, 7, 8, 9, 32, 128}) {
+        CAPTURE(count);
+        for (int trial = 0; trial < 64; ++trial) {
+            std::vector<double> obstacles(count * 6);
+            std::vector<double> remapped(count * 6);
+            for (std::size_t box = 0; box < count; ++box) {
+                for (int axis = 0; axis < 3; ++axis) {
+                    const std::size_t base = box * 6;
+                    obstacles[base + axis] = (static_cast<int>(random() % 33) - 16) * 0.25;
+                    obstacles[base + axis + 3] = obstacles[base + axis] + 0.75;
+                }
+                for (int axis = 0; axis < 3; ++axis) {
+                    remapped[box * 6 + axis] = obstacles[box * 6 + 2 - axis];
+                    remapped[box * 6 + axis + 3] = obstacles[box * 6 + 5 - axis];
+                }
+            }
+            const auto original = obstacles;
+            std::array<double, 3> movement;
+            for (double& value : movement) {
+                value = (static_cast<int>(random() % 17) - 8) * 0.25;
+            }
+            std::array<double, 3> legacy = {movement[2], movement[1], movement[0]};
+            adjust_movement(remapped_moving.data(), legacy.data(), remapped.data(), count);
+            adjust_movement_yzx(moving.data(), movement.data(), obstacles.data(), count);
+            for (int axis = 0; axis < 3; ++axis) {
+                CHECK(std::bit_cast<std::uint64_t>(movement[axis]) ==
+                      std::bit_cast<std::uint64_t>(legacy[2 - axis]));
+            }
+            CHECK(obstacles == original);
+        }
+    }
+}
 
 TEST_CASE("collision: no obstacle, movement unchanged") {
     const double moving[6] = {0, 0, 0, 1, 1, 1};
