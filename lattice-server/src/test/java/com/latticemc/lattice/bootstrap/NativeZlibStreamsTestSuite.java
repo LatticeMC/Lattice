@@ -8,6 +8,7 @@ import com.latticemc.lattice.nativelib.LatticeNative;
 import com.latticemc.lattice.nativelib.NativeChunkSerializer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
@@ -18,6 +19,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.InflaterInputStream;
+import java.util.zip.ZipException;
 import org.junit.jupiter.api.Test;
 
 class NativeZlibStreamsTestSuite {
@@ -161,6 +163,30 @@ class NativeZlibStreamsTestSuite {
                 });
             }
             for (var future : pool.invokeAll(tasks)) future.get();
+        }
+    }
+
+    @Test
+    void javaReaderRejectsTruncatedAndBadChecksumOutputFromBothWriters() throws Exception {
+        LatticeNative.ensureLoaded();
+        assertTrue(LatticeNative.isLoaded(), LatticeNative.failureReason());
+        byte[] payload = new byte[65536];
+        new Random(42).nextBytes(payload);
+        for (String property : new String[] {"true", "false"}) {
+            try (var factory = new IsolatedFactory(property)) {
+                ByteArrayOutputStream sink = new ByteArrayOutputStream();
+                try (OutputStream stream = factory.open(sink)) {
+                    assertEquals("false".equals(property), stream instanceof DeflaterOutputStream);
+                    stream.write(payload);
+                }
+                byte[] compressed = sink.toByteArray();
+                assertArrayEquals(payload, decode(compressed));
+                byte[] truncated = Arrays.copyOf(compressed, compressed.length - 1);
+                assertThrows(EOFException.class, () -> decode(truncated));
+                byte[] corrupt = compressed.clone();
+                corrupt[corrupt.length - 1] ^= 1;
+                assertThrows(ZipException.class, () -> decode(corrupt));
+            }
         }
     }
 

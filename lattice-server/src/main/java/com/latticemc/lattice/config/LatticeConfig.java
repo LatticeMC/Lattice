@@ -93,6 +93,8 @@ public final class LatticeConfig {
             bool("palette.enabled", "lattice.nativePaletteOps", true, "Enable native palette operations."),
             integer("palette.minimum-bulk-count", "lattice.nativePaletteOpsMinCount", 64, 0, "Minimum palette bulk-operation size eligible for native evaluation."),
             bool("zlib.native-region-inflate", "lattice.nativeRegionZlibInflate", false, "Use native zlib inflation for region files."),
+            bool("zlib.native-region-deflate", "lattice.nativeRegionZlibDeflate", true,
+                    "默认使用 native zlib 写入 region；显式 false 使用 Java，修改后需要重启。不控制读取路径。"),
             bool("ore.native-vein-block-state-filler", "lattice.nativeOreVeinBlockStateFiller", false, "Use the native ore-vein block-state filler."),
 
             integer("ai.biological.minimum-stimuli", "lattice.nativeBiologicalAi.minStimuli", Integer.MAX_VALUE, 0, "Minimum biological-AI stimuli eligible for native evaluation."),

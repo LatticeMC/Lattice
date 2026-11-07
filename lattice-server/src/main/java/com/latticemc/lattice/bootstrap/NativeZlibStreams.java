@@ -14,6 +14,8 @@ public final class NativeZlibStreams {
 
     private static final boolean NATIVE_INFLATE_ENABLED =
             Boolean.parseBoolean(System.getProperty("lattice.nativeRegionZlibInflate", "false"));
+    private static final boolean NATIVE_DEFLATE_ENABLED =
+            Boolean.parseBoolean(System.getProperty("lattice.nativeRegionZlibDeflate", "true"));
 
     private NativeZlibStreams() {}
 
@@ -42,6 +44,10 @@ public final class NativeZlibStreams {
     }
 
     public static OutputStream deflater(OutputStream sink) {
+        if (!NATIVE_DEFLATE_ENABLED) {
+            com.latticemc.lattice.nativelib.LatticeNative.logFallbackOnce("regionfile_zlib_deflate", "native deflater disabled");
+            return new java.util.zip.DeflaterOutputStream(sink);
+        }
         if (!com.latticemc.lattice.nativelib.LatticeNative.isLoaded()) {
             com.latticemc.lattice.nativelib.LatticeNative.logFallbackOnce("regionfile_zlib", "native deflater unavailable");
             return new java.util.zip.DeflaterOutputStream(sink);
@@ -101,7 +107,7 @@ public final class NativeZlibStreams {
     }
 
     private static final class BufferingNativeDeflaterStream extends FilterOutputStream {
-        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream(8 * 1024);
+        private final DeflateBuffer buffer = new DeflateBuffer();
         private boolean closed = false;
 
         BufferingNativeDeflaterStream(OutputStream sink) {
@@ -126,14 +132,23 @@ public final class NativeZlibStreams {
         public void close() throws IOException {
             if (closed) return;
             closed = true;
-            final byte[] payload = buffer.toByteArray();
-            final byte[] compressed = NativeChunkSerializer.deflateZlib(payload, 0, payload.length);
+            final byte[] compressed = buffer.compress();
             try {
                 out.write(compressed);
                 out.flush();
             } finally {
                 out.close();
             }
+        }
+    }
+
+    private static final class DeflateBuffer extends ByteArrayOutputStream {
+        DeflateBuffer() {
+            super(8 * 1024);
+        }
+
+        byte[] compress() {
+            return NativeChunkSerializer.deflateZlib(buf, 0, count);
         }
     }
 }

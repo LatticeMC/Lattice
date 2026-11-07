@@ -56,6 +56,9 @@ class LatticeConfigTestSuite {
         assertEquals("512", System.getProperty("lattice.nativeEntityVisibilityBatchMinEntities"));
         assertEquals("1048576", System.getProperty("lattice.nativeEntityVisibilityBatchMaxScratchBytes"));
         assertEquals("true", System.getProperty("lattice.nativeLosSectionLookupReuse"));
+        assertEquals("true", System.getProperty("lattice.nativeRegionZlibDeflate"));
+        assertEquals("false", System.getProperty("lattice.nativeRegionZlibInflate"));
+        assertTrue(contents.contains("native-region-deflate"));
     }
 
     @Test
@@ -87,6 +90,8 @@ class LatticeConfigTestSuite {
                   poi-bfs-scratch: false
                   los:
                     section-lookup-reuse: false
+                zlib:
+                  native-region-deflate: false
                 """);
 
         LatticeConfig.preload(config);
@@ -106,6 +111,7 @@ class LatticeConfigTestSuite {
         assertTrue(Files.readString(config).contains("chunk-map-cache: true"), "退役键按未知键保留，不改写用户配置");
         assertEquals("true", System.getProperty("lattice.optimizeRandomTick"));
         assertEquals("false", System.getProperty("lattice.poiBfsScratch"));
+        assertEquals("false", System.getProperty("lattice.nativeRegionZlibDeflate"));
     }
 
     @Test
@@ -115,6 +121,8 @@ class LatticeConfigTestSuite {
         Files.writeString(config, """
                 palette:
                   enabled: true
+                zlib:
+                  native-region-deflate: true
                 native:
                   scalar-perlin: true
                 density:
@@ -129,6 +137,7 @@ class LatticeConfigTestSuite {
         System.setProperty("lattice.nativeDensityFunction", "true");
         System.setProperty("lattice.nativeLosSectionLookupReuse", "false");
         System.setProperty("lattice.poiBfsScratch", "false");
+        System.setProperty("lattice.nativeRegionZlibDeflate", "false");
 
         LatticeConfig.preload(config);
 
@@ -137,6 +146,7 @@ class LatticeConfigTestSuite {
         assertEquals("true", System.getProperty("lattice.nativeDensityFunction"));
         assertEquals("false", System.getProperty("lattice.nativeLosSectionLookupReuse"));
         assertEquals("false", System.getProperty("lattice.poiBfsScratch"));
+        assertEquals("false", System.getProperty("lattice.nativeRegionZlibDeflate"));
     }
 
     @Test
