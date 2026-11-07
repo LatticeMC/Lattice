@@ -1,0 +1,19 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.register('regionContinuousSaveBenchmark', JavaExec) {
+        dependsOn server.tasks.named('testClasses')
+        classpath = server.sourceSets.test.runtimeClasspath
+        mainClass = 'net.minecraft.world.level.chunk.storage.RegionContinuousSaveBenchmark'
+        workingDir = gradle.rootProject.projectDir
+        jvmArgs '--enable-preview', '-Xms256m', '-Xmx512m'
+        systemProperty 'lattice.native.path', server.findProperty('regionSaveNativePath') ?:
+                gradle.rootProject.file('build/lattice-native/lattice.dll').absolutePath
+        systemProperty 'lattice.native.download', 'false'
+        systemProperty 'lattice.nativeCpu', 'auto'
+        systemProperty 'lattice.verify', 'false'
+        systemProperty 'lattice.nativeRegionZlibDeflate', 'true'
+        ['mode': 'current-native', 'threads': '1', 'warmup': '12', 'samples': '21', 'rounds': '16'].each { key, fallback ->
+            systemProperty "regionSave.${key}", server.findProperty("regionSave.${key}") ?: fallback
+        }
+    }
+}
