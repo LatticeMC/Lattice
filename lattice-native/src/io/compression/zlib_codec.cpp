@@ -42,12 +42,9 @@ Status zlib_compress(const std::uint8_t* src, std::size_t src_len,
     return Status::kOk;
 }
 
-std::size_t zlib_compress_bound(std::size_t src_len, int level) noexcept {
-    libdeflate_compressor* c = libdeflate_alloc_compressor(clamp_level(level));
-    if (!c) return 0;
-    const std::size_t bound = libdeflate_zlib_compress_bound(c, src_len);
-    libdeflate_free_compressor(c);
-    return bound;
+std::size_t zlib_compress_bound(std::size_t src_len, int /*level*/) noexcept {
+    // libdeflate permits a null compressor for a bound covering all levels.
+    return libdeflate_zlib_compress_bound(nullptr, src_len);
 }
 
 Status zlib_decompress(const std::uint8_t* src, std::size_t src_len,

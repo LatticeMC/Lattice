@@ -1,10 +1,15 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <future>
+#include <random>
 #include <string>
 #include <vector>
+#include <libdeflate.h>
 
 #include "io/compression/zlib_codec.hpp"
 
@@ -33,6 +38,40 @@ std::vector<std::uint8_t> compress_string(const std::string& src,
 
 void check_status(Status actual, Status expected) {
     CHECK(actual == expected);
+}
+
+struct AllocatorProbe {
+    static inline std::size_t allocations = 0;
+    static inline std::size_t frees = 0;
+    static inline std::size_t bytes = 0;
+    static inline bool fail = false;
+
+    static void* allocate(std::size_t size) {
+        ++allocations;
+        bytes += size;
+        return fail ? nullptr : std::malloc(size);
+    }
+    static void release(void* ptr) {
+        if (ptr) ++frees;
+        std::free(ptr);
+    }
+    AllocatorProbe() {
+        allocations = frees = bytes = 0;
+        fail = false;
+        libdeflate_set_memory_allocator(allocate, release);
+    }
+    ~AllocatorProbe() {
+        libdeflate_set_memory_allocator(std::malloc, std::free);
+        fail = false;
+    }
+};
+
+std::size_t legacy_bound(std::size_t size, int level) {
+    auto* compressor = libdeflate_alloc_compressor(std::max(kMinLevel, std::min(kMaxLevel, level)));
+    if (!compressor) return 0;
+    const auto bound = libdeflate_zlib_compress_bound(compressor, size);
+    libdeflate_free_compressor(compressor);
+    return bound;
 }
 
 } // namespace
@@ -187,4 +226,74 @@ TEST_CASE("zlib_codec: validate rejects invalid header") {
 TEST_CASE("zlib_codec: validate rejects null source") {
     auto st = zlib_validate(nullptr, 1, nullptr);
     check_status(st, Status::kBadArg);
+}
+
+TEST_CASE("zlib_codec: bound matches allocated compressor without allocator calls") {
+    for (int level : {-5, 1, 6, 12, 100}) {
+        for (std::size_t size : {0u, 1u, 1024u, 65536u, 1048576u, 1056768u}) {
+            const auto expected = legacy_bound(size, level);
+            AllocatorProbe probe;
+            const auto bound = zlib_compress_bound(size, level);
+            CHECK(bound == expected);
+            CHECK(bound >= size);
+            CHECK(AllocatorProbe::allocations == 0);
+            CHECK(AllocatorProbe::frees == 0);
+            AllocatorProbe::fail = true;
+            CHECK(zlib_compress_bound(size, level) == expected);
+            CHECK(AllocatorProbe::allocations == 0);
+        }
+    }
+}
+
+TEST_CASE("zlib_codec: actual compression OOM and short-buffer contract remain replayable") {
+    const std::string src = kHelloWorld;
+    std::vector<std::uint8_t> compressed(zlib_compress_bound(src.size()));
+    std::size_t produced = 123;
+    {
+        AllocatorProbe probe;
+        AllocatorProbe::fail = true;
+        CHECK(zlib_compress(reinterpret_cast<const std::uint8_t*>(src.data()), src.size(),
+                            compressed.data(), compressed.size(), &produced) == Status::kOom);
+        CHECK(produced == 0);
+        CHECK(AllocatorProbe::allocations == 1);
+        CHECK(AllocatorProbe::frees == 0);
+    }
+    {
+        AllocatorProbe probe;
+        CHECK(zlib_compress(reinterpret_cast<const std::uint8_t*>(src.data()), src.size(),
+                            compressed.data(), 1, &produced) == Status::kShortBuffer);
+        CHECK(produced == 0);
+        CHECK(AllocatorProbe::allocations == 1);
+        CHECK(AllocatorProbe::frees == 1);
+        CHECK(zlib_compress(reinterpret_cast<const std::uint8_t*>(src.data()), src.size(),
+                            compressed.data(), compressed.size(), &produced) == Status::kOk);
+        CHECK(AllocatorProbe::allocations == 2);
+        CHECK(AllocatorProbe::frees == 2);
+    }
+}
+
+TEST_CASE("zlib_codec: bound-sized buffers cover every level with concurrent isolated compression") {
+    std::vector<std::future<void>> workers;
+    for (int worker = 0; worker < 4; ++worker) {
+        workers.push_back(std::async(std::launch::async, [worker] {
+            std::mt19937 random(42 + worker);
+            for (int level = kMinLevel; level <= kMaxLevel; ++level) {
+                for (std::size_t size : {0u, 1u, 1024u, 65536u}) {
+                    std::vector<std::uint8_t> source(size);
+                    for (auto& byte : source) byte = static_cast<std::uint8_t>(random());
+                    std::vector<std::uint8_t> compressed(zlib_compress_bound(size, level));
+                    std::size_t produced = 0;
+                    REQUIRE(zlib_compress(source.data(), size, compressed.data(), compressed.size(),
+                                          &produced, level) == Status::kOk);
+                    std::vector<std::uint8_t> decoded(size + 1);
+                    std::size_t written = 0;
+                    REQUIRE(zlib_decompress(compressed.data(), produced, decoded.data(),
+                                            decoded.size(), &written) == Status::kOk);
+                    CHECK(written == size);
+                    CHECK(std::equal(source.begin(), source.end(), decoded.begin()));
+                }
+            }
+        }));
+    }
+    for (auto& worker : workers) worker.get();
 }

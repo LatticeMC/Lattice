@@ -175,6 +175,8 @@ lattice_add_test(palette
 lattice_add_test(zlib_codec
     SOURCES  test_zlib_codec.cpp
     DEPS_SRC ${CMAKE_SOURCE_DIR}/src/io/compression/zlib_codec.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(lattice_test_zlib_codec PRIVATE Threads::Threads)
 
 lattice_add_test(nbt_parser
     SOURCES  test_nbt_parser.cpp

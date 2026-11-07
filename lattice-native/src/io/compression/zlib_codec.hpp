@@ -84,7 +84,8 @@ constexpr int kMaxLevel      = 12;
     int level = kDefaultLevel) noexcept;
 
 /// Worst-case compressed size for a given input length and level.
-/// Returns `0` on bad arguments. Useful to right-size `dst_cap`.
+/// Covers every supported level without allocating a compressor. The `level`
+/// parameter is retained for source compatibility. Useful to size `dst_cap`.
 [[nodiscard]] std::size_t zlib_compress_bound(std::size_t src_len,
                                               int level = kDefaultLevel) noexcept;
 
