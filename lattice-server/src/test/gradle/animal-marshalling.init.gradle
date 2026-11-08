@@ -1,0 +1,17 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.register('animalMarshallingAuditBenchmark', JavaExec) {
+        dependsOn server.tasks.named('testClasses')
+        classpath = server.sourceSets.test.runtimeClasspath
+        javaLauncher = server.tasks.named('test').get().javaLauncher
+        mainClass = 'com.latticemc.lattice.nativelib.AnimalMarshallingAuditBenchmark'
+        jvmArgs '--enable-preview'
+        systemProperty 'lattice.native.path', gradle.rootProject.file('build/lattice-native/lattice.dll').absolutePath
+        systemProperty 'lattice.native.download', 'false'
+        systemProperty 'lattice.nativeCpu', server.findProperty('animalMarshalling.cpu') ?: 'auto'
+        systemProperty 'lattice.verify', 'false'
+        ['warmup': '32', 'samples': '21', 'rounds': '256'].each { key, fallback ->
+            systemProperty "animalMarshalling.${key}", server.findProperty("animalMarshalling.${key}") ?: fallback
+        }
+    }
+}
