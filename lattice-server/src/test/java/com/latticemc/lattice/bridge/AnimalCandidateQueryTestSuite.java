@@ -13,6 +13,7 @@ import java.util.function.Predicate;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
@@ -117,7 +118,7 @@ class AnimalCandidateQueryTestSuite {
     }
 
     @Test
-    void highTypeHitPathUsesFullQueryAndExactSnapshotCount() {
+    void highTypeHitPathUsesFullColumnQueryAndFindsPastRejectedNearest() {
         for (boolean prey : new boolean[] {false, true}) {
             for (int count : new int[] {8, 32}) {
                 for (int percent : new int[] {50, 100}) {
@@ -128,16 +129,46 @@ class AnimalCandidateQueryTestSuite {
                         nativeQuery.when(NativeEntityQuery::isAvailable).thenReturn(true);
                         nativeQuery.when(() -> NativeEntityQuery.queryAll(
                                 anyDouble(), anyDouble(), anyDouble(), anyDouble(), anyDouble(), anyDouble(),
-                                any(), isNull(), eq(NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC),
+                                any(int[].class), any(int[].class), any(double[].class), any(double[].class),
+                                any(boolean[].class), any(boolean[].class), isNull(int[].class),
+                                eq(NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC),
                                 eq(1000), eq(true), eq(0.0), eq(0.0), eq(0.0))).thenAnswer(call -> {
-                            NativeEntityQuery.EntitySnapshot[] snapshots = call.getArgument(6);
-                            assertEquals(matches, snapshots.length);
-                            int[] ids = new int[matches];
-                            for (int i = 0; i < matches; ++i) ids[i] = snapshots[matches - i - 1].id();
-                            return ids;
+                            int[] ids = call.getArgument(6);
+                            int[] typeIds = call.getArgument(7);
+                            double[] positions = call.getArgument(8);
+                            double[] aabbs = call.getArgument(9);
+                            boolean[] alive = call.getArgument(10);
+                            boolean[] spectator = call.getArgument(11);
+                            assertEquals(matches, ids.length);
+                            assertEquals(matches, typeIds.length);
+                            assertEquals(matches * NativeEntityQuery.POSITION_STRIDE, positions.length);
+                            assertEquals(matches * NativeEntityQuery.AABB_STRIDE, aabbs.length);
+                            assertEquals(matches, alive.length);
+                            assertEquals(matches, spectator.length);
+                            int foxTypeId = BuiltInRegistries.ENTITY_TYPE.getId(EntityType.FOX);
+                            for (int i = 0; i < matches; ++i) {
+                                assertEquals(i + 1, ids[i]);
+                                assertEquals(foxTypeId, typeIds[i]);
+                                assertEquals(1.0, positions[i * NativeEntityQuery.POSITION_STRIDE]);
+                                assertEquals(0.0, positions[i * NativeEntityQuery.POSITION_STRIDE + 1]);
+                                assertEquals(0.0, positions[i * NativeEntityQuery.POSITION_STRIDE + 2]);
+                                int boxBase = i * NativeEntityQuery.AABB_STRIDE;
+                                assertArrayEquals(new double[] {0.0, 0.0, 0.0, 2.0, 1.0, 1.0},
+                                        java.util.Arrays.copyOfRange(aabbs, boxBase, boxBase + NativeEntityQuery.AABB_STRIDE));
+                                assertTrue(alive[i]);
+                                assertFalse(spectator[i]);
+                            }
+                            int[] result = new int[matches];
+                            for (int i = 0; i < matches; ++i) result[i] = ids[matches - i - 1];
+                            return result;
                         });
-                        assertSame(f.candidates.get(matches - 1), f.find(prey, f.foxPredicate()));
-                        assertEquals(List.of("distance-" + matches, "predicate-" + matches), f.events);
+                        Predicate<LivingEntity> rejectNearest = entity -> {
+                            f.events.add("predicate-" + entity.getId());
+                            return entity != f.candidates.get(matches - 1);
+                        };
+                        assertSame(f.candidates.get(matches - 2), f.find(prey, rejectNearest));
+                        assertEquals(List.of("distance-" + matches, "predicate-" + matches,
+                                "distance-" + (matches - 1), "predicate-" + (matches - 1)), f.events);
                         for (int i = 0; i < count; ++i) {
                             verify(f.candidates.get(i), times(i < matches ? 1 : 0)).getBoundingBox();
                         }

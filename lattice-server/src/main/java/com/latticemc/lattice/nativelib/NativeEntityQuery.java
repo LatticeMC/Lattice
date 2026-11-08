@@ -68,9 +68,6 @@ public final class NativeEntityQuery {
         if (maxResults < 0) throw new IllegalArgumentException("negative max results");
         if (entities.length == 0) return new int[0];
 
-        final int outputCapacity = maxResults > 0 ? Math.min(maxResults, entities.length) : entities.length;
-        if (outputCapacity == 0) return new int[0];
-
         final int[] entityIds = new int[entities.length];
         final int[] entityTypeIds = new int[entities.length];
         final double[] positions = new double[entities.length * POSITION_STRIDE];
@@ -95,6 +92,56 @@ public final class NativeEntityQuery {
             alive[i] = entity.isAlive();
             spectator[i] = entity.isSpectator();
         }
+
+        return query(queryMinX, queryMinY, queryMinZ,
+                queryMaxX, queryMaxY, queryMaxZ,
+                entityIds, entityTypeIds, positions, aabbs, alive, spectator,
+                allowedTypeIds, predicateKind, excludedEntityId,
+                sortByDistance, maxResults, refX, refY, refZ);
+    }
+
+    /**
+     * Returns all built-in matches from caller-owned column arrays. The arrays
+     * are read during this call and are never retained by the query.
+     */
+    public static int[] queryAll(double queryMinX, double queryMinY, double queryMinZ,
+                                 double queryMaxX, double queryMaxY, double queryMaxZ,
+                                 int[] entityIds, int[] entityTypeIds,
+                                 double[] positions, double[] aabbs,
+                                 boolean[] alive, boolean[] spectator,
+                                 int[] allowedTypeIds,
+                                 PredicateKind predicateKind,
+                                 int excludedEntityId,
+                                 boolean sortByDistance,
+                                 double refX, double refY, double refZ) {
+        return query(queryMinX, queryMinY, queryMinZ,
+                queryMaxX, queryMaxY, queryMaxZ,
+                entityIds, entityTypeIds, positions, aabbs, alive, spectator,
+                allowedTypeIds, predicateKind, excludedEntityId,
+                sortByDistance, 0, refX, refY, refZ);
+    }
+
+    /**
+     * Limits built-in matches before any caller-side filtering. Zero is unlimited;
+     * positive limits are not suitable for subsequent Java predicates.
+     */
+    public static int[] query(double queryMinX, double queryMinY, double queryMinZ,
+                              double queryMaxX, double queryMaxY, double queryMaxZ,
+                              int[] entityIds, int[] entityTypeIds,
+                              double[] positions, double[] aabbs,
+                              boolean[] alive, boolean[] spectator,
+                              int[] allowedTypeIds,
+                              PredicateKind predicateKind,
+                              int excludedEntityId,
+                              boolean sortByDistance,
+                              int maxResults,
+                              double refX, double refY, double refZ) {
+        validateEntityColumns(entityIds, entityTypeIds, positions, aabbs, alive, spectator,
+                predicateKind, maxResults);
+        if (entityIds.length == 0) return new int[0];
+
+        final int outputCapacity = maxResults > 0 ? Math.min(maxResults, entityIds.length) : entityIds.length;
+        if (outputCapacity == 0) return new int[0];
 
         final int[] outputIds = new int[outputCapacity];
         final double[] outputDistances = sortByDistance ? new double[outputCapacity * 2] : null;
@@ -210,25 +257,33 @@ public final class NativeEntityQuery {
                                        boolean[] alive, boolean[] spectator,
                                        PredicateKind predicateKind, boolean sortByDistance,
                                        int maxResults, int[] outputIds, double[] outputDistances) {
-        if (entityIds == null || entityTypeIds == null || positions == null || aabbs == null
-                || alive == null || spectator == null) {
-            throw new IllegalArgumentException("null entity arrays");
-        }
-        if (predicateKind == null) throw new IllegalArgumentException("null predicate kind");
-        if (maxResults < 0) throw new IllegalArgumentException("negative max results");
+        validateEntityColumns(entityIds, entityTypeIds, positions, aabbs, alive, spectator,
+                predicateKind, maxResults);
         if (outputIds == null) throw new IllegalArgumentException("null output ids");
-        final int count = entityIds.length;
-        if (entityTypeIds.length < count || alive.length < count || spectator.length < count
-                || positions.length < (long) count * POSITION_STRIDE
-                || aabbs.length < (long) count * AABB_STRIDE) {
-            throw new IllegalArgumentException("entity arrays too short");
-        }
         if (sortByDistance && outputDistances == null) {
             throw new IllegalArgumentException("null sorted distances");
         }
         final long distanceCapacity = (long) outputIds.length * (sortByDistance ? 2 : 1);
         if (outputDistances != null && outputDistances.length < distanceCapacity) {
             throw new IllegalArgumentException("distances too short");
+        }
+    }
+
+    private static void validateEntityColumns(int[] entityIds, int[] entityTypeIds,
+                                              double[] positions, double[] aabbs,
+                                              boolean[] alive, boolean[] spectator,
+                                              PredicateKind predicateKind, int maxResults) {
+        if (entityIds == null || entityTypeIds == null || positions == null || aabbs == null
+                || alive == null || spectator == null) {
+            throw new IllegalArgumentException("null entity arrays");
+        }
+        if (predicateKind == null) throw new IllegalArgumentException("null predicate kind");
+        if (maxResults < 0) throw new IllegalArgumentException("negative max results");
+        final int count = entityIds.length;
+        if (entityTypeIds.length < count || alive.length < count || spectator.length < count
+                || positions.length < (long) count * POSITION_STRIDE
+                || aabbs.length < (long) count * AABB_STRIDE) {
+            throw new IllegalArgumentException("entity arrays too short");
         }
     }
 

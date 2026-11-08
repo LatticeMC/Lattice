@@ -7,6 +7,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.Arrays;
 import java.util.Random;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 
 class NativeEntityQueryParityTestSuite {
     @Test
@@ -94,6 +96,79 @@ class NativeEntityQueryParityTestSuite {
         assertArrayEquals(new int[] {1, 2, 3}, all);
     }
 
+    @Test
+    void publicColumnEntryMatchesJavaNativeAndOwnsItsResult() throws Exception {
+        assertTrue(NativeEntityQuery.isAvailable(), LatticeNative.failureReason());
+        for (int max : new int[] {0, 1, 2, 8}) {
+            Object[] args = contractArgs(true, max, 4);
+            int[] ids = (int[]) args[6];
+            int[] types = (int[]) args[7];
+            double[] positions = (double[]) args[8];
+            double[] boxes = (double[]) args[9];
+            boolean[] alive = (boolean[]) args[10];
+            boolean[] spectator = (boolean[]) args[11];
+            NativeEntityQuery.PredicateKind predicate = (NativeEntityQuery.PredicateKind) args[13];
+            int[] allowed = (int[]) args[12];
+
+            int[] expected = new int[ids.length];
+            double[] expectedDistances = new double[expected.length * 2];
+            int expectedCount = NativeEntityQuery.javaQuery(
+                    (double) args[0], (double) args[1], (double) args[2],
+                    (double) args[3], (double) args[4], (double) args[5],
+                    ids, types, positions, boxes, alive, spectator, allowed, predicate,
+                    (int) args[14], (boolean) args[15], max,
+                    (double) args[17], (double) args[18], (double) args[19],
+                    expected, expectedDistances);
+
+            int[] first = NativeEntityQuery.query(
+                    (double) args[0], (double) args[1], (double) args[2],
+                    (double) args[3], (double) args[4], (double) args[5],
+                    ids, types, positions, boxes, alive, spectator, allowed, predicate,
+                    (int) args[14], (boolean) args[15], max,
+                    (double) args[17], (double) args[18], (double) args[19]);
+            assertArrayEquals(Arrays.copyOf(expected, expectedCount), first);
+
+            int[] second = NativeEntityQuery.query(
+                    (double) args[0], (double) args[1], (double) args[2],
+                    (double) args[3], (double) args[4], (double) args[5],
+                    ids, types, positions, boxes, alive, spectator, allowed, predicate,
+                    (int) args[14], (boolean) args[15], max,
+                    (double) args[17], (double) args[18], (double) args[19]);
+            assertNotSame(first, second);
+            if (second.length != 0) second[0] = -999;
+            assertArrayEquals(Arrays.copyOf(expected, expectedCount), first);
+
+            int[] beforeIds = ids.clone();
+            double[] beforePositions = positions.clone();
+            assertThrows(IllegalArgumentException.class, () -> NativeEntityQuery.query(
+                    (double) args[0], (double) args[1], (double) args[2],
+                    (double) args[3], (double) args[4], (double) args[5],
+                    null, types, positions, boxes, alive, spectator, allowed, predicate,
+                    (int) args[14], (boolean) args[15], max,
+                    (double) args[17], (double) args[18], (double) args[19]));
+            assertThrows(IllegalArgumentException.class, () -> NativeEntityQuery.query(
+                    (double) args[0], (double) args[1], (double) args[2],
+                    (double) args[3], (double) args[4], (double) args[5],
+                    ids, new int[ids.length - 1], positions, boxes, alive, spectator, allowed, predicate,
+                    (int) args[14], (boolean) args[15], max,
+                    (double) args[17], (double) args[18], (double) args[19]));
+            assertThrows(IllegalArgumentException.class, () -> NativeEntityQuery.query(
+                    (double) args[0], (double) args[1], (double) args[2],
+                    (double) args[3], (double) args[4], (double) args[5],
+                    ids, types, new double[positions.length - 1], boxes, alive, spectator, allowed, predicate,
+                    (int) args[14], (boolean) args[15], max,
+                    (double) args[17], (double) args[18], (double) args[19]));
+            assertThrows(IllegalArgumentException.class, () -> NativeEntityQuery.query(
+                    (double) args[0], (double) args[1], (double) args[2],
+                    (double) args[3], (double) args[4], (double) args[5],
+                    ids, types, positions, boxes, alive, spectator, allowed, predicate,
+                    (int) args[14], (boolean) args[15], -1,
+                    (double) args[17], (double) args[18], (double) args[19]));
+            assertArrayEquals(beforeIds, ids);
+            assertArrayEquals(beforePositions, positions);
+        }
+    }
+
     private static Object[] contractArgs(boolean sorted, int max, int capacity) {
         int[] output = new int[capacity];
         double[] distances = new double[capacity * (sorted ? 2 : 1)];
@@ -105,6 +180,56 @@ class NativeEntityQueryParityTestSuite {
                 new boolean[] {true, true, true}, new boolean[3], null,
                 NativeEntityQuery.PredicateKind.NONE, -1, sorted, max,
                 0., 0., 0., output, distances};
+    }
+
+    @Test
+    void publicColumnsUseJavaFallbackWithoutMutatingInputsOrSharingResults() {
+        try (MockedStatic<LatticeNative> nativeLibrary = Mockito.mockStatic(LatticeNative.class)) {
+            nativeLibrary.when(LatticeNative::isLoaded).thenReturn(false);
+            for (boolean sorted : new boolean[] {false, true}) {
+                int[] ids = {11, 22, 33, 44, 55};
+                int[] types = {1, 1, 1, 2, 1};
+                double[] positions = {3, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0};
+                double[] boxes = new double[30];
+                boolean[] alive = {true, true, true, true, false};
+                boolean[] spectator = new boolean[5];
+                int[] allowed = {1};
+                int[] allExpected = sorted ? new int[] {22, 33, 11} : new int[] {11, 22, 33};
+                int[] beforeIds = ids.clone(), beforeTypes = types.clone(), beforeAllowed = allowed.clone();
+                double[] beforePositions = positions.clone(), beforeBoxes = boxes.clone();
+                boolean[] beforeAlive = alive.clone(), beforeSpectator = spectator.clone();
+                for (int max : new int[] {0, 1, 2, 8}) {
+                    int[] expected = Arrays.copyOf(allExpected, max == 0 ? 3 : Math.min(max, 3));
+                    int[] first = NativeEntityQuery.query(0, 0, 0, 10, 10, 10,
+                            ids, types, positions, boxes, alive, spectator, allowed,
+                            NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC,
+                            -1, sorted, max, 0, 0, 0);
+                    int[] second = NativeEntityQuery.query(0, 0, 0, 10, 10, 10,
+                            ids, types, positions, boxes, alive, spectator, allowed,
+                            NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC,
+                            -1, sorted, max, 0, 0, 0);
+                    assertArrayEquals(expected, first);
+                    assertArrayEquals(expected, second);
+                    assertNotSame(first, second);
+                    second[0] = -999;
+                    assertArrayEquals(expected, first);
+                }
+                int[] all = NativeEntityQuery.queryAll(0, 0, 0, 10, 10, 10,
+                        ids, types, positions, boxes, alive, spectator, allowed,
+                        NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC,
+                        -1, sorted, 0, 0, 0);
+                assertArrayEquals(allExpected, all);
+                assertArrayEquals(beforeIds, ids);
+                assertArrayEquals(beforeTypes, types);
+                assertArrayEquals(beforeAllowed, allowed);
+                assertArrayEquals(beforePositions, positions);
+                assertArrayEquals(beforeBoxes, boxes);
+                assertArrayEquals(beforeAlive, alive);
+                assertArrayEquals(beforeSpectator, spectator);
+            }
+            nativeLibrary.verify(() -> LatticeNative.logFallbackOnce(
+                    "entity_query", "native entity query unavailable"), Mockito.atLeastOnce());
+        }
     }
 
     private static int invokeQuery(boolean nativePath, Object[] args) throws Exception {

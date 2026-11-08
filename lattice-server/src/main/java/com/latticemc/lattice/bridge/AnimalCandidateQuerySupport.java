@@ -45,21 +45,45 @@ final class AnimalCandidateQuerySupport {
         }
 
         final Map<Integer, LivingEntity> byId = new HashMap<>(snapshotCount);
-        final NativeEntityQuery.EntitySnapshot[] snapshots = new NativeEntityQuery.EntitySnapshot[snapshotCount];
+        final int[] entityIds = new int[snapshotCount];
+        final int[] entityTypeIds = new int[snapshotCount];
+        final double[] positions = new double[snapshotCount * NativeEntityQuery.POSITION_STRIDE];
+        final double[] aabbs = new double[snapshotCount * NativeEntityQuery.AABB_STRIDE];
+        final boolean[] alive = new boolean[snapshotCount];
+        final boolean[] spectator = new boolean[snapshotCount];
         int index = 0;
         for (LivingEntity entity : candidates) {
             if (!matchesAnyType(entity, nativePrefilterTypes)) continue;
+            final int id = entity.getId();
+            final int typeId = BuiltInRegistries.ENTITY_TYPE.getId(entity.getType());
+            final double x = entity.getX();
+            final double y = entity.getY();
+            final double z = entity.getZ();
             final AABB box = entity.getBoundingBox();
-            byId.put(entity.getId(), entity);
-            snapshots[index++] = new NativeEntityQuery.EntitySnapshot(
-                    entity.getId(), BuiltInRegistries.ENTITY_TYPE.getId(entity.getType()),
-                    entity.getX(), entity.getY(), entity.getZ(),
-                    box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ,
-                    entity.isAlive(), entity.isSpectator());
+            final boolean isAlive = entity.isAlive();
+            final boolean isSpectator = entity.isSpectator();
+            byId.put(id, entity);
+            entityIds[index] = id;
+            entityTypeIds[index] = typeId;
+            final int positionBase = index * NativeEntityQuery.POSITION_STRIDE;
+            positions[positionBase] = x;
+            positions[positionBase + 1] = y;
+            positions[positionBase + 2] = z;
+            final int boxBase = index * NativeEntityQuery.AABB_STRIDE;
+            aabbs[boxBase] = box.minX;
+            aabbs[boxBase + 1] = box.minY;
+            aabbs[boxBase + 2] = box.minZ;
+            aabbs[boxBase + 3] = box.maxX;
+            aabbs[boxBase + 4] = box.maxY;
+            aabbs[boxBase + 5] = box.maxZ;
+            alive[index] = isAlive;
+            spectator[index] = isSpectator;
+            ++index;
         }
         final int[] nearestIds = NativeEntityQuery.queryAll(
                 area.minX, area.minY, area.minZ, area.maxX, area.maxY, area.maxZ,
-                snapshots, null, NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC,
+                entityIds, entityTypeIds, positions, aabbs, alive, spectator,
+                null, NativeEntityQuery.PredicateKind.IS_ALIVE_NOT_SELF_NOT_SPEC,
                 self.getId(), true, self.getX(), self.getY(), self.getZ());
         final double maxDistance = range * range;
         for (int id : nearestIds) {
