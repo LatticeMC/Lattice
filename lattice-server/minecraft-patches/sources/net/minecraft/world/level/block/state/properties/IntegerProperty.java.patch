@@ -1,0 +1,13 @@
+--- a/net/minecraft/world/level/block/state/properties/IntegerProperty.java
++++ b/net/minecraft/world/level/block/state/properties/IntegerProperty.java
+@@ -14,9 +14,7 @@
+     @Override
+     public final int moonrise$getIdFor(final Integer value) {
+         final int val = value.intValue();
+-        final int ret = val - this.min;
+-
+-        return ret | ((this.max - ret) >> 31);
++        return val >= this.min && val <= this.max ? val - this.min : -1;
+     }
+ 
+     private void init() {

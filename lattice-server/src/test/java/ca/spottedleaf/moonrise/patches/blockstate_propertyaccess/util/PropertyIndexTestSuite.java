@@ -2,6 +2,7 @@ package ca.spottedleaf.moonrise.patches.blockstate_propertyaccess.util;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import ca.spottedleaf.moonrise.patches.blockstate_propertyaccess.PropertyAccess;
 import it.unimi.dsi.fastutil.objects.Reference2ObjectArrayMap;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -21,6 +22,29 @@ import org.junit.jupiter.api.Test;
 class PropertyIndexTestSuite {
     private static class TestState extends StateHolder<String, TestState> {
         TestState(Reference2ObjectArrayMap<Property<?>, Comparable<?>> values) { super("test", values, null); }
+    }
+
+    @Test void integerValueIdsRespectNonZeroMinAndRejectOverflowValues() {
+        for (int min : new int[]{0, 4, 17}) {
+            IntegerProperty property = IntegerProperty.create("bounded", min, min + 2);
+            PropertyAccess<Integer> access = property;
+            Map<Map<Property<?>, Comparable<?>>, TestState> universe = new HashMap<>();
+            for (int value = min; value <= min + 2; ++value) {
+                assertEquals(value - min, access.moonrise$getIdFor(value));
+                var values = new Reference2ObjectArrayMap<Property<?>, Comparable<?>>();
+                values.put(property, value);
+                universe.put(values, new TestState(values));
+            }
+            universe.values().forEach(state -> state.populateNeighbours(universe));
+            for (int invalid : new int[]{min - 1, min + 3, Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+                assertEquals(-1, access.moonrise$getIdFor(invalid));
+                for (TestState state : universe.values()) {
+                    assertThrows(IllegalArgumentException.class, () -> state.setValue(property, invalid));
+                    assertThrows(IllegalArgumentException.class, () -> state.trySetValue(property, invalid));
+                }
+            }
+            assertThrows(NullPointerException.class, () -> access.moonrise$getIdFor(null));
+        }
     }
 
     @Test void sparseGlobalIdsKeepBoundedStorageAndAllTransitions() throws Exception {
