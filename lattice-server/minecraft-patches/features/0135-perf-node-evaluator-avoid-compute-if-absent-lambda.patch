@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice <noreply@latticemc.com>
+Date: Sun, 8 Nov 2026 10:00:00 +0800
+Subject: [PATCH] perf: avoid NodeEvaluator computeIfAbsent lambda
+
+Use an explicit lookup and insert for the hot node cache path. This keeps
+the existing hash and node identity semantics without creating a lambda
+capture at each lookup.
+---
+diff --git a/net/minecraft/world/level/pathfinder/NodeEvaluator.java b/net/minecraft/world/level/pathfinder/NodeEvaluator.java
+--- a/net/minecraft/world/level/pathfinder/NodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/NodeEvaluator.java
+@@ -44,5 +44,11 @@ public abstract class NodeEvaluator {
+     }
+ 
+     protected Node getNode(int x, int y, int z) {
+-        return this.nodes.computeIfAbsent(Node.createHash(x, y, z), key -> new Node(x, y, z));
++        int key = Node.createHash(x, y, z);
++        Node node = this.nodes.get(key);
++        if (node == null) {
++            node = new Node(x, y, z);
++            this.nodes.put(key, node);
++        }
++        return node;
+     }
+ 
+     public abstract Node getStart();
+-- 
+2.47.1

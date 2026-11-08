@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice <noreply@latticemc.com>
+Date: Sun, 8 Nov 2026 10:00:00 +0800
+Subject: [PATCH] perf: use an explicit LevelTicks count loop
+
+Avoid the stream pipeline and method-reference allocation in the aggregate
+count query while preserving the current per-container count contract.
+---
+diff --git a/net/minecraft/world/ticks/LevelTicks.java b/net/minecraft/world/ticks/LevelTicks.java
+--- a/net/minecraft/world/ticks/LevelTicks.java
++++ b/net/minecraft/world/ticks/LevelTicks.java
+@@ -278,5 +278,9 @@ public class LevelTicks<T> implements LevelTickAccess<T> {
+ 
+     @Override
+     public int count() {
+-        return this.allContainers.values().stream().mapToInt(TickAccess::count).sum();
++        int count = 0;
++        for (LevelChunkTicks<T> container : this.allContainers.values()) {
++            count += container.count();
++        }
++        return count;
+     }
+ 
+     @FunctionalInterface
+-- 
+2.47.1

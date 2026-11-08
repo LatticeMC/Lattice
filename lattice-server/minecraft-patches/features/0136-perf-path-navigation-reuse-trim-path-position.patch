@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice <noreply@latticemc.com>
+Date: Sun, 8 Nov 2026 10:00:00 +0800
+Subject: [PATCH] perf: reuse PathNavigation trim path position
+
+Reuse one mutable position while checking path nodes. The block-state
+lookup consumes coordinates immediately and does not retain the position.
+---
+diff --git a/net/minecraft/world/entity/ai/navigation/PathNavigation.java b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
+--- a/net/minecraft/world/entity/ai/navigation/PathNavigation.java
++++ b/net/minecraft/world/entity/ai/navigation/PathNavigation.java
+@@ -54,6 +54,7 @@ public abstract class PathNavigation {
+     private float maxVisitedNodesMultiplier = 1.0F;
+     public final PathFinder pathFinder;
+     private boolean isStuck;
++    private final BlockPos.MutableBlockPos trimPathScratch = new BlockPos.MutableBlockPos();
+     private float requiredPathLength = 16.0F;
+ 
+     public PathNavigation(Mob mob, Level level) {
+@@ -403,7 +403,8 @@ public abstract class PathNavigation {
+             for (int i = 0; i < this.path.getNodeCount(); i++) {
+                 Node node = this.path.getNode(i);
+                 Node node1 = i + 1 < this.path.getNodeCount() ? this.path.getNode(i + 1) : null;
+-                BlockState blockState = this.level.getBlockState(new BlockPos(node.x, node.y, node.z));
++                this.trimPathScratch.set(node.x, node.y, node.z);
++                BlockState blockState = this.level.getBlockState(this.trimPathScratch);
+                 if (blockState.is(BlockTags.CAULDRONS)) {
+                     this.path.replaceNode(i, node.cloneAndMove(node.x, node.y + 1, node.z));
+                     if (node1 != null && node.y >= node1.y) {
+-- 
+2.47.1

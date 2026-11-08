@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice <noreply@latticemc.com>
+Date: Sun, 8 Nov 2026 10:00:00 +0800
+Subject: [PATCH] perf: make entity visibility prefilter runtime configurable
+
+Keep the native and Java visibility paths available while making the native
+prefilter a startup property instead of a compile-time constant. The Lattice
+configuration layer supplies the property from lattice.yml.
+---
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -124,7 +124,8 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerProvider, GeneratingChunkMap, ca.spottedleaf.moonrise.patches.chunk_system.level.ChunkSystemChunkMap { // Paper - rewrite chunk system
+     private static final int EAGER_CHUNK_SAVE_COOLDOWN_IN_MILLIS = 10000;
+     private static final int MAX_ACTIVE_CHUNK_WRITES = 128;
+-    // Lattice: C7 stays out of production; javac removes the disabled prefilter branch.
+-    // Keep NativeEntityVisibility available only to independent experiments/benchmarks.
+-    private static final boolean LATTICE_NATIVE_VISIBILITY_PREFILTER = false;
++    // Lattice: startup-only switch; Java visibility checks remain the fallback.
++    private static final boolean LATTICE_NATIVE_VISIBILITY_PREFILTER = Boolean.parseBoolean(
++        System.getProperty("lattice.nativeEntityVisibilityPrefilter", "false")
++    );
+     private static final int LATTICE_NATIVE_VISIBILITY_MIN_PLAYERS = Math.max(0,
+         Integer.getInteger("lattice.nativeEntityVisibilityMinPlayers", 16));
+-- 
+2.47.1

@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lattice <noreply@latticemc.com>
+Date: Sun, 8 Nov 2026 10:00:00 +0800
+Subject: [PATCH] perf: skip inactive entity profiler suppliers
+
+Avoid allocating profiler supplier lambdas when the vanilla profiler is
+inactive. Active profilers retain the existing lazy entity type label.
+---
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -77,4 +77,5 @@ import net.minecraft.util.debug.LevelDebugSynchronizers;
+ import net.minecraft.util.debug.LevelDebugSynchronizers;
++import net.minecraft.util.profiling.InactiveProfiler;
+ import net.minecraft.util.profiling.Profiler;
+ import net.minecraft.util.profiling.ProfilerFiller;
+ import net.minecraft.util.random.WeightedList;
+@@ -1464,5 +1464,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         ProfilerFiller profilerFiller = Profiler.get();
+         entity.tickCount++;
+         entity.totalEntityAge++; // Paper - age-like counter for all entities
+-        profilerFiller.push(() -> BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
++        if (profilerFiller != InactiveProfiler.INSTANCE) {
++            profilerFiller.push(() -> BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
++        }
+         profilerFiller.incrementCounter("tickNonPassenger");
+@@ -1494,4 +1494,6 @@ public class ServerLevel extends Level implements WorldGenLevel {
+             passengerEntity.totalEntityAge++; // Paper - age-like counter for all entities
+             ProfilerFiller profilerFiller = Profiler.get();
+-            profilerFiller.push(() -> BuiltInRegistries.ENTITY_TYPE.getKey(passengerEntity.getType()).toString());
++            if (profilerFiller != InactiveProfiler.INSTANCE) {
++                profilerFiller.push(() -> BuiltInRegistries.ENTITY_TYPE.getKey(passengerEntity.getType()).toString());
++            }
+             profilerFiller.incrementCounter("tickPassenger");
+-- 
+2.47.1

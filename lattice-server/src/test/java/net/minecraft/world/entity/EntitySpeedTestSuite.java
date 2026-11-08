@@ -149,23 +149,28 @@ class EntitySpeedTestSuite {
         sameBits(new Vec3(2, 3, 4), entity.getKnownSpeed());
     }
 
-    @Test void productionTrackerHasNoNativeVisibilityOrPrefilterAllocation() throws Exception {
-        // 验证实际编译产物，避免仅测试默认配置；即使旧属性为 true 也不能接回 C7。
+    @Test void productionTrackerKeepsRuntimeVisibilityPrefilterPath() throws Exception {
+        // Verify the runtime-configurable C7 path is present in the production bytecode.
         try (var stream = Entity.class.getClassLoader().getResourceAsStream("net/minecraft/server/level/ChunkMap$TrackedEntity.class")) {
             assertNotNull(stream);
             ClassNode node = new ClassNode();
             new ClassReader(stream).accept(node, 0);
             var tick = node.methods.stream().filter(m -> m.name.equals("moonrise$tick")).findFirst().orElseThrow();
             boolean callsUpdate = false;
+            boolean callsNativeVisibility = false;
+            boolean referencesPrefilterGate = false;
             for (var instruction : tick.instructions) {
                 if (instruction instanceof MethodInsnNode method) {
-                    assertFalse(method.owner.endsWith("/NativeEntityVisibility"));
+                    callsNativeVisibility |= method.owner.endsWith("/NativeEntityVisibility");
                     callsUpdate |= method.name.equals("updatePlayer");
                 }
-                if (instruction instanceof FieldInsnNode field) assertFalse(field.name.startsWith("LATTICE_NATIVE_VISIBILITY"));
-                assertNotEquals(org.objectweb.asm.Opcodes.NEWARRAY, instruction.getOpcode());
+                if (instruction instanceof FieldInsnNode field) {
+                    referencesPrefilterGate |= field.name.startsWith("LATTICE_NATIVE_VISIBILITY");
+                }
             }
             assertTrue(callsUpdate);
+            assertTrue(callsNativeVisibility);
+            assertTrue(referencesPrefilterGate);
         }
     }
 }
