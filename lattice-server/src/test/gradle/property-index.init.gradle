@@ -1,0 +1,13 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.register('propertyIndexAuditBenchmark', JavaExec) {
+        dependsOn server.tasks.named('testClasses')
+        classpath = server.sourceSets.test.runtimeClasspath
+        mainClass = 'ca.spottedleaf.moonrise.patches.blockstate_propertyaccess.util.PropertyIndexAuditBenchmark'
+        jvmArgs '--enable-preview'
+        systemProperty 'lattice.native.download', 'false'
+        systemProperty 'propertyIndex.warmup', server.findProperty('propertyIndex.warmup') ?: '32'
+        systemProperty 'propertyIndex.samples', server.findProperty('propertyIndex.samples') ?: '21'
+        systemProperty 'propertyIndex.rounds', server.findProperty('propertyIndex.rounds') ?: '1024'
+    }
+}
