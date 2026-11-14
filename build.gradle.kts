@@ -241,6 +241,9 @@ val buildLatticeNative by tasks.registering(Exec::class) {
 }
 
 project(":lattice-server") {
+    tasks.withType<Test> {
+        systemProperty("lattice.nativePaletteOpsMinCount", "0")
+    }
     tasks.named<ProcessResources>("processResources") {
         val bundleDirectory = nativeBundleDirectory.orNull
         inputs.property("latticeNativeBundleMode", bundleDirectory?.absolutePath ?: "local")
