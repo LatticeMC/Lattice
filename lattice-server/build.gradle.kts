@@ -457,6 +457,20 @@ val pathfinderSearchBenchmark by tasks.registering(JavaExec::class) {
     systemProperty("lattice.pathReverse", providers.gradleProperty("pathfinderSearchBenchmarkReverse").getOrElse("false"))
 }
 
+val brainHotPathBenchmark by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Micro-benchmark the three Brain hot-path changes (hasRequiredMemories cache, forget skip, Sensing generation set) old vs new"
+    dependsOn(tasks.processResources, tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("net.minecraft.world.entity.ai.BrainHotPathBenchmark")
+    workingDir = temporaryDir
+    jvmArgs("-Xms1g", "-Xmx1g", "--enable-preview")
+    systemProperty("lattice.brainWarmup", providers.gradleProperty("brainHotPathWarmup").getOrElse("12"))
+    systemProperty("lattice.brainSamples", providers.gradleProperty("brainHotPathSamples").getOrElse("15"))
+    systemProperty("lattice.brainTicks", providers.gradleProperty("brainHotPathTicks").getOrElse("4000"))
+    systemProperty("lattice.brainReverse", providers.gradleProperty("brainHotPathReverse").getOrElse("false"))
+}
+
 val pathfinderOptimizationBenchmark by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "Same-JVM ABBA comparison of isolated pathfinder optimizations"

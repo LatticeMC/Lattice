@@ -48,7 +48,7 @@ public final class PathfinderSearchBenchmark {
     private static final String PATH_LENGTH = System.getProperty("lattice.pathLength",
             System.getenv().getOrDefault("LATTICE_PATH_LENGTH", "long"));
     // 状态快照编码常量：快照比搜索区外扩一圈（x/z 各 -1..+1），并在 y 方向包含地板层(y=-1)与头部净空层(y=1)。
-    private static final int SNAPSHOT_WORLD_KEY = 1;
+    private static long SNAPSHOT_WORLD_KEY;
     private static final int SNAPSHOT_LEVEL_MIN_Y = -64;
     private static final int SNAPSHOT_STATE_MIN_X = -1;
     private static final int SNAPSHOT_STATE_MIN_Y = -1;
@@ -101,6 +101,7 @@ public final class PathfinderSearchBenchmark {
                 System.getProperty("os.name"), System.getProperty("os.arch"),
                 ManagementFactory.getRuntimeMXBean().getInputArguments(),
                 PATH_ENTRY, PATH_LENGTH, world, sizeX, sizeZ, warmup, samples, iterations, reverse);
+        SNAPSHOT_WORLD_KEY = NativePathfinder.createMirrorWorld();
         try {
             if (world.equals("serpentine") || world.equals("both")) {
                 runConfig(sizeX, sizeZ, warmup, samples, reverse, iterations);
@@ -115,6 +116,7 @@ public final class PathfinderSearchBenchmark {
                 throw new IllegalArgumentException("lattice.pathWorld must be serpentine, village, or both: " + world);
             }
         } finally {
+            NativePathfinder.retireMirrorWorld(SNAPSHOT_WORLD_KEY);
             NativePathfinder.setCardinalFastPathStatsEnabledForBenchmark(false);
             NativePathfinder.setCardinalFastPathEnabledForBenchmark(true);
         }
