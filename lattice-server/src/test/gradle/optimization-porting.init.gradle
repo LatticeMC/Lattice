@@ -1,0 +1,19 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.register('optimizationPortingBenchmark', JavaExec) {
+        dependsOn server.tasks.named('testClasses')
+        classpath = server.sourceSets.test.runtimeClasspath
+        mainClass = 'net.minecraft.world.level.chunk.PortingAllocationBenchmark'
+        jvmArgs '--enable-preview'
+        systemProperty 'lattice.native.path', gradle.rootProject.file('build/lattice-native/lattice.dll').absolutePath
+        systemProperty 'lattice.native.download', 'false'
+        systemProperty 'lattice.nativePaletteOps', 'true'
+        systemProperty 'lattice.nativePaletteOpsMinCount', '0'
+        ['warmup', 'rounds', 'samples'].each { name ->
+            def value = server.findProperty("portingBenchmark.${name}")
+            if (value != null) {
+                systemProperty "portingBenchmark.${name}", value
+            }
+        }
+    }
+}
