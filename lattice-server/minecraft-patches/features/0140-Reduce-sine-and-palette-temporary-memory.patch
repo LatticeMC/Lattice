@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 15 Nov 2026 12:00:00 +0800
+Subject: [PATCH] Reduce sine and palette temporary memory
+
+Preserve the double/long sine indexing and first-encounter palette ordering.
+Packing scratch is bounded, reentrant and never owns returned palette/storage.
+---
+diff --git a/net/minecraft/util/Mth.java b/net/minecraft/util/Mth.java
+--- a/net/minecraft/util/Mth.java
++++ b/net/minecraft/util/Mth.java
+@@ -33,7 +33,3 @@
+     private static final double SIN_SCALE = 10430.378350470453;
+-    private static final float[] SIN = Util.make(new float[65536], floats -> {
+-        for (int i1 = 0; i1 < floats.length; i1++) {
+-            floats[i1] = (float)Math.sin(i1 / 10430.378350470453);
+-        }
+-    });
++    // Lattice: compact, raw-bit validated sine table lives in CompactSineLut.
+     private static final RandomSource RANDOM = RandomSource.createThreadSafe();
+@@ -50,3 +46,3 @@
+     public static float sin(double value) {
+-        return SIN[(int)((long)(value * 10430.378350470453) & 65535L)];
++        return com.latticemc.lattice.util.CompactSineLut.sin(value);
+     }
+@@ -54,3 +50,3 @@
+     public static float cos(double value) {
+-        return SIN[(int)((long)(value * 10430.378350470453 + 16384.0) & 65535L)];
++        return com.latticemc.lattice.util.CompactSineLut.cos(value);
+     }
+diff --git a/net/minecraft/world/level/chunk/PalettedContainer.java b/net/minecraft/world/level/chunk/PalettedContainer.java
+--- a/net/minecraft/world/level/chunk/PalettedContainer.java
++++ b/net/minecraft/world/level/chunk/PalettedContainer.java
+@@ -9,2 +9,3 @@
+ import it.unimi.dsi.fastutil.ints.IntSet;
++import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
+ import java.util.Arrays;
+@@ -347,16 +348,23 @@
+             Palette<T> palette = this.data.palette;
+-            HashMapPalette<T> hashMapPalette = new HashMapPalette<>(bitStorage.getBits());
+             int entryCount = strategy.entryCount();
+-            int[] ints = reencodeContents(bitStorage, palette, hashMapPalette);
+-            Configuration configurationForPaletteSize = strategy.getConfigurationForPaletteSize(hashMapPalette.getSize());
++            ReencodeScratchStack scratchStack = REENCODE_SCRATCH.get();
++            ReencodeScratch scratch = scratchStack.acquire();
++            try {
++                int[] ints = scratch.contentsFor(bitStorage.getSize());
++                List<T> entries = compactContents(bitStorage, palette, ints, scratch);
++                Configuration configurationForPaletteSize = strategy.getConfigurationForPaletteSize(entries.size());
+-            int i = configurationForPaletteSize.bitsInStorage();
+-            Optional<LongStream> optional;
+-            if (i != 0) {
+-                SimpleBitStorage simpleBitStorage = new SimpleBitStorage(i, entryCount, ints);
+-                optional = Optional.of(Arrays.stream(simpleBitStorage.getRaw()));
+-            } else {
+-                optional = Optional.empty();
+-            }
+-
+-            var14 = new PalettedContainerRO.PackedData<>(hashMapPalette.getEntries(), optional, i);
++                int i = configurationForPaletteSize.bitsInStorage();
++                Optional<LongStream> optional;
++                if (i != 0) {
++                    SimpleBitStorage simpleBitStorage = new SimpleBitStorage(i, entryCount, ints);
++                    optional = Optional.of(Arrays.stream(simpleBitStorage.getRaw()));
++                } else {
++                    optional = Optional.empty();
++                }
++
++                var14 = new PalettedContainerRO.PackedData<>(entries, optional, i);
++            } finally {
++                scratch.identities.clear();
++                scratchStack.release();
++            }
+         } finally {
+@@ -395,2 +403,26 @@
+ 
++    private static <T> List<T> compactContents(BitStorage storage, Palette<T> palette, int[] contents, ReencodeScratch scratch) {
++        storage.unpack(contents);
++        int[] remap = scratch.remapFor(palette.getSize());
++        Reference2IntOpenHashMap<Object> identities = scratch.identities;
++        identities.defaultReturnValue(-1);
++        List<T> entries = new java.util.ArrayList<>();
++        for (int index = 0; index < storage.getSize(); index++) {
++            int oldId = contents[index];
++            int newId = remap[oldId];
++            if (newId < 0) {
++                T value = palette.valueFor(oldId);
++                newId = identities.getInt(value);
++                if (newId < 0) {
++                    newId = entries.size();
++                    identities.put(value, newId);
++                    entries.add(value);
++                }
++                remap[oldId] = newId;
++            }
++            contents[index] = newId;
++        }
++        return entries;
++    }
++
+     private static final class ReencodeScratchStack {
+@@ -420,3 +452,15 @@
+     private static final class ReencodeScratch {
+         private @Nullable int[] remap;
++        private @Nullable int[] contents;
++        private final Reference2IntOpenHashMap<Object> identities = new Reference2IntOpenHashMap<>();
++
++        int[] contentsFor(int length) {
++            if (length > MAX_CACHED_REENCODE_REMAP_LENGTH) {
++                return new int[length];
++            }
++            if (this.contents == null || this.contents.length < length) {
++                this.contents = new int[length];
++            }
++            return this.contents;
++        }
+ 
+@@ -470,3 +514,7 @@
+             this.data.storage.getAll(id -> map.addTo(id, 1));
+-            map.int2IntEntrySet().forEach(idEntry -> countConsumer.accept(this.data.palette.valueFor(idEntry.getIntKey()), idEntry.getIntValue()));
++            var iterator = map.int2IntEntrySet().fastIterator();
++            while (iterator.hasNext()) {
++                var entry = iterator.next();
++                countConsumer.accept(this.data.palette.valueFor(entry.getIntKey()), entry.getIntValue());
++            }
+         }
+-- 
+2.47.1
