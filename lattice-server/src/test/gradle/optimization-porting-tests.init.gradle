@@ -1,0 +1,12 @@
+gradle.projectsEvaluated {
+    def server = gradle.rootProject.project(':lattice-server')
+    server.tasks.named('test', Test).configure {
+        setIncludes([
+            'CompactSineLut', 'PalettePackingParity', 'ThreadConfinedWorldgenRandom',
+            'AquiferBarrierCache', 'PalettedContainerResizeRemap', 'LinearPaletteLastValue',
+            'NativePaletteBulk', 'HeightmapCombinedUpdate', 'WorldgenHeightmapPriming',
+            'AquiferCenterCacheParity', 'XoroshiroAquiferOffsets', 'BlendedNoiseEquivalence',
+            'RandomTick', 'FluidSection'
+        ].collect { "**/${it}TestSuite.class" })
+    }
+}

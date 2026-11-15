@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sweepikun <laomgba@outlook.com>
+Date: Sun, 15 Nov 2026 12:00:00 +0800
+Subject: [PATCH] Use thread confined worldgen LCG and exact shifts
+
+Reuse the platform single-threaded LCG at method-local call sites.
+WorldgenRandom must dispatch next(bits) directly to preserve seed consumption.
+Shared and seed-protected random sources are unchanged.
+---
+diff --git a/net/minecraft/world/level/levelgen/WorldgenRandom.java b/net/minecraft/world/level/levelgen/WorldgenRandom.java
+--- a/net/minecraft/world/level/levelgen/WorldgenRandom.java
++++ b/net/minecraft/world/level/levelgen/WorldgenRandom.java
+@@ -32,4 +32,6 @@
+         return this.randomSource instanceof LegacyRandomSource legacyRandomSource
+             ? legacyRandomSource.next(bits)
+-            : (int)(this.randomSource.nextLong() >>> 64 - bits);
++            : this.randomSource instanceof SingleThreadedRandomSource singleThreadedRandomSource
++                ? singleThreadedRandomSource.next(bits)
++                : (int)(this.randomSource.nextLong() >>> 64 - bits);
+     }
+diff --git a/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java b/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+--- a/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
++++ b/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+@@ -265,3 +265,3 @@
+             BiomeManager biomeManager1 = biomeManager.withDifferentSource((x, y, z) -> this.biomeSource.getNoiseBiome(x, y, z, random.sampler()));
+-            WorldgenRandom worldgenRandom = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
++            WorldgenRandom worldgenRandom = new WorldgenRandom(new SingleThreadedRandomSource(RandomSupport.generateUniqueSeed()));
+             int i = 8;
+@@ -450,3 +450,3 @@
+             Holder<Biome> biome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+-            WorldgenRandom worldgenRandom = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
++            WorldgenRandom worldgenRandom = new WorldgenRandom(new SingleThreadedRandomSource(RandomSupport.generateUniqueSeed()));
+             worldgenRandom.setDecorationSeed(region.getSeed(), center.getMinBlockX(), center.getMinBlockZ());
+diff --git a/net/minecraft/world/level/levelgen/feature/GeodeFeature.java b/net/minecraft/world/level/levelgen/feature/GeodeFeature.java
+--- a/net/minecraft/world/level/levelgen/feature/GeodeFeature.java
++++ b/net/minecraft/world/level/levelgen/feature/GeodeFeature.java
+@@ -43,3 +43,3 @@
+         int i2 = geodeConfiguration.distributionPoints.sample(randomSource);
+-        WorldgenRandom worldgenRandom = new WorldgenRandom(new LegacyRandomSource(worldGenLevel.getSeed()));
++        WorldgenRandom worldgenRandom = new WorldgenRandom(new net.minecraft.world.level.levelgen.SingleThreadedRandomSource(worldGenLevel.getSeed()));
+         NormalNoise normalNoise = NormalNoise.create(worldgenRandom, -4, 1.0);
+diff --git a/net/minecraft/world/level/levelgen/structure/placement/RandomSpreadStructurePlacement.java b/net/minecraft/world/level/levelgen/structure/placement/RandomSpreadStructurePlacement.java
+--- a/net/minecraft/world/level/levelgen/structure/placement/RandomSpreadStructurePlacement.java
++++ b/net/minecraft/world/level/levelgen/structure/placement/RandomSpreadStructurePlacement.java
+@@ -73,3 +73,3 @@
+         int i1 = Math.floorDiv(regionZ, this.spacing);
+-        WorldgenRandom worldgenRandom = new WorldgenRandom(new LegacyRandomSource(0L));
++        WorldgenRandom worldgenRandom = new WorldgenRandom(new net.minecraft.world.level.levelgen.SingleThreadedRandomSource(0L));
+         if (protectedRandom == null) {
+diff --git a/net/minecraft/world/level/levelgen/Aquifer.java b/net/minecraft/world/level/levelgen/Aquifer.java
+--- a/net/minecraft/world/level/levelgen/Aquifer.java
++++ b/net/minecraft/world/level/levelgen/Aquifer.java
+@@ -506,5 +506,5 @@
+             int i1 = 40;
+-            int i2 = Math.floorDiv(x, 16);
++            int i2 = x >> 4;
+             int i3 = Math.floorDiv(y, 40);
+-            int i4 = Math.floorDiv(z, 16);
++            int i4 = z >> 4;
+             int i5 = i3 * 40 + 20;
+@@ -522,5 +522,5 @@
+                 int i1 = 40;
+-                int i2 = Math.floorDiv(x, 64);
++                int i2 = x >> 6;
+                 int i3 = Math.floorDiv(y, 40);
+-                int i4 = Math.floorDiv(z, 64);
++                int i4 = z >> 6;
+                 double d = this.lavaNoise.compute(new DensityFunction.SinglePointContext(i2, i3, i4));
+-- 
+2.47.1
