@@ -409,9 +409,9 @@ jobs:
           cp -L "$win_src" "$stuff_dir/META-INF/native/windows-x86_64/lattice.dll"
           cp -L "$mac_src" "$stuff_dir/META-INF/native/macos-aarch64/liblattice.dylib"
 
-          jar uf "$paperclip" -C "$stuff_dir" \
-            META-INF/native/windows-x86_64/lattice.dll \
-            META-INF/native/macos-aarch64/liblattice.dylib
+          jar uf "$paperclip" \
+            -C "$stuff_dir" META-INF/native/windows-x86_64/lattice.dll \
+            -C "$stuff_dir" META-INF/native/macos-aarch64/liblattice.dylib
 
           echo "Bundled native entries:"; jar tf "$paperclip" | grep -E 'META-INF/native/'
 
