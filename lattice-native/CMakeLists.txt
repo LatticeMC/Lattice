@@ -231,6 +231,7 @@ else()
     target_compile_options(lattice_baseline_flags INTERFACE
         -Wall -Wextra -Wpedantic
         -fno-exceptions -fno-rtti
+        -ffp-contract=off
         $<$<CONFIG:Release>:-O3 -fomit-frame-pointer>
     )
     # Portable baseline ISA (avoid -march=native: produced .so wouldn't run on
@@ -241,8 +242,10 @@ else()
     if(LATTICE_WARNINGS_AS_ERRORS)
         target_compile_options(lattice_baseline_flags INTERFACE -Werror)
     endif()
-    # IMPORTANT: do NOT enable -ffast-math — light-engine float math must be
-    # bit-exact w.r.t. the JVM's strict IEEE-754 evaluation.
+    # IMPORTANT: do NOT enable -ffast-math, and keep -ffp-contract=off — float
+    # math must be bit-exact w.r.t. the JVM's strict IEEE-754 evaluation.
+    # Without -ffp-contract=off, GCC -O3 fuses smoothstep/lerp multiply-adds
+    # into FMA on capable CPUs, producing 1-ULP drift vs the Java reference.
 endif()
 
 # ---------------------------------------------------------------------------
